@@ -1,6 +1,7 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Infrastructure.Configuration;
 using LedSupBot.Infrastructure.Media;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -102,5 +103,6 @@ public sealed class LocalMediaStorageTests : IDisposable
         public string EnvironmentName { get; set; } = Environments.Development;
         public string ApplicationName { get; set; } = "Tests";
         public string ContentRootPath { get; set; } = string.Empty;
+        public IFileProvider ContentRootFileProvider { get; set; } = null!;
     }
 }

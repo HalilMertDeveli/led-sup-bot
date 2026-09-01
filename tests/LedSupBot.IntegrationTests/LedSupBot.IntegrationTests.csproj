@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\LedSupBot.Api\LedSupBot.Api.csproj" />
+    <ProjectReference Include="..\LedSupBot.UnitTests\LedSupBot.UnitTests.csproj" />
   </ItemGroup>
 
 </Project>
