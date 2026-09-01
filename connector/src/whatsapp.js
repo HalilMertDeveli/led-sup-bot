@@ -11,9 +11,10 @@ import pino from "pino";
 import qrcode from "qrcode-terminal";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
-import { mapBaileysMessage } from "./messageMap.js";
+import { mapBaileysMessage, resolveOutboundJid } from "./messageMap.js";
 import { cacheMediaStub } from "./mediaCache.js";
-import { messageObservabilityFields } from "./observability.js";
+import { messageObservabilityFields, redactJid } from "./observability.js";
+import { jidDomain } from "./messageMap.js";
 import { forwardEventToAspNet } from "./webhook.js";
 
 /** @type {ReturnType<typeof makeWASocket> | null} */
@@ -92,6 +93,13 @@ export async function startWhatsApp() {
     });
 
     sock.ev.on("creds.update", saveCreds);
+
+    sock.ev.on("chats.phoneNumberShare", ({ lid, jid }) => {
+      logger.info(
+        { event: "LID_PN_MAPPING", lid: redactJid(lid), pnJid: redactJid(jid) },
+        "WhatsApp shared phone number for LID contact",
+      );
+    });
 
     sock.ev.on("connection.update", (update) => {
       const { connection, lastDisconnect, qr } = update;
@@ -182,18 +190,50 @@ export async function startWhatsApp() {
   }
 }
 
-export async function sendText(toPhoneDigits, text) {
+export async function sendText(toAddress, text) {
   if (!sock || status !== "CONNECTED") {
     throw new Error(`Connector not connected (status=${status})`);
   }
 
-  const jid = `${toPhoneDigits.replace(/\D/g, "")}@s.whatsapp.net`;
+  const jid = resolveOutboundJid(toAddress);
+  if (!jid) {
+    throw new Error("Invalid outbound destination");
+  }
+
   const result = await sock.sendMessage(jid, { text });
   const id = result?.key?.id;
   if (id) {
     markBotSent(id);
   }
-  return { externalMessageId: id || null, remoteJid: jid };
+
+  logger.info(
+    {
+      event: "OUTBOUND_SEND_COMPLETED",
+      requestedDomain: jidDomain(toAddress.includes("@") ? toAddress : `${String(toAddress).replace(/\D/g, "")}@s.whatsapp.net`),
+      resolvedJid: redactJid(jid),
+      messageId: id || null,
+      resultRemoteJid: redactJid(result?.key?.remoteJid),
+      resultFromMe: Boolean(result?.key?.fromMe),
+    },
+    "outbound send completed",
+  );
+
+  return { externalMessageId: id || null, remoteJid: jid, resultRemoteJid: result?.key?.remoteJid || null };
+}
+
+export async function sendPresence(toAddress, state) {
+  if (!sock || status !== "CONNECTED") {
+    throw new Error(`Connector not connected (status=${status})`);
+  }
+
+  const jid = resolveOutboundJid(toAddress);
+  if (!jid) {
+    throw new Error("Invalid outbound destination");
+  }
+
+  const presence = state === "composing" ? "composing" : "paused";
+  await sock.sendPresenceUpdate(presence, jid);
+  return { remoteJid: jid, state: presence };
 }
 
 /**

@@ -4,6 +4,7 @@ using LedSupBot.Application.Workflow;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using LedSupBot.Infrastructure.Persistence;
+using LedSupBot.UnitTests.Media;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,8 +34,6 @@ public sealed class WorkflowFixture : IAsyncLifetime
 
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddSingleton<RecordingWhatsAppClient>();
-        services.AddSingleton<IWhatsAppClient>(sp => sp.GetRequiredService<RecordingWhatsAppClient>());
 
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -50,6 +49,9 @@ public sealed class WorkflowFixture : IAsyncLifetime
 
         LedSupBot.Application.DependencyInjection.AddApplication(services);
         LedSupBot.Infrastructure.DependencyInjection.AddInfrastructure(services, configuration);
+
+        services.AddSingleton<RecordingWhatsAppClient>();
+        services.AddSingleton<IWhatsAppClient>(sp => sp.GetRequiredService<RecordingWhatsAppClient>());
 
         Services = services.BuildServiceProvider();
         WhatsApp = Services.GetRequiredService<RecordingWhatsAppClient>();
@@ -128,7 +130,7 @@ public sealed class WorkflowFixture : IAsyncLifetime
 
         if (type == MessageType.Image)
         {
-            WhatsApp.SetDownload(externalId, "image/png", UnitTests.Media.TestImageBytes.CreatePng());
+            WhatsApp.SetDownload(externalId, "image/png", TestImageBytes.CreatePng());
             var pipeline = scope.ServiceProvider.GetRequiredService<IInboundMediaPipeline>();
             var supportCase = await db.TechnicalSupportCases
                 .FirstOrDefaultAsync(c => c.ConversationId == conversationId);
@@ -155,7 +157,7 @@ public sealed class WorkflowFixture : IAsyncLifetime
                     {
                         MimeType = "image/png",
                         Downloadable = true,
-                        FileLength = UnitTests.Media.TestImageBytes.CreatePng().LongLength,
+                        FileLength = TestImageBytes.CreatePng().LongLength,
                     },
                 });
         }
@@ -325,6 +327,9 @@ public sealed class RecordingWhatsAppClient : IWhatsAppClient
     public List<string> SentTexts { get; } = [];
     private readonly Dictionary<string, (string Mime, byte[] Content)> _downloads = new(StringComparer.Ordinal);
 
+    /// <summary>When true, send/download throw as if the connector is offline.</summary>
+    public bool SimulateConnectorUnavailable { get; set; }
+
     public void SetDownload(string externalMessageId, string mimeType, byte[] content) =>
         _downloads[externalMessageId] = (mimeType, content);
 
@@ -337,6 +342,11 @@ public sealed class RecordingWhatsAppClient : IWhatsAppClient
 
     public Task<string?> SendTextMessageAsync(string toPhoneE164, string body, CancellationToken cancellationToken = default)
     {
+        if (SimulateConnectorUnavailable)
+        {
+            throw new InvalidOperationException("Connector offline (simulated).");
+        }
+
         SentTexts.Add(body);
         return Task.FromResult<string?>($"fake-{Guid.NewGuid():N}");
     }
@@ -348,6 +358,12 @@ public sealed class RecordingWhatsAppClient : IWhatsAppClient
         string? caption = null,
         CancellationToken cancellationToken = default) =>
         Task.FromResult<string?>($"fake-img-{Guid.NewGuid():N}");
+
+    public Task SendComposingAsync(string toPhoneE164, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+
+    public Task SendPausedPresenceAsync(string toPhoneE164, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
 
     public Task<WhatsAppMediaDownloadResult> DownloadMediaAsync(string mediaId, CancellationToken cancellationToken = default)
     {

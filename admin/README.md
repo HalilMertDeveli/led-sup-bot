@@ -1,32 +1,29 @@
-# React + TypeScript + Vite
+# LED Support — Admin Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Local-only technician operations panel (Phase 9).
 
-Currently, two official plugins are available:
+## Start
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. PostgreSQL: `docker compose up -d` (from repo root)
+2. API with admin auth env vars set (see root `.env.example`)
+3. `npm.cmd run dev` in this folder
 
-## React Compiler
+## Auth
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- Login password: `ADMIN_DASHBOARD_PASSWORD` (API env only)
+- Session: HttpOnly cookie signed with `ADMIN_SESSION_SECRET`
+- Browser never receives connector secret or OpenAI key
 
-## Expanding the Oxlint configuration
+## UI notes
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+- **Conversation list / case panel:** BOT / HUMAN / PAUSED badges (operator safety)
+- **Chat:** normal 1:1 support appearance — inbound left, outbound right labeled **Sen** only; no BOT/TECHNICIAN/CUSTOMER per-message labels
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
+## Scripts
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+| Command | Purpose |
+|---------|---------|
+| `npm.cmd run dev` | Vite dev server (:5173) |
+| `npm.cmd run build` | Production bundle → `dist/` |
+| `npm.cmd run test` | Vitest (message presentation) |
+| `npm.cmd run lint` | Oxlint |

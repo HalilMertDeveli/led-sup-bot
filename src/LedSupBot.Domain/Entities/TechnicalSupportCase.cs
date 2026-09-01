@@ -16,6 +16,15 @@ public class TechnicalSupportCase : Entity
     /// <summary>Deterministic technician summary markdown (Phase 8/9).</summary>
     public string? SummaryMarkdown { get; set; }
 
+    /// <summary>Short rolling issue summary for operator + AI context (Phase 12).</summary>
+    public string? IssueSummary { get; set; }
+
+    /// <summary>Set when AnyDesk readiness operator alert was emitted (dedupe).</summary>
+    public DateTimeOffset? AnyDeskAlertSentAt { get; set; }
+
+    /// <summary>Operator dismissed AnyDesk alert without takeover.</summary>
+    public DateTimeOffset? AnyDeskAlertDismissedAt { get; set; }
+
     public ScreenInformation? ScreenInformation { get; set; }
 
     public ReceiverInformation? ReceiverInformation { get; set; }

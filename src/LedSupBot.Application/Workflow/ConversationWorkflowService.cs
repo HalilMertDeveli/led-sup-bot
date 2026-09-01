@@ -1,5 +1,7 @@
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.Admin;
 using LedSupBot.Application.Workflow.Ai;
+using LedSupBot.Application.Workflow.Context;
 using LedSupBot.Application.Workflow.Parsing;
 using LedSupBot.Application.WhatsApp;
 using LedSupBot.Domain.Entities;
@@ -15,6 +17,9 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
     private readonly IApplicationDbContext _db;
     private readonly IWorkflowOutboundDispatcher _outbound;
     private readonly AiExtractionOrchestrator _aiOrchestrator;
+    private readonly AiResponsePlanner _responsePlanner;
+    private readonly IConversationContextBuilder _contextBuilder;
+    private readonly IAdminEventNotifier _notifier;
     private readonly AiExtractionAuditWriter _aiAudit;
     private readonly WorkflowOptions _options;
     private readonly AiExtractionOptions _aiOptions;
@@ -24,6 +29,9 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         IApplicationDbContext db,
         IWorkflowOutboundDispatcher outbound,
         AiExtractionOrchestrator aiOrchestrator,
+        AiResponsePlanner responsePlanner,
+        IConversationContextBuilder contextBuilder,
+        IAdminEventNotifier notifier,
         AiExtractionAuditWriter aiAudit,
         IOptions<WorkflowOptions> options,
         IOptions<AiExtractionOptions> aiOptions,
@@ -32,6 +40,9 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         _db = db;
         _outbound = outbound;
         _aiOrchestrator = aiOrchestrator;
+        _responsePlanner = responsePlanner;
+        _contextBuilder = contextBuilder;
+        _notifier = notifier;
         _aiAudit = aiAudit;
         _options = options.Value;
         _aiOptions = aiOptions.Value;
@@ -40,12 +51,21 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
     public async Task ProcessCustomerInboundAsync(WorkflowInboundMessage inbound, CancellationToken cancellationToken = default)
     {
+        _logger.LogInformation(
+            "Workflow processing inbound conversationId={ConversationId} externalMessageId={ExternalMessageId} messageType={MessageType}",
+            inbound.ConversationId,
+            inbound.ExternalMessageId,
+            inbound.MessageType);
+
         var conversation = await _db.Conversations
             .AsNoTracking()
             .FirstOrDefaultAsync(c => c.Id == inbound.ConversationId, cancellationToken);
 
         if (conversation is null || !ConversationBotPolicy.CanAutoReply(conversation.BotMode))
         {
+            _logger.LogInformation(
+                "Workflow skipped; conversation missing or BotMode={BotMode}",
+                conversation?.BotMode.ToString() ?? "missing");
             return;
         }
 
@@ -63,6 +83,14 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
         await ApplyInboundContentAsync(conversation.Id, supportCase, inbound, outboundTexts, cancellationToken);
 
+        if (!await IsAutoReplyAllowedAsync(conversation.Id, cancellationToken))
+        {
+            _logger.LogInformation(
+                "Workflow halted before outbound; conversation {ConversationId} is no longer in Bot mode",
+                conversation.Id);
+            return;
+        }
+
         // Reload slot graph after mutations.
         supportCase = await LoadCaseGraphAsync(supportCase.Id, cancellationToken);
         var slots = WorkflowSlotState.FromCase(supportCase, conversation);
@@ -70,7 +98,38 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         var exampleCompleted = supportCase.ConfigConnection?.ExampleImageSent == true;
         var effectiveStage = WorkflowStageResolver.ResolveEffectiveStage(slots, assetAvailable, exampleCompleted || !assetAvailable);
 
-        if (!outboundTexts.Any(t => t.Contains("teyit", StringComparison.OrdinalIgnoreCase) ||
+        var context = await _contextBuilder.BuildAsync(
+            conversation,
+            supportCase,
+            inbound,
+            slots,
+            effectiveStage,
+            cancellationToken);
+
+        var aiAddedReply = false;
+        if (inbound.MessageType == MessageType.Text && !string.IsNullOrWhiteSpace(inbound.TextContent))
+        {
+            var plan = await _responsePlanner.TryPlanAsync(context, inbound.TextContent, cancellationToken);
+            if (plan?.IssueSummary is not null)
+            {
+                await UpdateIssueSummaryAsync(supportCase.Id, plan.IssueSummary, cancellationToken);
+                supportCase.IssueSummary = plan.IssueSummary;
+            }
+
+            if (plan?.HasUsableReply == true)
+            {
+                outboundTexts.Add(plan.Reply!);
+                aiAddedReply = true;
+            }
+        }
+
+        if (AnyDeskReadinessDetector.IsReadyForHandoff(slots, effectiveStage))
+        {
+            await TryEmitAnyDeskAlertAsync(conversation, supportCase, slots, cancellationToken);
+        }
+
+        if (!aiAddedReply &&
+            !outboundTexts.Any(t => t.Contains("teyit", StringComparison.OrdinalIgnoreCase) ||
                                     t.Contains("Yatay", StringComparison.OrdinalIgnoreCase) ||
                                     t.Contains("Dikey", StringComparison.OrdinalIgnoreCase) ||
                                     t.Contains("Örnek:", StringComparison.OrdinalIgnoreCase)))
@@ -126,7 +185,18 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
         if (outboundTexts.Count > 0)
         {
+            _logger.LogInformation(
+                "Workflow dispatching {Count} outbound text(s) for conversation {ConversationId}",
+                outboundTexts.Count,
+                conversation.Id);
             await _outbound.SendTextsAsync(conversation.Id, inbound.CustomerPhoneE164, outboundTexts, cancellationToken);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Workflow produced no outbound texts for conversation {ConversationId} stage={Stage}",
+                conversation.Id,
+                effectiveStage);
         }
 
         if (!string.IsNullOrWhiteSpace(configExampleImagePath))
@@ -150,6 +220,60 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                         .SetProperty(c => c.CurrentStage, ConversationStage.HumanHandoff),
                     cancellationToken);
         }
+    }
+
+    private async Task UpdateIssueSummaryAsync(Guid caseId, string issueSummary, CancellationToken cancellationToken)
+    {
+        await _db.TechnicalSupportCases
+            .Where(c => c.Id == caseId)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(c => c.IssueSummary, issueSummary),
+                cancellationToken);
+    }
+
+    private async Task TryEmitAnyDeskAlertAsync(
+        Conversation conversation,
+        TechnicalSupportCase supportCase,
+        WorkflowSlotState slots,
+        CancellationToken cancellationToken)
+    {
+        if (supportCase.AnyDeskAlertSentAt is not null)
+        {
+            return;
+        }
+
+        var customer = await _db.Customers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == conversation.CustomerId, cancellationToken);
+
+        var now = DateTimeOffset.UtcNow;
+        await _db.TechnicalSupportCases
+            .Where(c => c.Id == supportCase.Id)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(c => c.AnyDeskAlertSentAt, now),
+                cancellationToken);
+
+        supportCase.AnyDeskAlertSentAt = now;
+
+        var receiver = await _db.ReceiverInformations
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.TechnicalSupportCaseId == supportCase.Id, cancellationToken);
+
+        var receiverSummary = receiver is null || receiver.Count <= 0
+            ? null
+            : string.Join(" ", new[] { receiver.Manufacturer, receiver.Model, $"×{receiver.Count}" }.Where(s => !string.IsNullOrWhiteSpace(s)));
+
+        await _notifier.NotifyAnyDeskReadyForHandoffAsync(
+            new AnyDeskReadyNotification(
+                conversation.Id,
+                AdminDisplayFormat.FormatCustomerIdentifier(customer ?? new Customer { PhoneNumber = "?" }),
+                supportCase.IssueSummary,
+                slots.IsScreenComplete ? $"{slots.WidthCm:0}×{slots.HeightCm:0} cm" : null,
+                receiverSummary,
+                slots.HasPanelLabelPhoto ? "alındı" : "bekleniyor",
+                slots.ConfigConfirmed ? "tamam" : "bekleniyor",
+                "bekleniyor"),
+            cancellationToken);
     }
 
     private async Task ApplyInboundContentAsync(
@@ -202,6 +326,14 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
         if (aiValidated is not null)
         {
+            if (!await IsAutoReplyAllowedAsync(conversationId, cancellationToken))
+            {
+                _logger.LogInformation(
+                    "Discarding in-flight AI extraction for conversation {ConversationId}; BotMode changed",
+                    conversationId);
+                return;
+            }
+
             await ApplyAiValidatedSlotsAsync(supportCase.Id, slots, aiValidated, outboundTexts, cancellationToken);
             foreach (var prompt in aiValidated.ClarificationPrompts)
             {
@@ -525,6 +657,17 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             .Include(c => c.AnyDeskInformation)
             .Include(c => c.PanelLabelPhotos)
             .SingleAsync(c => c.Id == caseId, cancellationToken);
+    }
+
+    private async Task<bool> IsAutoReplyAllowedAsync(Guid conversationId, CancellationToken cancellationToken)
+    {
+        var botMode = await _db.Conversations
+            .AsNoTracking()
+            .Where(c => c.Id == conversationId)
+            .Select(c => c.BotMode)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return ConversationBotPolicy.CanAutoReply(botMode);
     }
 
     private async Task UpsertScreenAsync(Guid caseId, decimal width, decimal height, string raw, CancellationToken cancellationToken)

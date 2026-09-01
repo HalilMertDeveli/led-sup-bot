@@ -1,0 +1,21 @@
+<Window x:Class="LedSupBot.Desktop.Views.StartupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="LED Support"
+        Width="360"
+        Height="320"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        WindowStyle="SingleBorderWindow">
+    <Grid Margin="28">
+        <StackPanel VerticalAlignment="Center">
+            <TextBlock Text="LED SUPPORT" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,24" />
+            <TextBlock Text="{Binding PostgreSqlLine}" FontFamily="Consolas" Margin="0,4" />
+            <TextBlock Text="{Binding ApiLine}" FontFamily="Consolas" Margin="0,4" />
+            <TextBlock Text="{Binding ConnectorLine}" FontFamily="Consolas" Margin="0,4" />
+            <TextBlock Text="{Binding WhatsAppLine}" FontFamily="Consolas" Margin="0,4" />
+            <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}"
+                       HorizontalAlignment="Center" Margin="0,24,0,0" />
+        </StackPanel>
+    </Grid>
+</Window>

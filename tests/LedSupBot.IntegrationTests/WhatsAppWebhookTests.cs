@@ -6,6 +6,7 @@ using LedSupBot.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Testcontainers.PostgreSql;
 
 namespace LedSupBot.IntegrationTests;
@@ -21,7 +22,10 @@ public sealed class WhatsAppWebhookFixture : IAsyncLifetime
 
     public string ConnectionString => _postgres.GetConnectionString();
     public string SharedSecret { get; } = "test-connector-secret";
+    public string AdminPassword { get; } = "test-admin-password";
+    public string AdminSessionSecret { get; } = "test-admin-session-secret-minimum-length";
     public WebApplicationFactory<Program> Factory { get; private set; } = null!;
+    public RecordingWhatsAppClient WhatsApp { get; } = new();
 
     public async Task InitializeAsync()
     {
@@ -38,6 +42,15 @@ public sealed class WhatsAppWebhookFixture : IAsyncLifetime
             builder.UseSetting("WhatsAppConnector:Enabled", "true");
             builder.UseSetting("WhatsAppConnector:SharedSecret", SharedSecret);
             builder.UseSetting("WhatsAppConnector:BaseUrl", "http://127.0.0.1:9");
+            builder.UseSetting("Admin:DashboardPassword", AdminPassword);
+            builder.UseSetting("Admin:SessionSecret", AdminSessionSecret);
+            builder.UseSetting("Workflow:AutoReplyEnabled", "false");
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<IWhatsAppClient>();
+                services.AddSingleton(WhatsApp);
+                services.AddSingleton<IWhatsAppClient>(sp => sp.GetRequiredService<RecordingWhatsAppClient>());
+            });
         });
     }
 
@@ -54,6 +67,9 @@ public sealed class WhatsAppWebhookFixture : IAsyncLifetime
             .Options;
         return new ApplicationDbContext(options);
     }
+
+    public HttpClient CreateAdminClient() =>
+        Factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
 }
 
 [CollectionDefinition("whatsapp-webhook")]
@@ -93,16 +109,24 @@ public sealed class WhatsAppWebhookTests
     [Fact]
     public async Task SendText_Returns_503_When_Connector_Offline()
     {
-        var client = _fixture.Factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Connector-Secret", _fixture.SharedSecret);
-
-        var response = await client.PostAsJsonAsync("/internal/whatsapp/send-text", new
+        _fixture.WhatsApp.SimulateConnectorUnavailable = true;
+        try
         {
-            to = "905551000099",
-            text = "controlled offline probe"
-        });
+            var client = _fixture.Factory.CreateClient();
+            client.DefaultRequestHeaders.Add("X-Connector-Secret", _fixture.SharedSecret);
 
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            var response = await client.PostAsJsonAsync("/internal/whatsapp/send-text", new
+            {
+                to = "905551000099",
+                text = "controlled offline probe"
+            });
+
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        }
+        finally
+        {
+            _fixture.WhatsApp.SimulateConnectorUnavailable = false;
+        }
     }
 
     [Fact]
@@ -183,6 +207,8 @@ public sealed class WhatsAppWebhookTests
 
         var message = await db.Messages.SingleAsync(m => m.ExternalMessageId == techMsg.externalMessageId);
         Assert.Equal(MessageSender.Technician, message.SentBy);
+        Assert.Equal(ConversationStage.HumanHandoff, conversation.CurrentStage);
+        Assert.Equal(ConversationStatus.InHumanSupport, conversation.Status);
     }
 
     [Fact]
@@ -266,6 +292,122 @@ public sealed class WhatsAppWebhookTests
             .SingleAsync(c => c.Customer.PhoneNumber == phone);
         Assert.Equal(BotMode.Bot, after.BotMode);
         Assert.Equal(1, await verify.Messages.CountAsync(m => m.ExternalMessageId == externalId));
+    }
+
+    [Fact]
+    public async Task Customer_Inbound_AutoReply_Sends_When_Enabled()
+    {
+        await using var factory = await CreateAutoReplyFactoryAsync();
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Connector-Secret", _fixture.SharedSecret);
+
+        var externalId = $"wamid.autoreply.{Guid.NewGuid():N}";
+        var phone = "905551000099";
+        var response = await client.PostAsJsonAsync("/internal/whatsapp/events", new
+        {
+            eventType = "IncomingMessage",
+            externalMessageId = externalId,
+            remotePhoneNumber = phone,
+            fromMe = false,
+            botOriginated = false,
+            messageType = "Text",
+            textContent = "TEST-AUTO-REPLY-E2E",
+            textPresent = true,
+            timestamp = DateTimeOffset.UtcNow
+        });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.NotEmpty(_fixture.WhatsApp.SentTexts);
+        Assert.Contains(_fixture.WhatsApp.SentTexts, t =>
+            t.Contains("cm", StringComparison.OrdinalIgnoreCase) ||
+            t.Contains("ekran", StringComparison.OrdinalIgnoreCase));
+
+        await using var db = _fixture.CreateDb();
+        var botOutbound = await db.Messages
+            .Where(m => m.ExternalMessageId != externalId && m.SentBy == MessageSender.Bot)
+            .OrderByDescending(m => m.CreatedAt)
+            .FirstOrDefaultAsync();
+        Assert.NotNull(botOutbound);
+        Assert.Equal(MessageDirection.Outbound, botOutbound!.Direction);
+    }
+
+    [Fact]
+    public async Task Duplicate_Customer_Inbound_Retries_Workflow_When_No_Bot_Reply_Yet()
+    {
+        await using var factory = await CreateAutoReplyFactoryAsync();
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Connector-Secret", _fixture.SharedSecret);
+
+        var externalId = $"wamid.dup.{Guid.NewGuid():N}";
+        var phone = "905551000100";
+
+        await using (var db = _fixture.CreateDb())
+        {
+            var customer = new Domain.Entities.Customer { PhoneNumber = phone };
+            db.Customers.Add(customer);
+            var conversation = new Domain.Entities.Conversation
+            {
+                CustomerId = customer.Id,
+                Status = ConversationStatus.Active,
+                BotMode = BotMode.Bot,
+                CurrentStage = ConversationStage.AskScreenSize,
+            };
+            db.Conversations.Add(conversation);
+            db.Messages.Add(new Domain.Entities.Message
+            {
+                ConversationId = conversation.Id,
+                Direction = MessageDirection.Inbound,
+                MessageType = MessageType.Text,
+                Content = "TEST-DUP-RETRY",
+                ExternalMessageId = externalId,
+                DeliveryStatus = DeliveryStatus.Delivered,
+                SentBy = MessageSender.Customer,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        _fixture.WhatsApp.SentTexts.Clear();
+        var response = await client.PostAsJsonAsync("/internal/whatsapp/events", new
+        {
+            eventType = "IncomingMessage",
+            externalMessageId = externalId,
+            remotePhoneNumber = phone,
+            fromMe = false,
+            botOriginated = false,
+            messageType = "Text",
+            textContent = "TEST-DUP-RETRY",
+            textPresent = true,
+            timestamp = DateTimeOffset.UtcNow
+        });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.NotEmpty(_fixture.WhatsApp.SentTexts);
+    }
+
+    private async Task<WebApplicationFactory<Program>> CreateAutoReplyFactoryAsync()
+    {
+        _fixture.WhatsApp.SentTexts.Clear();
+
+        var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseSetting("Database:ConnectionString", _fixture.ConnectionString);
+            builder.UseSetting("WhatsAppConnector:Enabled", "true");
+            builder.UseSetting("WhatsAppConnector:SharedSecret", _fixture.SharedSecret);
+            builder.UseSetting("WhatsAppConnector:BaseUrl", "http://127.0.0.1:9");
+            builder.UseSetting("Admin:DashboardPassword", _fixture.AdminPassword);
+            builder.UseSetting("Admin:SessionSecret", _fixture.AdminSessionSecret);
+            builder.UseSetting("Workflow:AutoReplyEnabled", "true");
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<IWhatsAppClient>();
+                services.AddSingleton(_fixture.WhatsApp);
+                services.AddSingleton<IWhatsAppClient>(sp => sp.GetRequiredService<RecordingWhatsAppClient>());
+            });
+        });
+
+        await using var db = _fixture.CreateDb();
+        await db.Database.MigrateAsync();
+        return factory;
     }
 
     [Fact]

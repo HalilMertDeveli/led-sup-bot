@@ -1,5 +1,7 @@
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.Admin;
 using LedSupBot.Application.Media;
+using LedSupBot.Application.Takeover;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Application.WhatsApp;
 using LedSupBot.Domain.Entities;
@@ -64,21 +66,56 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
             {
                 await RetryMediaProcessingAsync(existingMessage, inboundEvent, cancellationToken);
             }
+            else if (existingMessage.SentBy == MessageSender.Customer && !inboundEvent.FromMe)
+            {
+                await TryInvokeWorkflowForPersistedCustomerInboundAsync(inboundEvent, existingMessage, cancellationToken);
+            }
 
             _logger.LogDebug("Duplicate WhatsApp event ignored");
             return;
         }
 
-        var botOriginated = ConversationBotPolicy.IsBotOriginated(inboundEvent.BotOriginated, persistedBotMessageExists: false);
+        var persistedBotMessage = await db.Messages.AnyAsync(
+            m => m.ExternalMessageId == inboundEvent.ExternalMessageId && m.SentBy == MessageSender.Bot,
+            cancellationToken);
+        var botOriginated = ConversationBotPolicy.IsBotOriginated(inboundEvent.BotOriginated, persistedBotMessage);
 
-        if (string.IsNullOrWhiteSpace(inboundEvent.RemotePhoneNumber))
+        if (string.IsNullOrWhiteSpace(inboundEvent.RemotePhoneNumber) &&
+            string.IsNullOrWhiteSpace(inboundEvent.RemoteJid))
         {
-            _logger.LogWarning("Inbound WhatsApp message missing remote phone; skipped");
+            _logger.LogWarning("Inbound WhatsApp message missing remote phone/jid; skipped");
             return;
         }
 
-        var phone = WhatsAppEventMapper.NormalizePhone(inboundEvent.RemotePhoneNumber);
+        var customerAddress = WhatsAppEventMapper.ResolveCustomerAddress(inboundEvent);
+        if (string.IsNullOrWhiteSpace(customerAddress))
+        {
+            _logger.LogWarning(
+                "Inbound WhatsApp message has no resolvable customer address; remoteJid={RemoteJid}",
+                inboundEvent.RemoteJid);
+            return;
+        }
+
+        if (WhatsAppEventMapper.IsLidJid(inboundEvent.RemoteJid))
+        {
+            _logger.LogInformation(
+                "Inbound LID identity conversationId pending remoteJidType=lid senderPnPresent={SenderPnPresent}",
+                !string.IsNullOrWhiteSpace(inboundEvent.SenderPnJid));
+        }
+
+        var phone = customerAddress;
         var customer = await db.Customers.FirstOrDefaultAsync(c => c.PhoneNumber == phone, cancellationToken);
+        if (customer is null && WhatsAppEventMapper.IsLidJid(inboundEvent.RemoteJid))
+        {
+            var lidUser = inboundEvent.RemoteJid!.Split('@')[0];
+            customer = await db.Customers.FirstOrDefaultAsync(c => c.PhoneNumber == lidUser, cancellationToken);
+            if (customer is not null)
+            {
+                customer.PhoneNumber = phone;
+                await db.SaveChangesAsync(cancellationToken);
+            }
+        }
+
         if (customer is null)
         {
             customer = new Customer { PhoneNumber = phone };
@@ -108,10 +145,15 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
         var direction = WhatsAppEventMapper.MapDirection(inboundEvent.FromMe);
         var messageType = WhatsAppEventMapper.MapMessageType(inboundEvent.MessageType);
 
-        if (sender == MessageSender.Technician && conversation.BotMode == BotMode.Bot)
+        if (sender == MessageSender.Technician)
         {
-            conversation.BotMode = BotMode.Human;
-            conversation.Status = ConversationStatus.InHumanSupport;
+            var takeover = _services.GetRequiredService<IConversationTakeoverService>();
+            await takeover.TakeOverAsync(
+                conversation.Id,
+                TakeoverChangeSource.TechnicianMessage,
+                cancellationToken);
+
+            conversation = await db.Conversations.SingleAsync(c => c.Id == conversation.Id, cancellationToken);
         }
 
         if (!inboundEvent.FromMe)
@@ -136,6 +178,13 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
         {
             await db.SaveChangesAsync(cancellationToken);
 
+            var notifier = _services.GetService<IAdminEventNotifier>();
+            if (notifier is not null)
+            {
+                await notifier.NotifyMessageReceivedAsync(conversation.Id, message.Id, cancellationToken);
+                await notifier.NotifyConversationUpdatedAsync(conversation.Id, cancellationToken);
+            }
+
             if (sender == MessageSender.Customer && !inboundEvent.FromMe)
             {
                 if (messageType == MessageType.Image)
@@ -149,7 +198,7 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
                 }
                 else
                 {
-                    await InvokeWorkflowAsync(
+                    await InvokeWorkflowIfAllowedAsync(
                         conversation.Id,
                         phone,
                         message,
@@ -161,6 +210,7 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
         catch (DbUpdateException)
         {
             _logger.LogDebug("Duplicate WhatsApp event caught by DB uniqueness");
+            await TryInvokeWorkflowForPersistedCustomerInboundAsync(inboundEvent, cancellationToken: cancellationToken);
         }
     }
 
@@ -179,7 +229,8 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
         var db = _services.GetRequiredService<IApplicationDbContext>();
         var conversationId = existingMessage.ConversationId;
         var tracked = await db.Messages.SingleAsync(m => m.Id == existingMessage.Id, cancellationToken);
-        var phone = WhatsAppEventMapper.NormalizePhone(inboundEvent.RemotePhoneNumber!);
+        var phone = WhatsAppEventMapper.ResolveCustomerAddress(inboundEvent)
+            ?? WhatsAppEventMapper.NormalizePhone(inboundEvent.RemotePhoneNumber!);
 
         await ProcessInboundImageAsync(conversationId, tracked, inboundEvent, phone, cancellationToken);
     }
@@ -224,7 +275,7 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
             }
         }
 
-        await InvokeWorkflowAsync(
+        await InvokeWorkflowIfAllowedAsync(
             conversationId,
             phone,
             message,
@@ -232,16 +283,54 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
             cancellationToken);
     }
 
-    private async Task InvokeWorkflowAsync(
+    private async Task InvokeWorkflowIfAllowedAsync(
         Guid conversationId,
         string phone,
         Message message,
         string? textContent,
         CancellationToken cancellationToken)
     {
-        var workflow = _services.GetService<IConversationWorkflowService>();
-        if (workflow is null)
+        var db = _services.GetRequiredService<IApplicationDbContext>();
+        var botMode = await db.Conversations
+            .AsNoTracking()
+            .Where(c => c.Id == conversationId)
+            .Select(c => c.BotMode)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (!ConversationBotPolicy.CanAutoReply(botMode))
         {
+            return;
+        }
+
+        _logger.LogInformation(
+            "Workflow resolve conversationId={ConversationId} botMode={BotMode} workflowResolved={Resolved}",
+            conversationId,
+            botMode,
+            true);
+
+        var coordinator = _services.GetService<IConversationReplyCoordinator>();
+        if (coordinator is not null)
+        {
+            coordinator.EnqueueCustomerInbound(new PendingCustomerInbound(
+                conversationId,
+                phone,
+                message.Id,
+                message.ExternalMessageId!,
+                message.MessageType,
+                textContent));
+            return;
+        }
+
+        IConversationWorkflowService workflow;
+        try
+        {
+            workflow = _services.GetRequiredService<IConversationWorkflowService>();
+        }
+        catch (InvalidOperationException)
+        {
+            _logger.LogError(
+                "IConversationWorkflowService is not registered; auto-reply skipped for conversation {ConversationId}. Ensure Database:ConnectionString is configured.",
+                conversationId);
             return;
         }
 
@@ -253,6 +342,59 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
                 message.ExternalMessageId!,
                 message.MessageType,
                 textContent),
+            cancellationToken);
+    }
+
+    private async Task TryInvokeWorkflowForPersistedCustomerInboundAsync(
+        WhatsAppInboundEvent inboundEvent,
+        Message? knownMessage = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(inboundEvent.ExternalMessageId) ||
+            string.IsNullOrWhiteSpace(inboundEvent.RemotePhoneNumber) ||
+            inboundEvent.FromMe)
+        {
+            return;
+        }
+
+        var db = _services.GetService<IApplicationDbContext>();
+        if (db is null)
+        {
+            return;
+        }
+
+        var message = knownMessage ?? await db.Messages
+            .AsNoTracking()
+            .FirstOrDefaultAsync(m => m.ExternalMessageId == inboundEvent.ExternalMessageId, cancellationToken);
+
+        if (message is null || message.SentBy != MessageSender.Customer)
+        {
+            return;
+        }
+
+        if (await HasBotOutboundAfterAsync(message, cancellationToken))
+        {
+            return;
+        }
+
+        var phone = WhatsAppEventMapper.ResolveCustomerAddress(inboundEvent)
+            ?? WhatsAppEventMapper.NormalizePhone(inboundEvent.RemotePhoneNumber!);
+        await InvokeWorkflowIfAllowedAsync(
+            message.ConversationId,
+            phone,
+            message,
+            inboundEvent.TextContent,
+            cancellationToken);
+    }
+
+    private async Task<bool> HasBotOutboundAfterAsync(Message customerMessage, CancellationToken cancellationToken)
+    {
+        var db = _services.GetRequiredService<IApplicationDbContext>();
+        return await db.Messages.AnyAsync(
+            m => m.ConversationId == customerMessage.ConversationId &&
+                 m.SentBy == MessageSender.Bot &&
+                 m.Direction == MessageDirection.Outbound &&
+                 m.CreatedAt >= customerMessage.CreatedAt,
             cancellationToken);
     }
 }

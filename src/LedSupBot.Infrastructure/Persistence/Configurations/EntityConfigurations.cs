@@ -95,6 +95,7 @@ public sealed class TechnicalSupportCaseConfiguration : IEntityTypeConfiguration
 
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(64);
         builder.Property(x => x.SummaryMarkdown).HasMaxLength(16000);
+        builder.Property(x => x.IssueSummary).HasMaxLength(2000);
 
         builder.HasIndex(x => x.ConversationId)
             .IsUnique()
@@ -233,5 +234,26 @@ public sealed class AiExtractionResultConfiguration : IEntityTypeConfiguration<A
             .WithMany(x => x.AiExtractionResults)
             .HasForeignKey(x => x.MessageId)
             .OnDelete(DeleteBehavior.SetNull);
+    }
+}
+
+public sealed class BotModeChangeAuditConfiguration : IEntityTypeConfiguration<BotModeChangeAudit>
+{
+    public void Configure(EntityTypeBuilder<BotModeChangeAudit> builder)
+    {
+        builder.ToTable("bot_mode_change_audits");
+        builder.HasKey(x => x.Id);
+
+        builder.Property(x => x.PreviousMode).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.NewMode).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.Source).HasConversion<string>().HasMaxLength(64);
+
+        builder.HasIndex(x => x.ConversationId).HasDatabaseName("ix_bot_mode_change_audits_conversation_id");
+        builder.HasIndex(x => x.ChangedAt).HasDatabaseName("ix_bot_mode_change_audits_changed_at");
+
+        builder.HasOne(x => x.Conversation)
+            .WithMany()
+            .HasForeignKey(x => x.ConversationId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

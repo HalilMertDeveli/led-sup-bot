@@ -1,8 +1,11 @@
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.Admin;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Application.Workflow.Ai;
+using LedSupBot.Application.Workflow.Context;
 using LedSupBot.Infrastructure.Configuration;
 using LedSupBot.Application.Media;
+using LedSupBot.Application.Takeover;
 using LedSupBot.Infrastructure.Media;
 using LedSupBot.Infrastructure.OpenAi;
 using LedSupBot.Infrastructure.Persistence;
@@ -27,6 +30,7 @@ public static class DependencyInjection
         services.Configure<CorsOptions>(configuration.GetSection(CorsOptions.SectionName));
         services.Configure<WorkflowOptions>(configuration.GetSection(WorkflowOptions.SectionName));
         services.Configure<AiExtractionOptions>(configuration.GetSection(AiExtractionOptions.SectionName));
+        services.Configure<AdminOptions>(configuration.GetSection(AdminOptions.SectionName));
         var openAiSection = configuration.GetSection(OpenAiOptions.SectionName).Get<OpenAiOptions>() ?? new OpenAiOptions();
         services.PostConfigure<AiExtractionOptions>(opts => opts.ModelName = openAiSection.Model);
 
@@ -45,14 +49,20 @@ public static class DependencyInjection
             });
 
             services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<ApplicationDbContext>());
+            services.AddScoped<IConversationTakeoverService, ConversationTakeoverService>();
             services.AddScoped<IConversationWorkflowService, ConversationWorkflowService>();
             services.AddScoped<IWorkflowOutboundDispatcher, WorkflowOutboundDispatcher>();
+            services.AddSingleton<IConversationReplyCoordinator, ConversationReplyCoordinator>();
+            services.AddScoped<IConversationContextBuilder, ConversationContextBuilder>();
+            services.AddScoped<AiResponsePlanner>();
             services.AddScoped<AiExtractionValidator>();
             services.AddScoped<AiExtractionOrchestrator>();
             services.AddScoped<AiExtractionAuditWriter>();
             services.AddSingleton<IMediaStorage, LocalMediaStorage>();
             services.AddSingleton<IMediaImageValidator, MediaImageValidator>();
             services.AddScoped<IInboundMediaPipeline, InboundMediaPipeline>();
+            services.AddScoped<IAdminConversationService, AdminConversationService>();
+            services.AddScoped<IAdminTechnicianOutboundService, AdminTechnicianOutboundService>();
         }
 
         var connectorEnabled = configuration.GetSection(WhatsAppConnectorOptions.SectionName).GetValue<bool>("Enabled");
@@ -79,10 +89,16 @@ public static class DependencyInjection
                 client.BaseAddress = new Uri(openAiOptions.BaseUrl);
                 client.Timeout = TimeSpan.FromSeconds(openAiOptions.TimeoutSeconds > 0 ? openAiOptions.TimeoutSeconds : 30);
             });
+            services.AddHttpClient<IAiConversationPlanner, OpenAiConversationPlannerService>(client =>
+            {
+                client.BaseAddress = new Uri(openAiOptions.BaseUrl);
+                client.Timeout = TimeSpan.FromSeconds(openAiOptions.TimeoutSeconds > 0 ? openAiOptions.TimeoutSeconds : 30);
+            });
         }
         else
         {
             services.AddSingleton<IAiService, UnavailableAiService>();
+            services.AddSingleton<IAiConversationPlanner, UnavailableAiConversationPlanner>();
         }
     }
 }

@@ -28,5 +28,7 @@ public interface IApplicationDbContext
 
     DbSet<AiExtractionResult> AiExtractionResults { get; }
 
+    DbSet<BotModeChangeAudit> BotModeChangeAudits { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

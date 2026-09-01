@@ -31,6 +31,8 @@ public sealed class ApplicationDbContext : DbContext, IApplicationDbContext
 
     public DbSet<AiExtractionResult> AiExtractionResults => Set<AiExtractionResult>();
 
+    public DbSet<BotModeChangeAudit> BotModeChangeAudits => Set<BotModeChangeAudit>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);

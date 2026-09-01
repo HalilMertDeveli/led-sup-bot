@@ -28,4 +28,28 @@ public class WhatsAppEventMapperTests
     {
         Assert.Equal("905551112233", WhatsAppEventMapper.NormalizePhone("+905551112233"));
     }
+
+    [Fact]
+    public void ResolveCustomerAddress_Prefers_Lid_Jid_Over_Pseudo_Phone()
+    {
+        var address = WhatsAppEventMapper.ResolveCustomerAddress(new WhatsAppInboundEvent
+        {
+            RemoteJid = "207855059775610@lid",
+            RemotePhoneNumber = "207855059775610",
+        });
+
+        Assert.Equal("207855059775610@lid", address);
+    }
+
+    [Fact]
+    public void ResolveCustomerAddress_Uses_E164_When_Present()
+    {
+        var address = WhatsAppEventMapper.ResolveCustomerAddress(new WhatsAppInboundEvent
+        {
+            RemoteJid = "905551112233@s.whatsapp.net",
+            RemotePhoneNumber = "905551112233",
+        });
+
+        Assert.Equal("905551112233", address);
+    }
 }

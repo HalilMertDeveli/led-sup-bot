@@ -1,4 +1,5 @@
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.Admin;
 using LedSupBot.Application.WhatsApp;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -11,6 +12,8 @@ public static class DependencyInjection
         services.AddSingleton<IWhatsAppConnectionStateStore, WhatsAppConnectionStateStore>();
         services.AddScoped<IWhatsAppInboundEventHandler, WhatsAppInboundEventHandler>();
         services.AddScoped<IWhatsAppOutboundRecorder, WhatsAppOutboundRecorder>();
+        services.AddSingleton<IAdminEventNotifier, NullAdminEventNotifier>();
+        services.AddScoped<IAdminAuthService, AdminAuthService>();
         return services;
     }
 }

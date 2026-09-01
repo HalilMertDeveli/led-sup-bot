@@ -30,8 +30,6 @@ public sealed class AiWorkflowFixture : IAsyncLifetime
 
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddSingleton<RecordingWhatsAppClient>();
-        services.AddSingleton<IWhatsAppClient>(sp => sp.GetRequiredService<RecordingWhatsAppClient>());
 
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -42,11 +40,16 @@ public sealed class AiWorkflowFixture : IAsyncLifetime
                 ["AiExtraction:ConfidenceThreshold"] = "0.85",
                 ["AiExtraction:PreferDeterministicFirst"] = "true",
                 ["WhatsAppConnector:Enabled"] = "false",
+                ["MediaStorage:RootPath"] = Path.Combine(Path.GetTempPath(), "led-sup-bot-ai-media", Guid.NewGuid().ToString("N")),
+                ["MediaStorage:MaxFileSizeBytes"] = "10485760",
             })
             .Build();
 
         LedSupBot.Application.DependencyInjection.AddApplication(services);
         LedSupBot.Infrastructure.DependencyInjection.AddInfrastructure(services, configuration);
+
+        services.AddSingleton<RecordingWhatsAppClient>();
+        services.AddSingleton<IWhatsAppClient>(sp => sp.GetRequiredService<RecordingWhatsAppClient>());
 
         Ai = new RecordingAiService();
         services.AddSingleton(Ai);

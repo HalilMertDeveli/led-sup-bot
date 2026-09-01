@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import express from "express";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
-import { getStatus, sendText, startWhatsApp, downloadMediaByMessageId } from "./whatsapp.js";
+import { getStatus, sendText, sendPresence, startWhatsApp, downloadMediaByMessageId } from "./whatsapp.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -28,16 +28,36 @@ app.get("/status", requireSecret, (_req, res) => {
 
 app.post("/send/text", requireSecret, async (req, res) => {
   try {
-    const to = String(req.body?.to || "").replace(/\D/g, "");
+    const toRaw = String(req.body?.to || "").trim();
     const text = String(req.body?.text || "");
-    if (!to || !text) {
+    if (!toRaw || !text) {
       return res.status(400).json({ error: "to and text are required" });
     }
-    const result = await sendText(to, text);
-    return res.json({ ok: true, externalMessageId: result.externalMessageId });
+    const result = await sendText(toRaw, text);
+    return res.json({
+      ok: true,
+      externalMessageId: result.externalMessageId,
+      remoteJid: result.remoteJid,
+      resultRemoteJid: result.resultRemoteJid,
+    });
   } catch (error) {
     logger.error({ err: error?.message }, "send text failed");
     return res.status(503).json({ error: "send_failed" });
+  }
+});
+
+app.post("/send/presence", requireSecret, async (req, res) => {
+  try {
+    const toRaw = String(req.body?.to || "").trim();
+    const state = String(req.body?.state || "").trim().toLowerCase();
+    if (!toRaw || (state !== "composing" && state !== "paused")) {
+      return res.status(400).json({ error: "to and state (composing|paused) are required" });
+    }
+    const result = await sendPresence(toRaw, state);
+    return res.json({ ok: true, remoteJid: result.remoteJid, state: result.state });
+  } catch (error) {
+    logger.warn({ err: error?.message }, "send presence failed");
+    return res.status(503).json({ error: "presence_failed" });
   }
 });
 

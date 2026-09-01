@@ -5,6 +5,7 @@ using LedSupBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace LedSupBot.Application.Workflow;
 
@@ -47,43 +48,60 @@ public sealed class WorkflowOutboundDispatcher : IWorkflowOutboundDispatcher
         }
 
         var db = _services.GetRequiredService<IApplicationDbContext>();
-        var options = _services.GetRequiredService<Microsoft.Extensions.Options.IOptions<WorkflowOptions>>().Value;
+        var options = _services.GetRequiredService<IOptions<WorkflowOptions>>().Value;
+        var coordinator = _services.GetService<IConversationReplyCoordinator>();
+        var linkedToken = coordinator?.LinkReplyCancellation(conversationId, cancellationToken) ?? cancellationToken;
 
         if (!options.AutoReplyEnabled)
         {
-            _logger.LogInformation(
-                "Workflow auto-reply disabled; skipped {Count} outbound message(s) for conversation {ConversationId}",
+            _logger.LogWarning(
+                "Workflow auto-reply disabled (Workflow:AutoReplyEnabled=false); skipped {Count} outbound message(s) for conversation {ConversationId}",
                 texts.Count,
                 conversationId);
             return;
         }
 
-        var client = _services.GetService<IWhatsAppClient>();
-        if (client is null)
-        {
-            _logger.LogWarning("WhatsApp client unavailable; workflow outbound skipped");
-            return;
-        }
-
+        var client = _services.GetRequiredService<IWhatsAppClient>();
         var recorder = _services.GetRequiredService<IWhatsAppOutboundRecorder>();
 
         foreach (var text in texts)
         {
-            var conversation = await db.Conversations
-                .AsNoTracking()
-                .FirstOrDefaultAsync(c => c.Id == conversationId, cancellationToken);
+            linkedToken.ThrowIfCancellationRequested();
 
-            if (conversation is null || !ConversationBotPolicy.CanAutoReply(conversation.BotMode))
+            if (!await CanStillAutoReplyAsync(db, conversationId, linkedToken))
             {
                 _logger.LogInformation(
-                    "Workflow outbound stopped before send; BotMode={BotMode}",
-                    conversation?.BotMode.ToString() ?? "missing");
+                    "Workflow outbound stopped before natural delay; BotMode is not Bot for conversation {ConversationId}",
+                    conversationId);
+                coordinator?.SetActivity(conversationId, BotReplyActivity.Idle);
                 return;
             }
 
-            var externalId = await client.SendTextMessageAsync(customerPhoneE164, text, cancellationToken);
-            await recorder.RecordBotTextAsync(customerPhoneE164, text, externalId, cancellationToken);
+            await ApplyNaturalDelayAsync(
+                conversationId,
+                customerPhoneE164,
+                text,
+                options.NaturalTiming,
+                client,
+                coordinator,
+                linkedToken);
+
+            if (!await CanStillAutoReplyAsync(db, conversationId, linkedToken))
+            {
+                _logger.LogInformation(
+                    "Workflow outbound cancelled before send; BotMode is not Bot for conversation {ConversationId}",
+                    conversationId);
+                await TryClearTypingAsync(client, customerPhoneE164);
+                coordinator?.SetActivity(conversationId, BotReplyActivity.Idle);
+                return;
+            }
+
+            var externalId = await client.SendTextMessageAsync(customerPhoneE164, text, linkedToken);
+            await recorder.RecordBotTextAsync(customerPhoneE164, text, externalId, linkedToken);
+            await TryClearTypingAsync(client, customerPhoneE164);
         }
+
+        coordinator?.SetActivity(conversationId, BotReplyActivity.Idle);
     }
 
     public async Task TrySendConfigExampleImageAsync(
@@ -93,7 +111,7 @@ public sealed class WorkflowOutboundDispatcher : IWorkflowOutboundDispatcher
         string? caption,
         CancellationToken cancellationToken = default)
     {
-        var options = _services.GetRequiredService<Microsoft.Extensions.Options.IOptions<WorkflowOptions>>().Value;
+        var options = _services.GetRequiredService<IOptions<WorkflowOptions>>().Value;
         if (!options.AutoReplyEnabled || string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
         {
             return;
@@ -132,5 +150,73 @@ public sealed class WorkflowOutboundDispatcher : IWorkflowOutboundDispatcher
         {
             _logger.LogWarning("Config example image send is not supported by the WhatsApp client");
         }
+    }
+
+    private async Task ApplyNaturalDelayAsync(
+        Guid conversationId,
+        string customerPhoneE164,
+        string text,
+        NaturalResponseTimingOptions timing,
+        IWhatsAppClient client,
+        IConversationReplyCoordinator? coordinator,
+        CancellationToken cancellationToken)
+    {
+        if (!timing.Enabled)
+        {
+            return;
+        }
+
+        var delay = NaturalResponseTimingCalculator.ComputeDelay(text, timing);
+        if (delay <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        coordinator?.SetActivity(conversationId, BotReplyActivity.Typing);
+
+        try
+        {
+            await client.SendComposingAsync(customerPhoneE164, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Typing presence failed for conversation {ConversationId}; continuing send", conversationId);
+        }
+
+        try
+        {
+            await Task.Delay(delay, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            await TryClearTypingAsync(client, customerPhoneE164);
+            throw;
+        }
+    }
+
+    private static async Task TryClearTypingAsync(IWhatsAppClient client, string customerPhoneE164)
+    {
+        try
+        {
+            await client.SendPausedPresenceAsync(customerPhoneE164);
+        }
+        catch
+        {
+            /* presence cleanup is best-effort */
+        }
+    }
+
+    private static async Task<bool> CanStillAutoReplyAsync(
+        IApplicationDbContext db,
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        var botMode = await db.Conversations
+            .AsNoTracking()
+            .Where(c => c.Id == conversationId)
+            .Select(c => c.BotMode)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return ConversationBotPolicy.CanAutoReply(botMode);
     }
 }

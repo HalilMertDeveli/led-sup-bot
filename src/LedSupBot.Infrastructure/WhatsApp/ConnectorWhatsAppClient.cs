@@ -66,10 +66,13 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
 
     public async Task<string?> SendTextMessageAsync(string toPhoneE164, string body, CancellationToken cancellationToken = default)
     {
-        var digits = new string(toPhoneE164.Where(char.IsDigit).ToArray());
+        var destination = toPhoneE164.Contains('@')
+            ? toPhoneE164.Trim()
+            : new string(toPhoneE164.Where(char.IsDigit).ToArray());
+
         using var response = await _http.PostAsJsonAsync(
             "send/text",
-            new { to = digits, text = body },
+            new { to = destination, text = body },
             cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -80,6 +83,33 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
 
         var payload = await response.Content.ReadFromJsonAsync<SendPayload>(cancellationToken: cancellationToken);
         return payload?.ExternalMessageId;
+    }
+
+    public async Task SendComposingAsync(string toPhoneE164, CancellationToken cancellationToken = default)
+    {
+        await SendPresenceAsync(toPhoneE164, "composing", cancellationToken);
+    }
+
+    public async Task SendPausedPresenceAsync(string toPhoneE164, CancellationToken cancellationToken = default)
+    {
+        await SendPresenceAsync(toPhoneE164, "paused", cancellationToken);
+    }
+
+    private async Task SendPresenceAsync(string toPhoneE164, string state, CancellationToken cancellationToken)
+    {
+        var destination = toPhoneE164.Contains('@')
+            ? toPhoneE164.Trim()
+            : new string(toPhoneE164.Where(char.IsDigit).ToArray());
+
+        using var response = await _http.PostAsJsonAsync(
+            "send/presence",
+            new { to = destination, state },
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogDebug("Connector presence {State} failed with status {Status}", state, (int)response.StatusCode);
+        }
     }
 
     public Task<string?> SendImageMessageAsync(

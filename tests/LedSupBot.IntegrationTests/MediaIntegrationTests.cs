@@ -34,8 +34,6 @@ public sealed class MediaFixture : IAsyncLifetime
 
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddSingleton<ConfigurableWhatsAppClient>();
-        services.AddSingleton<IWhatsAppClient>(sp => sp.GetRequiredService<ConfigurableWhatsAppClient>());
 
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -51,6 +49,9 @@ public sealed class MediaFixture : IAsyncLifetime
 
         LedSupBot.Application.DependencyInjection.AddApplication(services);
         LedSupBot.Infrastructure.DependencyInjection.AddInfrastructure(services, configuration);
+
+        services.AddSingleton<ConfigurableWhatsAppClient>();
+        services.AddSingleton<IWhatsAppClient>(sp => sp.GetRequiredService<ConfigurableWhatsAppClient>());
 
         Services = services.BuildServiceProvider();
         WhatsApp = Services.GetRequiredService<ConfigurableWhatsAppClient>();
@@ -149,10 +150,14 @@ public sealed class MediaFixture : IAsyncLifetime
         byte[]? imageBytes = null,
         string mimeType = "image/png",
         bool downloadable = true,
-        long? fileLength = null)
+        long? fileLength = null,
+        bool configureDownload = true)
     {
         imageBytes ??= TestImageBytes.CreatePng();
-        WhatsApp.SetDownload(externalId, mimeType, imageBytes);
+        if (configureDownload)
+        {
+            WhatsApp.SetDownload(externalId, mimeType, imageBytes);
+        }
 
         await using var scope = Services.CreateAsyncScope();
         var pipeline = scope.ServiceProvider.GetRequiredService<IInboundMediaPipeline>();
@@ -200,7 +205,7 @@ public sealed class MediaIntegrationTests
         var (_, _, supportCase) = await _fixture.SeedCaseAsync();
         var externalId = $"img-jpeg-{Guid.NewGuid():N}";
         var message = await _fixture.PersistInboundImageMessageAsync(supportCase.ConversationId, externalId);
-        var jpeg = UnitTests.Media.TestImageBytes.CreateJpeg();
+        var jpeg = TestImageBytes.CreateJpeg();
 
         var result = await _fixture.ProcessImageThroughPipelineAsync(supportCase, message, externalId, jpeg, "image/jpeg");
         Assert.Equal(MediaProcessOutcome.Stored, result.Outcome);
@@ -219,8 +224,8 @@ public sealed class MediaIntegrationTests
         var (_, _, supportCase) = await _fixture.SeedCaseAsync();
         foreach (var (bytes, mime) in new (byte[], string)[]
         {
-            (UnitTests.Media.TestImageBytes.CreatePng(), "image/png"),
-            (UnitTests.Media.TestImageBytes.CreateWebp(), "image/webp"),
+            (TestImageBytes.CreatePng(), "image/png"),
+            (TestImageBytes.CreateWebp(), "image/webp"),
         })
         {
             var externalId = $"img-{mime.Split('/')[1]}-{Guid.NewGuid():N}";
@@ -236,10 +241,10 @@ public sealed class MediaIntegrationTests
         var (_, _, supportCase) = await _fixture.SeedCaseAsync();
         var externalId = $"img-gif-{Guid.NewGuid():N}";
         var message = await _fixture.PersistInboundImageMessageAsync(supportCase.ConversationId, externalId);
-        _fixture.WhatsApp.SetDownload(externalId, "image/gif", UnitTests.Media.TestImageBytes.CreateGif());
+        _fixture.WhatsApp.SetDownload(externalId, "image/gif", TestImageBytes.CreateGif());
 
         var result = await _fixture.ProcessImageThroughPipelineAsync(
-            supportCase, message, externalId, UnitTests.Media.TestImageBytes.CreateGif(), "image/gif");
+            supportCase, message, externalId, TestImageBytes.CreateGif(), "image/gif");
 
         Assert.Equal(MediaProcessOutcome.UnsupportedMimeType, result.Outcome);
         await using var scope = _fixture.Services.CreateAsyncScope();
@@ -253,7 +258,7 @@ public sealed class MediaIntegrationTests
         var (_, _, supportCase) = await _fixture.SeedCaseAsync();
         var externalId = $"img-bad-{Guid.NewGuid():N}";
         var message = await _fixture.PersistInboundImageMessageAsync(supportCase.ConversationId, externalId);
-        var corrupt = UnitTests.Media.TestImageBytes.CorruptJpegHeader();
+        var corrupt = TestImageBytes.CorruptJpegHeader();
         _fixture.WhatsApp.SetDownload(externalId, "image/jpeg", corrupt);
 
         var result = await _fixture.ProcessImageThroughPipelineAsync(
@@ -267,7 +272,7 @@ public sealed class MediaIntegrationTests
         var (_, _, supportCase) = await _fixture.SeedCaseAsync();
         var externalId = $"img-big-{Guid.NewGuid():N}";
         var message = await _fixture.PersistInboundImageMessageAsync(supportCase.ConversationId, externalId);
-        var png = UnitTests.Media.TestImageBytes.CreatePng();
+        var png = TestImageBytes.CreatePng();
 
         var result = await _fixture.ProcessImageThroughPipelineAsync(
             supportCase,
@@ -343,13 +348,14 @@ public sealed class MediaIntegrationTests
         var (_, _, supportCase) = await _fixture.SeedCaseAsync();
         var externalId = $"img-retry-{Guid.NewGuid():N}";
         var message = await _fixture.PersistInboundImageMessageAsync(supportCase.ConversationId, externalId);
-        _fixture.WhatsApp.SetDownloadFailure(externalId);
 
-        var failed = await _fixture.ProcessImageThroughPipelineAsync(supportCase, message, externalId);
+        var failed = await _fixture.ProcessImageThroughPipelineAsync(
+            supportCase, message, externalId, configureDownload: false);
         Assert.Equal(MediaProcessOutcome.DownloadFailed, failed.Outcome);
 
-        _fixture.WhatsApp.SetDownload(externalId, "image/png", UnitTests.Media.TestImageBytes.CreatePng());
-        var retry = await _fixture.ProcessImageThroughPipelineAsync(supportCase, message, externalId);
+        _fixture.WhatsApp.SetDownload(externalId, "image/png", TestImageBytes.CreatePng());
+        var retry = await _fixture.ProcessImageThroughPipelineAsync(
+            supportCase, message, externalId, configureDownload: false);
         Assert.Equal(MediaProcessOutcome.Stored, retry.Outcome);
     }
 
@@ -381,7 +387,7 @@ public sealed class MediaIntegrationTests
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         Assert.Equal(1, await db.Messages.CountAsync(m => m.ExternalMessageId == externalId));
 
-        _fixture.WhatsApp.SetDownload(externalId, "image/png", UnitTests.Media.TestImageBytes.CreatePng());
+        _fixture.WhatsApp.SetDownload(externalId, "image/png", TestImageBytes.CreatePng());
         await _fixture.InvokeHandlerAsync(payload);
 
         Assert.Equal(1, await db.PanelLabelPhotos.CountAsync(p => p.TechnicalSupportCaseId == supportCase.Id));
@@ -394,7 +400,7 @@ public sealed class MediaIntegrationTests
     {
         var (_, customer, supportCase) = await _fixture.SeedCaseAsync();
         var externalId = $"img-caption-{Guid.NewGuid():N}";
-        _fixture.WhatsApp.SetDownload(externalId, "image/png", UnitTests.Media.TestImageBytes.CreatePng());
+        _fixture.WhatsApp.SetDownload(externalId, "image/png", TestImageBytes.CreatePng());
 
         await _fixture.InvokeHandlerAsync(new WhatsAppInboundEvent
         {
@@ -435,7 +441,7 @@ public sealed class MediaIntegrationTests
     {
         var (conversation, customer, _) = await _fixture.SeedCaseAsync();
         var externalId = $"img-stage-{Guid.NewGuid():N}";
-        _fixture.WhatsApp.SetDownload(externalId, "image/png", UnitTests.Media.TestImageBytes.CreatePng());
+        _fixture.WhatsApp.SetDownload(externalId, "image/png", TestImageBytes.CreatePng());
 
         await _fixture.InvokeHandlerAsync(new WhatsAppInboundEvent
         {
@@ -459,8 +465,11 @@ public sealed class ConfigurableWhatsAppClient : IWhatsAppClient
     private readonly Dictionary<string, (string Mime, byte[] Content)> _downloads = new(StringComparer.Ordinal);
     private readonly HashSet<string> _failures = new(StringComparer.Ordinal);
 
-    public void SetDownload(string externalMessageId, string mimeType, byte[] content) =>
+    public void SetDownload(string externalMessageId, string mimeType, byte[] content)
+    {
+        _failures.Remove(externalMessageId);
         _downloads[externalMessageId] = (mimeType, content);
+    }
 
     public void SetDownloadFailure(string externalMessageId)
     {
@@ -476,6 +485,12 @@ public sealed class ConfigurableWhatsAppClient : IWhatsAppClient
         Task.FromResult<string?>($"fake-{Guid.NewGuid():N}");
     public Task<string?> SendImageMessageAsync(string toPhoneE164, Stream image, string contentType, string? caption = null, CancellationToken cancellationToken = default) =>
         Task.FromResult<string?>($"fake-img-{Guid.NewGuid():N}");
+
+    public Task SendComposingAsync(string toPhoneE164, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+
+    public Task SendPausedPresenceAsync(string toPhoneE164, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
 
     public Task<WhatsAppMediaDownloadResult> DownloadMediaAsync(string mediaId, CancellationToken cancellationToken = default)
     {

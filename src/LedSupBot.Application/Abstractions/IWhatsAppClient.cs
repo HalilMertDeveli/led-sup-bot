@@ -21,6 +21,10 @@ public interface IWhatsAppClient
         string? caption = null,
         CancellationToken cancellationToken = default);
 
+    Task SendComposingAsync(string toPhoneE164, CancellationToken cancellationToken = default);
+
+    Task SendPausedPresenceAsync(string toPhoneE164, CancellationToken cancellationToken = default);
+
     Task<WhatsAppMediaDownloadResult> DownloadMediaAsync(string mediaId, CancellationToken cancellationToken = default);
 }
 
@@ -48,6 +52,9 @@ public sealed class WhatsAppInboundEvent
     public string? RemoteJid { get; set; }
 
     public string? RemotePhoneNumber { get; set; }
+
+    /// <summary>Baileys sender_pn JID when inbound remoteJid is @lid (optional).</summary>
+    public string? SenderPnJid { get; set; }
 
     public bool FromMe { get; set; }
 

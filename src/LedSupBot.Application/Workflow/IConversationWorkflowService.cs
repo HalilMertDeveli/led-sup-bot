@@ -13,4 +13,5 @@ public sealed record WorkflowInboundMessage(
     Guid MessageId,
     string ExternalMessageId,
     MessageType MessageType,
-    string? TextContent);
+    string? TextContent,
+    IReadOnlyList<Guid>? CoalescedMessageIds = null);

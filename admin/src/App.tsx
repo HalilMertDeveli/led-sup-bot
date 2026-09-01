@@ -1,71 +1,67 @@
 import { useEffect, useState } from "react";
-import { fetchApiHealth } from "./api/health";
-import { config } from "./config";
+import { fetchAuthStatus } from "./api/admin";
+import { CompactPanel } from "./components/CompactPanel";
+import { Dashboard } from "./components/Dashboard";
+import { LoginPage } from "./components/LoginPage";
 import "./App.css";
 
-type ConnectionState = "checking" | "online" | "offline";
-
-function App() {
-  const [connection, setConnection] = useState<ConnectionState>("checking");
-  const [detail, setDetail] = useState<string>("");
+function useHashRoute() {
+  const [route, setRoute] = useState(() => window.location.hash.replace(/^#\/?/, "") || "dashboard");
 
   useEffect(() => {
-    const controller = new AbortController();
-
-    fetchApiHealth(controller.signal)
-      .then((health) => {
-        setConnection("online");
-        setDetail(health.status);
-      })
-      .catch((error: unknown) => {
-        setConnection("offline");
-        setDetail(error instanceof Error ? error.message : "API unreachable");
-      });
-
-    return () => controller.abort();
+    const onHash = () => setRoute(window.location.hash.replace(/^#\/?/, "") || "dashboard");
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  return (
-    <div className="shell">
-      <header className="shell__header">
-        <p className="shell__eyebrow">LED Support Bot</p>
-        <h1>Admin foundation</h1>
-        <p className="shell__lede">
-          Phase 2 shell only. Full dashboard (queues, takeover, summaries) is Phase 9.
-        </p>
-      </header>
+  return route;
+}
 
-      <section className="panel">
-        <h2>API connectivity</h2>
-        <dl>
-          <div>
-            <dt>Base URL</dt>
-            <dd>
-              <code>{config.apiBaseUrl}</code>
-            </dd>
-          </div>
-          <div>
-            <dt>Health</dt>
-            <dd data-state={connection}>{connection}</dd>
-          </div>
-          <div>
-            <dt>Detail</dt>
-            <dd>{detail || "—"}</dd>
-          </div>
-        </dl>
-      </section>
+function App() {
+  const [checking, setChecking] = useState(true);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [configured, setConfigured] = useState(true);
+  const route = useHashRoute();
 
-      <section className="panel panel--muted">
-        <h2>Not in this phase</h2>
-        <ul>
-          <li>WhatsApp Cloud API integration</li>
-          <li>OpenAI extraction</li>
-          <li>Conversation dashboard</li>
-          <li>Human takeover controls</li>
-        </ul>
-      </section>
-    </div>
-  );
+  useEffect(() => {
+    fetchAuthStatus()
+      .then((status) => {
+        setConfigured(status.configured);
+        setAuthenticated(status.authenticated);
+      })
+      .catch(() => {
+        setConfigured(false);
+        setAuthenticated(false);
+      })
+      .finally(() => setChecking(false));
+  }, []);
+
+  if (checking) {
+    return (
+      <div className="login">
+        <p className="login__state">Oturum kontrol ediliyor…</p>
+      </div>
+    );
+  }
+
+  if (!authenticated) {
+    return (
+      <LoginPage configured={configured} onSuccess={() => setAuthenticated(true)} />
+    );
+  }
+
+  if (route === "compact") {
+    return (
+      <CompactPanel
+        onLogout={() => setAuthenticated(false)}
+        onOpenFull={() => {
+          window.location.hash = "#/";
+        }}
+      />
+    );
+  }
+
+  return <Dashboard onLogout={() => setAuthenticated(false)} />;
 }
 
 export default App;

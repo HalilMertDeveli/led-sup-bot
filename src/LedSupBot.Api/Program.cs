@@ -1,11 +1,17 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Serialization;
 using HealthChecks.UI.Client;
 using LedSupBot.Application;
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.Admin;
+using LedSupBot.Application.Takeover;
 using LedSupBot.Application.WhatsApp;
+using LedSupBot.Application.Workflow;
+using LedSupBot.Domain.Enums;
 using LedSupBot.Infrastructure;
 using LedSupBot.Infrastructure.Configuration;
+using LedSupBot.Api.Admin;
 using LedSupBot.Api.Middleware;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -24,6 +30,10 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 builder.Services.AddEndpointsApiExplorer();
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+});
 builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new()
@@ -50,8 +60,19 @@ if (!string.IsNullOrWhiteSpace(databaseOptions.ConnectionString))
 }
 
 builder.Services.AddCors();
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<IAdminEventNotifier, SignalRAdminEventNotifier>();
 
 var app = builder.Build();
+
+var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
+var workflowOptions = app.Services.GetRequiredService<IOptions<WorkflowOptions>>().Value;
+var connectorOptionsAtStartup = app.Services.GetRequiredService<IOptions<WhatsAppConnectorOptions>>().Value;
+startupLogger.LogInformation(
+    "Startup pipeline: DatabaseConfigured={DatabaseConfigured} WorkflowAutoReplyEnabled={AutoReplyEnabled} ConnectorEnabled={ConnectorEnabled}",
+    !string.IsNullOrWhiteSpace(databaseOptions.ConnectionString),
+    workflowOptions.AutoReplyEnabled,
+    connectorOptionsAtStartup.Enabled);
 
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
@@ -71,7 +92,8 @@ app.UseCors(policy =>
 
     policy.WithOrigins(corsOptions.AllowedOrigins)
         .AllowAnyHeader()
-        .AllowAnyMethod();
+        .AllowAnyMethod()
+        .AllowCredentials();
 });
 
 var openAiOptions = app.Services.GetRequiredService<IOptions<OpenAiOptions>>().Value;
@@ -82,8 +104,8 @@ var openAiStatus = string.IsNullOrWhiteSpace(openAiOptions.ApiKey)
 app.MapGet("/", () => Results.Ok(new
 {
     service = "LedSupBot.Api",
-    phase = "7",
-    status = "media_pipeline",
+    phase = "9",
+    status = "admin_dashboard",
     whatsAppIntegration = "baileys_connector_unofficial",
     metaApproved = false,
     openAiIntegration = openAiStatus,
@@ -193,6 +215,63 @@ app.MapPost("/internal/whatsapp/send-text", async (
 
     return Results.Ok(new { ok = true, externalMessageId = externalId });
 });
+
+app.MapPost("/internal/conversations/{conversationId:guid}/takeover", async (
+    Guid conversationId,
+    HttpRequest request,
+    IOptions<WhatsAppConnectorOptions> connectorOptions,
+    IConversationTakeoverService takeover,
+    CancellationToken cancellationToken) =>
+{
+    if (!IsAuthorized(request, connectorOptions.Value.SharedSecret))
+    {
+        return Results.Unauthorized();
+    }
+
+    var result = await takeover.TakeOverAsync(conversationId, TakeoverChangeSource.AdminTakeover, cancellationToken);
+    return result.Found
+        ? Results.Ok(new { ok = true, changed = result.Changed, botMode = result.CurrentMode.ToString(), stage = result.CurrentStage.ToString() })
+        : Results.NotFound(new { error = "conversation_not_found" });
+});
+
+app.MapPost("/internal/conversations/{conversationId:guid}/pause", async (
+    Guid conversationId,
+    HttpRequest request,
+    IOptions<WhatsAppConnectorOptions> connectorOptions,
+    IConversationTakeoverService takeover,
+    CancellationToken cancellationToken) =>
+{
+    if (!IsAuthorized(request, connectorOptions.Value.SharedSecret))
+    {
+        return Results.Unauthorized();
+    }
+
+    var result = await takeover.PauseAsync(conversationId, cancellationToken);
+    return result.Found
+        ? Results.Ok(new { ok = true, changed = result.Changed, botMode = result.CurrentMode.ToString() })
+        : Results.NotFound(new { error = "conversation_not_found" });
+});
+
+app.MapPost("/internal/conversations/{conversationId:guid}/resume-bot", async (
+    Guid conversationId,
+    HttpRequest request,
+    IOptions<WhatsAppConnectorOptions> connectorOptions,
+    IConversationTakeoverService takeover,
+    CancellationToken cancellationToken) =>
+{
+    if (!IsAuthorized(request, connectorOptions.Value.SharedSecret))
+    {
+        return Results.Unauthorized();
+    }
+
+    var result = await takeover.ResumeBotAsync(conversationId, cancellationToken);
+    return result.Found
+        ? Results.Ok(new { ok = true, changed = result.Changed, botMode = result.CurrentMode.ToString(), stage = result.CurrentStage.ToString() })
+        : Results.NotFound(new { error = "conversation_not_found" });
+});
+
+app.MapAdminEndpoints();
+app.MapHub<AdminHub>("/hubs/admin");
 
 app.Run();
 

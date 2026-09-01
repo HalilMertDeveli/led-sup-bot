@@ -1,4 +1,5 @@
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5080";
+// Dev: empty base → Vite proxies /api and /hubs to the ASP.NET API (no CORS issues).
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
 export const config = {
   apiBaseUrl: apiBaseUrl.replace(/\/$/, ""),

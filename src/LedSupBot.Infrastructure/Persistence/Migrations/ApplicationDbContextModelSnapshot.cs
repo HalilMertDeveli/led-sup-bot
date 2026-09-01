@@ -17,7 +17,7 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "8.0.19")
+                .HasAnnotation("ProductVersion", "8.0.11")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -108,6 +108,50 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_anydesk_informations_case_id");
 
                     b.ToTable("anydesk_informations", (string)null);
+                });
+
+            modelBuilder.Entity("LedSupBot.Domain.Entities.BotModeChangeAudit", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("ChangedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("NewMode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("PreviousMode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChangedAt")
+                        .HasDatabaseName("ix_bot_mode_change_audits_changed_at");
+
+                    b.HasIndex("ConversationId")
+                        .HasDatabaseName("ix_bot_mode_change_audits_conversation_id");
+
+                    b.ToTable("bot_mode_change_audits", (string)null);
                 });
 
             modelBuilder.Entity("LedSupBot.Domain.Entities.ConfigConnectionInfo", b =>
@@ -464,6 +508,16 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(16000)
                         .HasColumnType("character varying(16000)");
 
+                    b.Property<string>("IssueSummary")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTimeOffset?>("AnyDeskAlertSentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("AnyDeskAlertDismissedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -506,6 +560,17 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("TechnicalSupportCase");
+                });
+
+            modelBuilder.Entity("LedSupBot.Domain.Entities.BotModeChangeAudit", b =>
+                {
+                    b.HasOne("LedSupBot.Domain.Entities.Conversation", "Conversation")
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Conversation");
                 });
 
             modelBuilder.Entity("LedSupBot.Domain.Entities.ConfigConnectionInfo", b =>

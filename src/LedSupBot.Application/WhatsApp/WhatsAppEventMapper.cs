@@ -50,4 +50,39 @@ public static class WhatsAppEventMapper
 
         return new PhoneNumber(phone).Value.TrimStart('+');
     }
+
+    /// <summary>
+    /// Resolves the customer channel address from connector metadata.
+    /// Prefers E.164 when available; falls back to full WhatsApp JID (e.g. LID chats).
+    /// </summary>
+    public static string? ResolveCustomerAddress(WhatsAppInboundEvent inbound)
+    {
+        if (IsLidJid(inbound.RemoteJid))
+        {
+            return inbound.RemoteJid!.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(inbound.RemotePhoneNumber))
+        {
+            return NormalizePhone(inbound.RemotePhoneNumber);
+        }
+
+        if (!string.IsNullOrWhiteSpace(inbound.RemoteJid) && inbound.RemoteJid.Contains('@'))
+        {
+            return inbound.RemoteJid.Trim();
+        }
+
+        return null;
+    }
+
+    public static bool IsLidJid(string? jid)
+    {
+        if (string.IsNullOrWhiteSpace(jid) || !jid.Contains('@'))
+        {
+            return false;
+        }
+
+        var domain = jid.Split('@')[^1];
+        return domain.StartsWith("lid", StringComparison.OrdinalIgnoreCase);
+    }
 }
