@@ -1,0 +1,84 @@
+# Build
+[Bb]in/
+[Oo]bj/
+out/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# .NET
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.nupkg
+*.snupkg
+
+# Test / coverage
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# Node / Admin
+node_modules/
+admin/dist/
+admin/.vite/
+connector/node_modules/
+connector/.sessions/
+connector/.env
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# WhatsApp / Baileys session material (never commit)
+**/.sessions/
+**/auth_info*/
+**/creds.json
+**/app-state-sync*
+**/pre-key*
+**/sender-key*
+**/session-*.json
+
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.pem
+*.key
+secrets/
+**/appsettings.*.local.json
+**/secrets.json
+
+# IDE
+.vs/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea/
+*.swp
+*~
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local databases / storage
+*.db
+*.db-shm
+*.db-wal
+local-storage/
+.tmp/
+
+# Logs
+logs/
+*.log
+
+# Certificates
+*.crt
+!docs/**/*.md

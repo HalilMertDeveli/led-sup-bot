@@ -1,0 +1,22 @@
+{
+  "name": "led-sup-bot-whatsapp-connector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Unofficial Baileys linked-device connector for LedSupBot. Not Meta-approved.",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@hapi/boom": "^9.1.4",
+    "@whiskeysockets/baileys": "6.7.24",
+    "express": "^4.21.2",
+    "pino": "^9.6.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

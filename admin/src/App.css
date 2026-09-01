@@ -1,0 +1,115 @@
+:root {
+  color: #14201a;
+  background: #f3efe6;
+  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(46, 110, 72, 0.12), transparent 40%),
+    linear-gradient(180deg, #f7f3ea 0%, #ebe4d6 100%);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.shell {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 48px 24px 64px;
+}
+
+.shell__header h1 {
+  margin: 0 0 8px;
+  font-size: 2rem;
+  letter-spacing: -0.03em;
+}
+
+.shell__eyebrow {
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.75rem;
+  color: #2e6e48;
+  font-weight: 700;
+}
+
+.shell__lede {
+  margin: 0;
+  color: #4d5a52;
+}
+
+.panel {
+  margin-top: 28px;
+  padding: 20px 22px;
+  border: 1px solid #d7d0c2;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.panel--muted {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+}
+
+.panel dl {
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.panel dl > div {
+  display: grid;
+  gap: 4px;
+}
+
+.panel dt {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #66756c;
+}
+
+.panel dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.panel dd[data-state="online"] {
+  color: #1f7a45;
+}
+
+.panel dd[data-state="offline"] {
+  color: #9b3b2f;
+}
+
+.panel dd[data-state="checking"] {
+  color: #6b5d3a;
+}
+
+.panel ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: #4d5a52;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
