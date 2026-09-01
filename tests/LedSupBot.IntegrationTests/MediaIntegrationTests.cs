@@ -4,6 +4,7 @@ using LedSupBot.Application.WhatsApp;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using LedSupBot.Infrastructure.Persistence;
+using LedSupBot.UnitTests.Media;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -150,7 +151,7 @@ public sealed class MediaFixture : IAsyncLifetime
         bool downloadable = true,
         long? fileLength = null)
     {
-        imageBytes ??= UnitTests.Media.TestImageBytes.CreatePng();
+        imageBytes ??= TestImageBytes.CreatePng();
         WhatsApp.SetDownload(externalId, mimeType, imageBytes);
 
         await using var scope = Services.CreateAsyncScope();
