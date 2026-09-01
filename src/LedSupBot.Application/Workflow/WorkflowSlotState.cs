@@ -44,7 +44,7 @@ public sealed class WorkflowSlotState
         {
             WidthCm = width,
             HeightCm = height,
-            HasPanelLabelPhoto = supportCase.PanelLabelPhotos.Count > 0,
+            HasPanelLabelPhoto = supportCase.PanelLabelPhotos.Any(IsValidStoredPanelPhoto),
             ReceiverCount = supportCase.ReceiverInformation?.Count,
             ConfigConfirmed = supportCase.ConfigConnection?.Status == ConfigConnectionStatus.Confirmed,
             ConfigExampleSent = supportCase.ConfigConnection?.ExampleImageSent == true,
@@ -55,4 +55,9 @@ public sealed class WorkflowSlotState
     }
 
     public bool IsScreenComplete => WidthCm is > 0 && HeightCm is > 0;
+
+    internal static bool IsValidStoredPanelPhoto(PanelLabelPhoto photo) =>
+        photo.SizeBytes is > 0 &&
+        !string.IsNullOrWhiteSpace(photo.StorageKey) &&
+        photo.StorageKey.StartsWith("cases/", StringComparison.Ordinal);
 }

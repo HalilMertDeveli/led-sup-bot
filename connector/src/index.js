@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import express from "express";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
-import { getStatus, sendText, startWhatsApp } from "./whatsapp.js";
+import { getStatus, sendText, startWhatsApp, downloadMediaByMessageId } from "./whatsapp.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -38,6 +38,30 @@ app.post("/send/text", requireSecret, async (req, res) => {
   } catch (error) {
     logger.error({ err: error?.message }, "send text failed");
     return res.status(503).json({ error: "send_failed" });
+  }
+});
+
+app.post("/download/media", requireSecret, async (req, res) => {
+  try {
+    const externalMessageId = String(req.body?.externalMessageId || "").trim();
+    if (!externalMessageId) {
+      return res.status(400).json({ error: "external_message_id_required" });
+    }
+
+    const result = await downloadMediaByMessageId(externalMessageId);
+    if (!result?.content?.length) {
+      return res.status(404).json({ error: "media_not_available" });
+    }
+
+    res.setHeader("Content-Type", result.mimeType || "application/octet-stream");
+    res.setHeader("X-Media-Byte-Length", String(result.byteLength));
+    return res.send(result.content);
+  } catch (error) {
+    if (error?.code === "MEDIA_STUB_NOT_FOUND") {
+      return res.status(404).json({ error: "media_stub_not_found" });
+    }
+    logger.error({ err: error?.message, event: "MEDIA_DOWNLOAD_FAILED" }, "media download failed");
+    return res.status(503).json({ error: "download_failed" });
   }
 });
 

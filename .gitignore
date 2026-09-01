@@ -73,6 +73,7 @@ Desktop.ini
 *.db-shm
 *.db-wal
 local-storage/
+data/media/
 .tmp/
 
 # Logs

@@ -144,6 +144,7 @@ public sealed class AiWorkflowIntegrationTests
     public async Task Ai_Supplements_Multi_Slot_Message_When_Deterministic_Misses_Receiver()
     {
         var (conversation, customer) = await _fixture.SeedConversationAsync();
+        _fixture.Ai.Reset();
         _fixture.Ai.NextResponse = new AiStructuredExtraction(
             CustomerMessageIntent.TechnicalSupport,
             new ScreenSlotCandidate(500, 300, null, null, 0.98, false),
@@ -168,6 +169,7 @@ public sealed class AiWorkflowIntegrationTests
     public async Task Ai_Low_Confidence_Does_Not_Persist_Ambiguous_5x3()
     {
         var (conversation, customer) = await _fixture.SeedConversationAsync();
+        _fixture.Ai.Reset();
         _fixture.Ai.NextResponse = new AiStructuredExtraction(
             CustomerMessageIntent.TechnicalSupport,
             new ScreenSlotCandidate(null, null, null, null, 0.5, true),
@@ -185,6 +187,7 @@ public sealed class AiWorkflowIntegrationTests
     public async Task Ai_Config_Confirmation_Persisted_After_Validation()
     {
         var (conversation, customer) = await _fixture.SeedConversationAsync();
+        _fixture.Ai.Reset();
         _fixture.Ai.NextResponse = new AiStructuredExtraction(
             CustomerMessageIntent.Confirmation,
             null, null,
@@ -192,7 +195,7 @@ public sealed class AiWorkflowIntegrationTests
             null, []);
 
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "Merhaba");
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "500x300");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "500 cm x 300 cm");
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-img", MessageType.Image, null);
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "8 tane");
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "evet bağladım");
@@ -205,6 +208,7 @@ public sealed class AiWorkflowIntegrationTests
     public async Task Human_Mode_Blocks_Ai_And_Workflow()
     {
         var (conversation, customer) = await _fixture.SeedConversationAsync();
+        _fixture.Ai.Reset();
         await using (var scope = _fixture.Services.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -214,12 +218,13 @@ public sealed class AiWorkflowIntegrationTests
             await db.SaveChangesAsync();
         }
 
+        _fixture.Ai.Reset();
         _fixture.Ai.NextResponse = new AiStructuredExtraction(
             CustomerMessageIntent.TechnicalSupport,
             new ScreenSlotCandidate(500, 300, null, null, 0.99, false),
             null, null, null, []);
 
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "500x300");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "500 cm x 300 cm");
         Assert.Equal(0, _fixture.Ai.CallCount);
     }
 
@@ -227,6 +232,7 @@ public sealed class AiWorkflowIntegrationTests
     public async Task Ai_Audit_Record_Persisted_Without_Sensitive_Data()
     {
         var (conversation, customer) = await _fixture.SeedConversationAsync();
+        _fixture.Ai.Reset();
         _fixture.Ai.NextResponse = new AiStructuredExtraction(
             CustomerMessageIntent.TechnicalSupport,
             null, null, null,
@@ -251,6 +257,8 @@ public sealed class RecordingAiService : IAiService
         CustomerMessageIntent.Unknown, null, null, null, null, []);
 
     public int CallCount { get; private set; }
+
+    public void Reset() => CallCount = 0;
 
     public Task<AiStructuredExtraction> ExtractAsync(AiExtractionRequest request, CancellationToken cancellationToken = default)
     {

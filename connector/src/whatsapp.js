@@ -12,6 +12,7 @@ import qrcode from "qrcode-terminal";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 import { mapBaileysMessage } from "./messageMap.js";
+import { cacheMediaStub } from "./mediaCache.js";
 import { messageObservabilityFields } from "./observability.js";
 import { forwardEventToAspNet } from "./webhook.js";
 
@@ -146,6 +147,8 @@ export async function startWhatsApp() {
           const mapped = mapBaileysMessage(msg);
           const botOriginated = botSentIds.has(mapped.externalMessageId);
 
+          cacheMediaStub(msg);
+
           logger.info(
             {
               event: "BAILEYS_MESSAGE_RECEIVED",
@@ -194,23 +197,32 @@ export async function sendText(toPhoneDigits, text) {
 }
 
 /**
- * Probe media metadata / downloadability for Phase 7 prep.
- * Does not upload media anywhere.
+ * Download inbound media by WhatsApp external message id.
+ * Requires the message stub to still be cached locally.
  */
-export async function downloadMediaProbe(messageStub) {
+export async function downloadMediaByMessageId(externalMessageId) {
   if (!sock || status !== "CONNECTED") {
     throw new Error(`Connector not connected (status=${status})`);
   }
 
+  const { getCachedStub, extractMimeType } = await import("./mediaCache.js");
+  const stub = getCachedStub(externalMessageId);
+  if (!stub) {
+    const err = new Error("media_stub_not_found");
+    err.code = "MEDIA_STUB_NOT_FOUND";
+    throw err;
+  }
+
   const buffer = await downloadMediaMessage(
-    messageStub,
+    stub,
     "buffer",
     {},
     { logger: pino({ level: "silent" }), reuploadRequest: sock.updateMediaMessage },
   );
 
   return {
+    mimeType: extractMimeType(stub.message),
+    content: buffer,
     byteLength: buffer?.length || 0,
-    downloaded: Boolean(buffer?.length),
   };
 }

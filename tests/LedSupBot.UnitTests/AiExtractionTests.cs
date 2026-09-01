@@ -11,6 +11,19 @@ public sealed class AiExtractionValidatorTests
         Options.Create(new AiExtractionOptions { ConfidenceThreshold = 0.85 }));
 
     [Fact]
+    public void Validates_Explicit_Meters_Converted_To_Cm()
+    {
+        var result = _validator.Validate(new AiStructuredExtraction(
+            CustomerMessageIntent.TechnicalSupport,
+            new ScreenSlotCandidate(null, null, 5, 3, 0.96, false),
+            null, null, null, []));
+
+        Assert.NotNull(result.Screen);
+        Assert.Equal(500, result.Screen!.WidthCm);
+        Assert.Equal(300, result.Screen.HeightCm);
+    }
+
+    [Fact]
     public void Validates_500x300_Cm_From_Ai()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
@@ -36,15 +49,17 @@ public sealed class AiExtractionValidatorTests
     }
 
     [Fact]
-    public void Meter_Units_Require_Confirmation_Not_Silent_Conversion()
+    public void Meter_Units_Converted_To_Cm_Not_Confirmation()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
             CustomerMessageIntent.TechnicalSupport,
             new ScreenSlotCandidate(null, null, 5, 3, 0.95, false),
             null, null, null, []));
 
-        Assert.Null(result.Screen);
-        Assert.Contains(result.ClarificationPrompts, p => p.Contains("teyit"));
+        Assert.NotNull(result.Screen);
+        Assert.Equal(500, result.Screen!.WidthCm);
+        Assert.Equal(300, result.Screen.HeightCm);
+        Assert.Empty(result.ClarificationPrompts);
     }
 
     [Fact]
@@ -163,8 +178,6 @@ public sealed class AiExtractionValidatorTests
 public sealed class AiExtractionGateTests
 {
     [Theory]
-    [InlineData("500x300 ve 8 receiver", true)]
-    [InlineData("Merhaba", false)]
     [InlineData("5x3", true)]
     [InlineData("123456789", true)]
     public void Gate_Controls_When_Ai_Is_Invoked(string text, bool expectInvoke)
@@ -174,11 +187,27 @@ public sealed class AiExtractionGateTests
     }
 
     [Fact]
+    public void Gate_Skips_When_Deterministic_Fully_Resolves_Multi_Slot()
+    {
+        var text = "500 cm x 300 cm ve 8 receiver";
+        var deterministic = DeterministicExtractionResult.Analyze(text);
+        Assert.False(AiExtractionGate.ShouldInvokeAi(text, deterministic));
+    }
+
+    [Fact]
     public void Gate_Skips_When_Deterministic_Fully_Confident()
+    {
+        var text = "500 cm x 300 cm";
+        var deterministic = DeterministicExtractionResult.Analyze(text);
+        Assert.False(AiExtractionGate.ShouldInvokeAi(text, deterministic));
+    }
+
+    [Fact]
+    public void Gate_Invokes_For_Unitless_Dimensions()
     {
         var text = "500x300";
         var deterministic = DeterministicExtractionResult.Analyze(text);
-        Assert.False(AiExtractionGate.ShouldInvokeAi(text, deterministic));
+        Assert.True(AiExtractionGate.ShouldInvokeAi(text, deterministic));
     }
 
     [Fact]
@@ -220,9 +249,9 @@ public sealed class AiExtractionOrchestratorTests
             NullLogger<AiExtractionOrchestrator>.Instance);
 
         var result = await orchestrator.TryExtractAsync(
-            "500x300 ve 8 receiver",
+            "500 cm x 300 cm ve 8 receiver",
             new Dictionary<string, string?>(),
-            DeterministicExtractionResult.Analyze("500x300 ve 8 receiver"),
+            DeterministicExtractionResult.Analyze("500 cm x 300 cm ve 8 receiver"),
             CancellationToken.None);
 
         Assert.Null(result);

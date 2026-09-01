@@ -1,4 +1,5 @@
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.Media;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
@@ -20,12 +21,15 @@ public sealed class WorkflowFixture : IAsyncLifetime
         .Build();
 
     public string ConnectionString => _postgres.GetConnectionString();
+    public string MediaRoot { get; private set; } = string.Empty;
     public IServiceProvider Services { get; private set; } = null!;
     public RecordingWhatsAppClient WhatsApp { get; private set; } = new();
 
     public async Task InitializeAsync()
     {
         await _postgres.StartAsync();
+        MediaRoot = Path.Combine(Path.GetTempPath(), "led-sup-bot-workflow-media", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(MediaRoot);
 
         var services = new ServiceCollection();
         services.AddLogging();
@@ -39,6 +43,8 @@ public sealed class WorkflowFixture : IAsyncLifetime
                 ["Workflow:AutoReplyEnabled"] = "false",
                 ["Workflow:ConfigExampleImagePath"] = "",
                 ["WhatsAppConnector:Enabled"] = "false",
+                ["MediaStorage:RootPath"] = MediaRoot,
+                ["MediaStorage:MaxFileSizeBytes"] = "10485760",
             })
             .Build();
 
@@ -65,6 +71,18 @@ public sealed class WorkflowFixture : IAsyncLifetime
         }
 
         await _postgres.DisposeAsync();
+
+        try
+        {
+            if (Directory.Exists(MediaRoot))
+            {
+                Directory.Delete(MediaRoot, recursive: true);
+            }
+        }
+        catch
+        {
+            // Best effort temp cleanup.
+        }
     }
 
     public async Task<(Conversation Conversation, Customer Customer)> SeedConversationAsync(string? phone = null)
@@ -107,6 +125,41 @@ public sealed class WorkflowFixture : IAsyncLifetime
         };
         db.Messages.Add(message);
         await db.SaveChangesAsync();
+
+        if (type == MessageType.Image)
+        {
+            WhatsApp.SetDownload(externalId, "image/png", UnitTests.Media.TestImageBytes.CreatePng());
+            var pipeline = scope.ServiceProvider.GetRequiredService<IInboundMediaPipeline>();
+            var supportCase = await db.TechnicalSupportCases
+                .FirstOrDefaultAsync(c => c.ConversationId == conversationId);
+            if (supportCase is null)
+            {
+                supportCase = new TechnicalSupportCase
+                {
+                    ConversationId = conversationId,
+                    Status = SupportCaseStatus.CollectingInformation,
+                };
+                db.TechnicalSupportCases.Add(supportCase);
+                await db.SaveChangesAsync();
+            }
+
+            var trackedMessage = await db.Messages.SingleAsync(m => m.Id == message.Id);
+            await pipeline.ProcessInboundImageAsync(
+                trackedMessage,
+                supportCase,
+                new WhatsAppInboundEvent
+                {
+                    ExternalMessageId = externalId,
+                    MessageType = "Image",
+                    Media = new WhatsAppMediaMetadata
+                    {
+                        MimeType = "image/png",
+                        Downloadable = true,
+                        FileLength = UnitTests.Media.TestImageBytes.CreatePng().LongLength,
+                    },
+                });
+        }
+
         db.ChangeTracker.Clear();
 
         await workflow.ProcessCustomerInboundAsync(
@@ -160,7 +213,7 @@ public sealed class WorkflowIntegrationTests
     {
         var (conversation, customer) = await _fixture.SeedConversationAsync();
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "Merhaba");
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "500x300");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "500 cm x 300 cm");
 
         var supportCase = await _fixture.LoadCaseAsync(conversation.Id);
         Assert.NotNull(supportCase?.ScreenInformation);
@@ -176,7 +229,7 @@ public sealed class WorkflowIntegrationTests
     {
         var (conversation, customer) = await _fixture.SeedConversationAsync();
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "Merhaba");
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "500x300 ve 8 receiver");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "500 cm x 300 cm ve 8 receiver");
 
         var supportCase = await _fixture.LoadCaseAsync(conversation.Id);
         Assert.Equal(500, supportCase!.ScreenInformation!.Width);
@@ -197,14 +250,17 @@ public sealed class WorkflowIntegrationTests
     }
 
     [Fact]
-    public async Task Meter_Units_Do_Not_Complete_Screen_Without_Confirmation()
+    public async Task Meter_Units_Converted_To_Cm_In_Database()
     {
         var (conversation, customer) = await _fixture.SeedConversationAsync();
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "Merhaba");
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "5 metre x 3 metre");
 
         var supportCase = await _fixture.LoadCaseAsync(conversation.Id);
-        Assert.Null(supportCase?.ScreenInformation);
+        Assert.NotNull(supportCase?.ScreenInformation);
+        Assert.Equal(500, supportCase!.ScreenInformation!.Width);
+        Assert.Equal(300, supportCase.ScreenInformation.Height);
+        Assert.Equal(DimensionUnit.Cm, supportCase.ScreenInformation.Unit);
     }
 
     [Fact]
@@ -212,7 +268,7 @@ public sealed class WorkflowIntegrationTests
     {
         var (conversation, customer) = await _fixture.SeedConversationAsync();
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "Merhaba");
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "500x300");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "500 cm x 300 cm");
 
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-img-1", MessageType.Image, null);
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-img-2", MessageType.Image, null);
@@ -235,7 +291,7 @@ public sealed class WorkflowIntegrationTests
         }
 
         _fixture.WhatsApp.SentTexts.Clear();
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "500x300");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "500 cm x 300 cm");
 
         Assert.Empty(_fixture.WhatsApp.SentTexts);
         var supportCase = await _fixture.LoadCaseAsync(conversation.Id);
@@ -247,7 +303,7 @@ public sealed class WorkflowIntegrationTests
     {
         var (conversation, customer) = await _fixture.SeedConversationAsync();
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "Merhaba");
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "500x300");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "500 cm x 300 cm");
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-img", MessageType.Image, null);
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "8 tane");
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "evet");
@@ -267,6 +323,10 @@ public sealed class WorkflowIntegrationTests
 public sealed class RecordingWhatsAppClient : IWhatsAppClient
 {
     public List<string> SentTexts { get; } = [];
+    private readonly Dictionary<string, (string Mime, byte[] Content)> _downloads = new(StringComparer.Ordinal);
+
+    public void SetDownload(string externalMessageId, string mimeType, byte[] content) =>
+        _downloads[externalMessageId] = (mimeType, content);
 
     public Task ConnectAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -289,6 +349,13 @@ public sealed class RecordingWhatsAppClient : IWhatsAppClient
         CancellationToken cancellationToken = default) =>
         Task.FromResult<string?>($"fake-img-{Guid.NewGuid():N}");
 
-    public Task<WhatsAppMediaDownloadResult> DownloadMediaAsync(string mediaId, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException();
+    public Task<WhatsAppMediaDownloadResult> DownloadMediaAsync(string mediaId, CancellationToken cancellationToken = default)
+    {
+        if (!_downloads.TryGetValue(mediaId, out var item))
+        {
+            throw new InvalidOperationException("media_not_found");
+        }
+
+        return Task.FromResult(new WhatsAppMediaDownloadResult(mediaId, item.Mime, item.Content));
+    }
 }

@@ -105,9 +105,11 @@ public sealed class OpenAiExtractionService : IAiService
         """
         You extract LED technical support information from Turkish WhatsApp customer messages.
         Rules:
-        - Never guess units. If dimensions lack explicit cm or metre, set unitAmbiguous=true and omit cm values.
-        - For "5x3" without units, set unitAmbiguous=true; do not assume centimeters.
-        - If customer says metre/metre/m, populate widthMeters/heightMeters, not widthCm/heightCm.
+        - Database storage is ALWAYS centimeters (widthCm/heightCm). Never output meters in cm fields.
+        - When customer explicitly says metre/meter/m, populate widthMeters/heightMeters (not cm fields).
+        - When customer explicitly says cm, populate widthCm/heightCm.
+        - For "5x3" or "500x300" without units, set unitAmbiguous=true and leave cm/meter values null.
+        - Do not guess units when context is insufficient.
         - Recognize receiver/reciever/reciver, yeşil kart, kart, adet, tane.
         - Config: evet, bağladım, tamam, olur = confirmed; hayır, olmadı = rejection.
         - AnyDesk: extract digit groups only when clearly an AnyDesk address.

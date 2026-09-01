@@ -26,7 +26,10 @@ public static class EnvironmentVariableBridge
         ("STORAGE_CONTAINER_NAME", "Storage:ContainerName"),
         ("WORKFLOW_AUTO_REPLY_ENABLED", "Workflow:AutoReplyEnabled"),
         ("WORKFLOW_CONFIG_EXAMPLE_IMAGE_PATH", "Workflow:ConfigExampleImagePath"),
-        ("AI_EXTRACTION_CONFIDENCE_THRESHOLD", "AiExtraction:ConfidenceThreshold")
+        ("AI_EXTRACTION_CONFIDENCE_THRESHOLD", "AiExtraction:ConfidenceThreshold"),
+        ("MEDIA_STORAGE_ROOT", "MediaStorage:RootPath"),
+        ("MEDIA_MAX_FILE_SIZE_BYTES", "MediaStorage:MaxFileSizeBytes"),
+        ("MEDIA_RETENTION_DAYS", "MediaStorage:RetentionDays")
     ];
 
     public static IConfigurationBuilder AddFlatEnvironmentVariableBridge(this IConfigurationBuilder builder)

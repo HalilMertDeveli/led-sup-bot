@@ -82,8 +82,8 @@ var openAiStatus = string.IsNullOrWhiteSpace(openAiOptions.ApiKey)
 app.MapGet("/", () => Results.Ok(new
 {
     service = "LedSupBot.Api",
-    phase = "6",
-    status = "workflow_plus_ai_extraction",
+    phase = "7",
+    status = "media_pipeline",
     whatsAppIntegration = "baileys_connector_unofficial",
     metaApproved = false,
     openAiIntegration = openAiStatus,

@@ -9,11 +9,17 @@ public interface IMediaStorage
     Task<StoredMediaReference> StoreAsync(
         Stream content,
         string contentType,
-        string fileName,
+        MediaStoreRequest request,
         CancellationToken cancellationToken = default);
 
     Task<Stream> OpenReadAsync(string storageKey, CancellationToken cancellationToken = default);
+
+    bool Exists(string storageKey);
 }
+
+public sealed record MediaStoreRequest(
+    string KeyPrefix,
+    string FileExtension);
 
 public sealed record StoredMediaReference(
     string StorageKey,

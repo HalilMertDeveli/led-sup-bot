@@ -2,6 +2,8 @@ using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Application.Workflow.Ai;
 using LedSupBot.Infrastructure.Configuration;
+using LedSupBot.Application.Media;
+using LedSupBot.Infrastructure.Media;
 using LedSupBot.Infrastructure.OpenAi;
 using LedSupBot.Infrastructure.Persistence;
 using LedSupBot.Infrastructure.Queue;
@@ -21,6 +23,7 @@ public static class DependencyInjection
         services.Configure<WhatsAppOptions>(configuration.GetSection(WhatsAppOptions.SectionName));
         services.Configure<WhatsAppConnectorOptions>(configuration.GetSection(WhatsAppConnectorOptions.SectionName));
         services.Configure<StorageOptions>(configuration.GetSection(StorageOptions.SectionName));
+        services.Configure<MediaStorageOptions>(configuration.GetSection(MediaStorageOptions.SectionName));
         services.Configure<CorsOptions>(configuration.GetSection(CorsOptions.SectionName));
         services.Configure<WorkflowOptions>(configuration.GetSection(WorkflowOptions.SectionName));
         services.Configure<AiExtractionOptions>(configuration.GetSection(AiExtractionOptions.SectionName));
@@ -47,6 +50,9 @@ public static class DependencyInjection
             services.AddScoped<AiExtractionValidator>();
             services.AddScoped<AiExtractionOrchestrator>();
             services.AddScoped<AiExtractionAuditWriter>();
+            services.AddSingleton<IMediaStorage, LocalMediaStorage>();
+            services.AddSingleton<IMediaImageValidator, MediaImageValidator>();
+            services.AddScoped<IInboundMediaPipeline, InboundMediaPipeline>();
         }
 
         var connectorEnabled = configuration.GetSection(WhatsAppConnectorOptions.SectionName).GetValue<bool>("Enabled");
@@ -54,6 +60,10 @@ public static class DependencyInjection
         if (connectorEnabled && !string.IsNullOrWhiteSpace(connectorSecret))
         {
             services.AddHttpClient<IWhatsAppClient, ConnectorWhatsAppClient>();
+        }
+        else
+        {
+            services.AddSingleton<IWhatsAppClient, UnavailableWhatsAppClient>();
         }
 
         return services;

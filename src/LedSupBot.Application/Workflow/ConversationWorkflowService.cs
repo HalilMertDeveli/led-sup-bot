@@ -161,7 +161,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
     {
         if (inbound.MessageType == MessageType.Image)
         {
-            await AddPanelLabelPhotoAsync(supportCase.Id, inbound.ExternalMessageId, cancellationToken);
+            // Panel label photos are persisted by the inbound media pipeline before workflow runs.
             return;
         }
 
@@ -525,27 +525,6 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             .Include(c => c.AnyDeskInformation)
             .Include(c => c.PanelLabelPhotos)
             .SingleAsync(c => c.Id == caseId, cancellationToken);
-    }
-
-    private async Task AddPanelLabelPhotoAsync(Guid caseId, string externalMessageId, CancellationToken cancellationToken)
-    {
-        var key = $"whatsapp:{externalMessageId}";
-        var exists = await _db.PanelLabelPhotos.AnyAsync(p => p.StorageKey == key, cancellationToken);
-        if (exists)
-        {
-            return;
-        }
-
-        var sortOrder = await _db.PanelLabelPhotos.CountAsync(p => p.TechnicalSupportCaseId == caseId, cancellationToken);
-        _db.PanelLabelPhotos.Add(new PanelLabelPhoto
-        {
-            TechnicalSupportCaseId = caseId,
-            StorageKey = key,
-            ContentType = "image/*",
-            SortOrder = sortOrder + 1,
-            AnalysisStatus = MediaAnalysisStatus.NotStarted,
-        });
-        await _db.SaveChangesAsync(cancellationToken);
     }
 
     private async Task UpsertScreenAsync(Guid caseId, decimal width, decimal height, string raw, CancellationToken cancellationToken)

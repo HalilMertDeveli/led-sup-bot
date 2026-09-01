@@ -92,9 +92,27 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
         throw new NotSupportedException("Image send via connector is deferred to a later phase.");
     }
 
-    public Task<WhatsAppMediaDownloadResult> DownloadMediaAsync(string mediaId, CancellationToken cancellationToken = default)
+    public async Task<WhatsAppMediaDownloadResult> DownloadMediaAsync(string mediaId, CancellationToken cancellationToken = default)
     {
-        throw new NotSupportedException("Media download pipeline belongs to Phase 7.");
+        using var response = await _http.PostAsJsonAsync(
+            "download/media",
+            new { externalMessageId = mediaId },
+            cancellationToken);
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new InvalidOperationException("media_not_found");
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Connector media download failed with status {Status}", (int)response.StatusCode);
+            throw new InvalidOperationException($"Connector media download failed: {(int)response.StatusCode}");
+        }
+
+        var mimeType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+        var content = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        return new WhatsAppMediaDownloadResult(mediaId, mimeType, content);
     }
 
     private static WhatsAppConnectionStatus MapStatus(string? status) => status?.ToUpperInvariant() switch

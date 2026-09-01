@@ -106,33 +106,57 @@ public sealed class AiExtractionValidator
             return null;
         }
 
-        if (screen.WidthMeters is > 0 || screen.HeightMeters is > 0)
+        var widthCm = ResolveWidthCm(screen);
+        var heightCm = ResolveHeightCm(screen);
+
+        if (widthCm is > 0 && heightCm is > 0)
         {
-            prompts.Add(WorkflowPrompts.AskMeterConfirmation);
-            return null;
+            return new ScreenValidation(widthCm.Value, heightCm.Value, true);
         }
 
-        decimal? width = screen.WidthCm;
-        decimal? height = screen.HeightCm;
-
-        if (width is > 0 && height is > 0)
-        {
-            return new ScreenValidation(width.Value, height.Value, Complete: true);
-        }
-
-        if (width is > 0 && height is null)
+        if (widthCm is > 0 && heightCm is null)
         {
             prompts.Add(WorkflowPrompts.AskMissingHeight);
-            return new ScreenValidation(width.Value, 0, complete: false);
+            return new ScreenValidation(widthCm.Value, 0, false);
         }
 
-        if (height is > 0 && width is null)
+        if (heightCm is > 0 && widthCm is null)
         {
             prompts.Add(WorkflowPrompts.AskMissingWidth);
-            return new ScreenValidation(0, height.Value, complete: false);
+            return new ScreenValidation(0, heightCm.Value, false);
         }
 
         prompts.Add(WorkflowPrompts.AskScreenClarification);
+        return null;
+    }
+
+    private static decimal? ResolveWidthCm(ScreenSlotCandidate screen)
+    {
+        if (screen.WidthCm is > 0)
+        {
+            return screen.WidthCm;
+        }
+
+        if (screen.WidthMeters is > 0)
+        {
+            return ScreenDimensionUnitConverter.FromMeters(screen.WidthMeters.Value);
+        }
+
+        return null;
+    }
+
+    private static decimal? ResolveHeightCm(ScreenSlotCandidate screen)
+    {
+        if (screen.HeightCm is > 0)
+        {
+            return screen.HeightCm;
+        }
+
+        if (screen.HeightMeters is > 0)
+        {
+            return ScreenDimensionUnitConverter.FromMeters(screen.HeightMeters.Value);
+        }
+
         return null;
     }
 
