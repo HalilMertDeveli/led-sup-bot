@@ -392,28 +392,9 @@ public static class AdminDisplayFormat
             ? customer.DisplayName
             : MaskPhone(customer.PhoneNumber);
 
-    public static string MaskPhone(string phone)
-    {
-        if (string.IsNullOrWhiteSpace(phone))
-        {
-            return "—";
-        }
+    public static string MaskPhone(string phone) => string.IsNullOrWhiteSpace(phone) ? "—" : phone;
 
-        return phone.Length <= 4 ? "***" : new string('*', phone.Length - 4) + phone[^4..];
-    }
-
-    public static string MaskAnyDesk(string address)
-    {
-        if (string.IsNullOrWhiteSpace(address))
-        {
-            return "—";
-        }
-
-        var trimmed = address.Trim();
-        return trimmed.Length <= 4
-            ? new string('*', trimmed.Length)
-            : new string('*', Math.Min(8, trimmed.Length - 4)) + trimmed[^4..];
-    }
+    public static string MaskAnyDesk(string address) => string.IsNullOrWhiteSpace(address) ? "—" : address;
 
     public static string ConfigStatus(ConfigConnectionStatus status) => status switch
     {

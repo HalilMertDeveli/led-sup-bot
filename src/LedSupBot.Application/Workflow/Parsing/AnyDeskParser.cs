@@ -12,6 +12,15 @@ public static partial class AnyDeskParser
             return false;
         }
 
+        var lower = text.ToLowerInvariant();
+        if (lower.Contains('x') || lower.Contains('×') || lower.Contains('*') ||
+            lower.Contains("cm") || lower.Contains("metre") ||
+            lower.Contains("genişlik") || lower.Contains("yükseklik") ||
+            lower.Contains("yatay") || lower.Contains("dikey"))
+        {
+            return false;
+        }
+
         var digits = new string(text.Where(char.IsDigit).ToArray());
         if (digits.Length is < 9 or > 12)
         {
@@ -22,9 +31,28 @@ public static partial class AnyDeskParser
         return true;
     }
 
-    public static bool LooksLikeAttempt(string? text) =>
-        !string.IsNullOrWhiteSpace(text) && DigitPattern().IsMatch(text);
+    public static bool LooksLikeAttempt(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
 
-    [GeneratedRegex(@"\d{3,}", RegexOptions.CultureInvariant)]
-    private static partial Regex DigitPattern();
+        var lower = text.ToLowerInvariant();
+        if (lower.Contains("anydesk") || lower.Contains("any desk") || lower.Contains("enidesk"))
+        {
+            return true;
+        }
+
+        if (lower.Contains('x') || lower.Contains('×') || lower.Contains('*') ||
+            lower.Contains("cm") || lower.Contains("metre") ||
+            lower.Contains("genişlik") || lower.Contains("yükseklik") ||
+            lower.Contains("yatay") || lower.Contains("dikey"))
+        {
+            return false;
+        }
+
+        var digits = new string(text.Where(char.IsDigit).ToArray());
+        return digits.Length is >= 5 and <= 8 && Regex.IsMatch(text, @"\d{3}[\s.-]\d{2,3}");
+    }
 }

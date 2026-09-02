@@ -31,11 +31,16 @@ public static class EnvironmentVariableBridge
         ("WORKFLOW_INBOUND_COALESCE_ENABLED", "Workflow:InboundCoalescing:Enabled"),
         ("WORKFLOW_INBOUND_COALESCE_WINDOW_SECONDS", "Workflow:InboundCoalescing:WindowSeconds"),
         ("AI_EXTRACTION_CONFIDENCE_THRESHOLD", "AiExtraction:ConfidenceThreshold"),
+        ("AI_PROVIDER", "AI:Provider"),
+        ("GEMINI_API_KEY", "Gemini:ApiKey"),
+        ("GEMINI_MODEL", "Gemini:Model"),
         ("MEDIA_STORAGE_ROOT", "MediaStorage:RootPath"),
         ("MEDIA_MAX_FILE_SIZE_BYTES", "MediaStorage:MaxFileSizeBytes"),
         ("MEDIA_RETENTION_DAYS", "MediaStorage:RetentionDays"),
         ("ADMIN_DASHBOARD_PASSWORD", "Admin:DashboardPassword"),
-        ("ADMIN_SESSION_SECRET", "Admin:SessionSecret")
+        ("ADMIN_SESSION_SECRET", "Admin:SessionSecret"),
+        ("WHATSAPP_TEST_MODE_ENABLED", "WhatsAppTestMode:Enabled"),
+        ("WHATSAPP_TEST_MODE_ALLOWED_PHONE", "WhatsAppTestMode:AllowedPhoneNumber")
     ];
 
     public static IConfigurationBuilder AddFlatEnvironmentVariableBridge(this IConfigurationBuilder builder)

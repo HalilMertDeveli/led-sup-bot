@@ -7,6 +7,10 @@ public interface IAdminEventNotifier
     Task NotifyMessageReceivedAsync(Guid conversationId, Guid messageId, CancellationToken cancellationToken = default);
 
     Task NotifyAnyDeskReadyForHandoffAsync(AnyDeskReadyNotification notification, CancellationToken cancellationToken = default);
+
+    Task NotifyWhatsAppStatusChangedAsync(string status, CancellationToken cancellationToken = default);
+
+    Task NotifyOperatorStateChangedAsync(Guid? conversationId = null, CancellationToken cancellationToken = default);
 }
 
 public sealed record AnyDeskReadyNotification(

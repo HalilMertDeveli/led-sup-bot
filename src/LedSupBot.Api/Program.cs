@@ -11,6 +11,7 @@ using LedSupBot.Application.Workflow;
 using LedSupBot.Domain.Enums;
 using LedSupBot.Infrastructure;
 using LedSupBot.Infrastructure.Configuration;
+using LedSupBot.Infrastructure.Gemini;
 using LedSupBot.Api.Admin;
 using LedSupBot.Api.Middleware;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -27,6 +28,10 @@ builder.Logging.AddConsole();
 builder.Logging.AddDebug();
 
 builder.Services.AddApplication();
+builder.Services.Configure<LedSupBot.Application.WhatsApp.WhatsAppTestModeOptions>(
+    builder.Configuration.GetSection(LedSupBot.Application.WhatsApp.WhatsAppTestModeOptions.SectionName));
+builder.Services.Configure<LedSupBot.Application.WhatsApp.WhatsAppAutomationOptions>(
+    builder.Configuration.GetSection(LedSupBot.Application.WhatsApp.WhatsAppAutomationOptions.SectionName));
 builder.Services.AddInfrastructure(builder.Configuration);
 
 builder.Services.AddEndpointsApiExplorer();
@@ -69,10 +74,12 @@ var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
 var workflowOptions = app.Services.GetRequiredService<IOptions<WorkflowOptions>>().Value;
 var connectorOptionsAtStartup = app.Services.GetRequiredService<IOptions<WhatsAppConnectorOptions>>().Value;
 startupLogger.LogInformation(
-    "Startup pipeline: DatabaseConfigured={DatabaseConfigured} WorkflowAutoReplyEnabled={AutoReplyEnabled} ConnectorEnabled={ConnectorEnabled}",
+    "Startup pipeline: DatabaseConfigured={DatabaseConfigured} WorkflowAutoReplyEnabled={AutoReplyEnabled} ConnectorEnabled={ConnectorEnabled} ConnectorSecretConfigured={ConnectorSecretConfigured} WhatsAppTestMode={TestModeEnabled}",
     !string.IsNullOrWhiteSpace(databaseOptions.ConnectionString),
     workflowOptions.AutoReplyEnabled,
-    connectorOptionsAtStartup.Enabled);
+    connectorOptionsAtStartup.Enabled,
+    !string.IsNullOrWhiteSpace(connectorOptionsAtStartup.SharedSecret),
+    app.Services.GetRequiredService<IOptions<WhatsAppTestModeOptions>>().Value.Enabled);
 
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
@@ -96,10 +103,13 @@ app.UseCors(policy =>
         .AllowCredentials();
 });
 
-var openAiOptions = app.Services.GetRequiredService<IOptions<OpenAiOptions>>().Value;
-var openAiStatus = string.IsNullOrWhiteSpace(openAiOptions.ApiKey)
-    ? "not_configured"
-    : "structured_extraction";
+var aiOptions = app.Services.GetRequiredService<IOptions<AiOptions>>().Value;
+var geminiOptions = app.Services.GetRequiredService<IOptions<GeminiOptions>>().Value;
+var aiStatus = string.Equals(aiOptions.Provider, "Gemini", StringComparison.OrdinalIgnoreCase)
+    ? (string.IsNullOrWhiteSpace(geminiOptions.ApiKey) ? "gemini_not_configured" : $"gemini:{geminiOptions.Model}")
+    : string.Equals(aiOptions.Provider, "OpenAI", StringComparison.OrdinalIgnoreCase)
+        ? "openai_explicit"
+        : "unavailable";
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -108,7 +118,8 @@ app.MapGet("/", () => Results.Ok(new
     status = "admin_dashboard",
     whatsAppIntegration = "baileys_connector_unofficial",
     metaApproved = false,
-    openAiIntegration = openAiStatus,
+    aiProvider = aiOptions.Provider,
+    aiIntegration = aiStatus,
     databaseSchema = "ef_core_postgresql",
     autoMigrateOnStartup = false,
     autoCustomerReplies = false
@@ -119,15 +130,29 @@ app.MapHealthChecks("/health", new HealthCheckOptions
     ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
 });
 
-app.MapGet("/api/foundation/status", (IWhatsAppConnectionStateStore state) => Results.Ok(new
+app.MapGet("/api/foundation/status", async (
+    IWhatsAppConnectionStateStore state,
+    IServiceProvider services,
+    IOptions<WhatsAppTestModeOptions> testMode,
+    CancellationToken cancellationToken) =>
 {
-    architecture = "hybrid-workflow-plus-ai-boundaries",
-    botOwnsStateMachine = false,
-    backendOwnsWorkflow = true,
-    humanTakeoverSupportedByDesign = true,
-    persistence = "postgresql_ef_core",
-    whatsAppConnection = state.Current.ToString()
-}));
+    var whatsAppConnection = await WhatsAppLiveStatusResolver.GetCurrentAsync(services, state, cancellationToken);
+    var testModeOptions = testMode.Value;
+    return Results.Ok(new
+    {
+        architecture = "hybrid-workflow-plus-ai-boundaries",
+        botOwnsStateMachine = false,
+        backendOwnsWorkflow = true,
+        humanTakeoverSupportedByDesign = true,
+        persistence = "postgresql_ef_core",
+        whatsAppConnection = whatsAppConnection.ToString(),
+        whatsAppTestMode = new
+        {
+            enabled = testModeOptions.Enabled,
+            identityConfigured = PhoneNumberNormalizer.TryNormalizeToCanonicalDigits(testModeOptions.AllowedPhoneNumber) is not null
+        }
+    });
+});
 
 app.MapPost("/internal/whatsapp/events", async (
     HttpRequest request,
@@ -211,7 +236,7 @@ app.MapPost("/internal/whatsapp/send-text", async (
     }
 
     // Persist immediately so fromMe echoes correlate as Bot even if connector memory is lost.
-    await recorder.RecordBotTextAsync(body.To, body.Text, externalId, cancellationToken);
+    await recorder.RecordBotTextAsync(null, body.To, body.Text, externalId, cancellationToken);
 
     return Results.Ok(new { ok = true, externalMessageId = externalId });
 });

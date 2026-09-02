@@ -54,12 +54,18 @@ public static class WhatsAppEventMapper
     /// <summary>
     /// Resolves the customer channel address from connector metadata.
     /// Prefers E.164 when available; falls back to full WhatsApp JID (e.g. LID chats).
+    /// Group JIDs (@g.us) never resolve to a customer address.
     /// </summary>
     public static string? ResolveCustomerAddress(WhatsAppInboundEvent inbound)
     {
+        if (IsGroupJid(inbound.RemoteJid))
+        {
+            return null;
+        }
+
         if (IsLidJid(inbound.RemoteJid))
         {
-            return inbound.RemoteJid!.Trim();
+            return NormalizeWhatsAppAddress(inbound.RemoteJid!);
         }
 
         if (!string.IsNullOrWhiteSpace(inbound.RemotePhoneNumber))
@@ -82,7 +88,38 @@ public static class WhatsAppEventMapper
             return false;
         }
 
-        var domain = jid.Split('@')[^1];
+        var domain = jid.Split('@')[^1].Split(':')[0];
         return domain.StartsWith("lid", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Canonical WhatsApp address for persistence and lookup (strips device suffixes from JID user parts).
+    /// </summary>
+    public static string NormalizeWhatsAppAddress(string address)
+    {
+        var trimmed = address.Trim();
+        if (!trimmed.Contains('@'))
+        {
+            return trimmed;
+        }
+
+        var parts = trimmed.Split('@', 2);
+        var user = parts[0].Split(':')[0];
+        var domain = parts[1].Split(':')[0];
+        return $"{user}@{domain}";
+    }
+
+    /// <summary>
+    /// Baileys group chat JID (e.g. 1234567890-123456789@g.us).
+    /// </summary>
+    public static bool IsGroupJid(string? jidOrAddress)
+    {
+        if (string.IsNullOrWhiteSpace(jidOrAddress) || !jidOrAddress.Contains('@'))
+        {
+            return false;
+        }
+
+        var domain = jidOrAddress.Split('@')[^1].Split(':')[0];
+        return domain.Equals("g.us", StringComparison.OrdinalIgnoreCase);
     }
 }

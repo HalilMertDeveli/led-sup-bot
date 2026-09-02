@@ -8,6 +8,11 @@ export function jidDomain(jid) {
   return jid.split("@")[1]?.split(":")[0] ?? null;
 }
 
+/** Baileys group chat JID (e.g. 1234567890-123456789@g.us). */
+export function isGroupJid(jid) {
+  return jidDomain(jid) === "g.us";
+}
+
 export function jidToPhoneE164(jid) {
   if (!jid || typeof jid !== "string") return null;
   const domain = jidDomain(jid);
@@ -21,11 +26,21 @@ export function jidToPhoneE164(jid) {
   return user;
 }
 
+/** Normalize WhatsApp JID (strip device suffix, preserve domain). */
+export function normalizeWhatsAppJid(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed.includes("@")) return trimmed;
+  const [userPart, domainPart] = trimmed.split("@");
+  const user = userPart.split(":")[0];
+  const domain = domainPart.split(":")[0];
+  return `${user}@${domain}`;
+}
+
 /** Normalize an outbound destination: E.164 digits or full WhatsApp JID. */
 export function resolveOutboundJid(toAddress) {
   const raw = String(toAddress || "").trim();
   if (!raw) return null;
-  if (raw.includes("@")) return raw;
+  if (raw.includes("@")) return normalizeWhatsAppJid(raw);
   const digits = raw.replace(/\D/g, "");
   if (!digits) return null;
   return `${digits}@s.whatsapp.net`;

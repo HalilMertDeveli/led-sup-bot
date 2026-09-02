@@ -167,10 +167,22 @@ public sealed class LocalServiceManager : IDisposable
 
         if (await IsApiHealthyAsync(ct))
         {
-            item.State = ComponentState.Ready;
-            item.Detail = "Çalışıyor";
-            report(item);
-            return;
+            var connectorLive = await IsConnectorStatusConnectedAsync(ct);
+            var apiWhatsApp = await GetFoundationWhatsAppStatusAsync(ct);
+            var apiConnected = string.Equals(apiWhatsApp, "Connected", StringComparison.OrdinalIgnoreCase);
+
+            if (connectorLive && !apiConnected && TryStopProjectApiOnPort())
+            {
+                DesktopLog.Info("LocalServiceManager", "Restarting misconfigured LedSupBot.Api on API port");
+                await Task.Delay(1500, ct);
+            }
+            else if (await IsApiHealthyAsync(ct))
+            {
+                item.State = ComponentState.Ready;
+                item.Detail = "Çalışıyor";
+                report(item);
+                return;
+            }
         }
 
         if (await IsPortOpenAsync("127.0.0.1", GetApiPort(), ct))
@@ -192,7 +204,7 @@ public sealed class LocalServiceManager : IDisposable
         if (!_runtimeEnv.HasDatabaseConnectionString)
         {
             item.State = ComponentState.Failed;
-            item.Detail = "Database ayarı bulunamadı (.env)";
+            item.Detail = _runtimeEnv.DatabaseConfigMissingMessage;
             report(item);
             return;
         }
@@ -340,6 +352,114 @@ public sealed class LocalServiceManager : IDisposable
         catch
         {
             return false;
+        }
+    }
+
+    private async Task<bool> IsConnectorStatusConnectedAsync(CancellationToken ct)
+    {
+        var secret = _runtimeEnv.GetConnectorSharedSecret();
+        if (string.IsNullOrWhiteSpace(secret))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{_settings.ConnectorPort}/status");
+            request.Headers.TryAddWithoutValidation("X-Connector-Secret", secret);
+            using var response = await _http.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                return false;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            var raw = doc.RootElement.TryGetProperty("status", out var prop) ? prop.GetString() : null;
+            return string.Equals(raw, "CONNECTED", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task<string?> GetFoundationWhatsAppStatusAsync(CancellationToken ct)
+    {
+        try
+        {
+            var url = $"{_settings.ApiBaseUrl.TrimEnd('/')}/api/foundation/status";
+            using var response = await _http.GetAsync(url, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(ct);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            return doc.RootElement.TryGetProperty("whatsAppConnection", out var prop)
+                ? prop.GetString()
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private bool TryStopProjectApiOnPort()
+    {
+        try
+        {
+            var port = GetApiPort();
+            var connections = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties()
+                .GetActiveTcpListeners()
+                .Where(e => e.Port == port)
+                .ToList();
+
+            if (connections.Count == 0)
+            {
+                return false;
+            }
+
+            var pid = GetOwningProcessId(port);
+            if (pid is null or <= 0)
+            {
+                return false;
+            }
+
+            using var process = Process.GetProcessById(pid.Value);
+            var path = process.MainModule?.FileName ?? process.ProcessName;
+            if (!path.Contains("led-sup-bot", StringComparison.OrdinalIgnoreCase) &&
+                !path.Contains("LedSupBot.Api", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            process.Kill(entireProcessTree: true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("LocalServiceManager", ex);
+            return false;
+        }
+    }
+
+    private static int? GetOwningProcessId(int port)
+    {
+        try
+        {
+            var output = RunCommandCaptureAsync(
+                "powershell",
+                $"-NoProfile -Command \"(Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess)\"",
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            return int.TryParse(output.Output.Trim(), out var pid) ? pid : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 

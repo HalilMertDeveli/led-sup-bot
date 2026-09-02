@@ -70,6 +70,15 @@ public sealed class WhatsAppInboundEvent
 
     public string? Status { get; set; }
 
+    /// <summary>Connector/Baileys delivery ack: Sent, Delivered, Read, Failed.</summary>
+    public string? DeliveryStatus { get; set; }
+
+    /// <summary>Connected business account PN JID (ConnectedIdentity event).</summary>
+    public string? SelfPnJid { get; set; }
+
+    /// <summary>Connected business account LID JID (ConnectedIdentity event).</summary>
+    public string? SelfLidJid { get; set; }
+
     public WhatsAppMediaMetadata? Media { get; set; }
 }
 

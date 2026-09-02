@@ -120,16 +120,23 @@ public sealed class TrayIconService : IDisposable
 
     private async Task ToggleBotAsync()
     {
-        if (_botActive)
+        try
         {
-            if (_pauseBotAsync is not null)
+            if (_botActive)
             {
-                await _pauseBotAsync();
+                if (_pauseBotAsync is not null)
+                {
+                    await _pauseBotAsync();
+                }
+            }
+            else if (_resumeBotAsync is not null)
+            {
+                await _resumeBotAsync();
             }
         }
-        else if (_resumeBotAsync is not null)
+        catch (Exception ex)
         {
-            await _resumeBotAsync();
+            DesktopLog.Error("TrayToggleBot", ex);
         }
     }
 

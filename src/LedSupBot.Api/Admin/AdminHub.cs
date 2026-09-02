@@ -1,5 +1,6 @@
 using LedSupBot.Application.Admin;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 
 namespace LedSupBot.Api.Admin;
 
@@ -14,40 +15,129 @@ public sealed class AdminHub : Hub
     internal static string ConversationGroup(Guid conversationId) => $"conversation:{conversationId:D}";
 }
 
+public sealed class ConversationEventPayload
+{
+    public Guid ConversationId { get; set; }
+}
+
+public sealed class MessageEventPayload
+{
+    public Guid ConversationId { get; set; }
+    public Guid MessageId { get; set; }
+}
+
+public sealed class WhatsAppStatusEventPayload
+{
+    public string? Status { get; set; }
+}
+
+public sealed class OperatorStateEventPayload
+{
+    public Guid? ConversationId { get; set; }
+    public Guid? MessageId { get; set; }
+    public string? Status { get; set; }
+}
+
+public sealed class AnyDeskAlertEvent
+{
+    public Guid ConversationId { get; set; }
+    public string? CustomerDisplayName { get; set; }
+    public string? IssueSummary { get; set; }
+    public string? ScreenSummary { get; set; }
+    public string? ReceiverSummary { get; set; }
+    public string? PanelStatus { get; set; }
+    public string? ConfigStatus { get; set; }
+    public string? AnyDeskStatus { get; set; }
+}
+
 public sealed class SignalRAdminEventNotifier : IAdminEventNotifier
 {
     private readonly IHubContext<AdminHub> _hub;
+    private readonly ILogger<SignalRAdminEventNotifier> _logger;
 
-    public SignalRAdminEventNotifier(IHubContext<AdminHub> hub) => _hub = hub;
+    public SignalRAdminEventNotifier(IHubContext<AdminHub> hub, ILogger<SignalRAdminEventNotifier> logger)
+    {
+        _hub = hub;
+        _logger = logger;
+    }
 
     public async Task NotifyConversationUpdatedAsync(Guid conversationId, CancellationToken cancellationToken = default)
     {
-        await _hub.Clients.All.SendAsync("ConversationUpdated", new { conversationId }, cancellationToken);
-        await _hub.Clients.Group(AdminHub.ConversationGroup(conversationId))
-            .SendAsync("ConversationUpdated", new { conversationId }, cancellationToken);
+        try
+        {
+            var payload = new ConversationEventPayload { ConversationId = conversationId };
+            await _hub.Clients.All.SendAsync("ConversationUpdated", payload, cancellationToken);
+            await _hub.Clients.All.SendAsync("OperatorStateChanged", new OperatorStateEventPayload { ConversationId = conversationId }, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast ConversationUpdated for {ConversationId}", conversationId);
+        }
     }
 
     public async Task NotifyMessageReceivedAsync(Guid conversationId, Guid messageId, CancellationToken cancellationToken = default)
     {
-        await _hub.Clients.All.SendAsync("MessageReceived", new { conversationId, messageId }, cancellationToken);
-        await _hub.Clients.Group(AdminHub.ConversationGroup(conversationId))
-            .SendAsync("MessageReceived", new { conversationId, messageId }, cancellationToken);
+        try
+        {
+            var payload = new MessageEventPayload { ConversationId = conversationId, MessageId = messageId };
+            await _hub.Clients.All.SendAsync("MessageReceived", payload, cancellationToken);
+            await _hub.Clients.All.SendAsync("OperatorStateChanged", new OperatorStateEventPayload { ConversationId = conversationId, MessageId = messageId }, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast MessageReceived for {ConversationId}", conversationId);
+        }
+    }
+
+    public async Task NotifyWhatsAppStatusChangedAsync(string status, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var payload = new WhatsAppStatusEventPayload { Status = status };
+            await _hub.Clients.All.SendAsync("WhatsAppStatusChanged", payload, cancellationToken);
+            await _hub.Clients.All.SendAsync("OperatorStateChanged", new OperatorStateEventPayload { Status = status }, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast WhatsAppStatusChanged for {Status}", status);
+        }
+    }
+
+    public async Task NotifyOperatorStateChangedAsync(Guid? conversationId = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var payload = new OperatorStateEventPayload { ConversationId = conversationId };
+            await _hub.Clients.All.SendAsync("OperatorStateChanged", payload, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast OperatorStateChanged for {ConversationId}", conversationId);
+        }
     }
 
     public async Task NotifyAnyDeskReadyForHandoffAsync(AnyDeskReadyNotification notification, CancellationToken cancellationToken = default)
     {
-        var payload = new
+        try
         {
-            conversationId = notification.ConversationId,
-            customerDisplayName = notification.CustomerDisplayName,
-            issueSummary = notification.IssueSummary,
-            screenSummary = notification.ScreenSummary,
-            receiverSummary = notification.ReceiverSummary,
-            panelStatus = notification.PanelStatus,
-            configStatus = notification.ConfigStatus,
-            anyDeskStatus = notification.AnyDeskStatus,
-        };
+            var payload = new AnyDeskAlertEvent
+            {
+                ConversationId = notification.ConversationId,
+                CustomerDisplayName = notification.CustomerDisplayName,
+                IssueSummary = notification.IssueSummary,
+                ScreenSummary = notification.ScreenSummary,
+                ReceiverSummary = notification.ReceiverSummary,
+                PanelStatus = notification.PanelStatus,
+                ConfigStatus = notification.ConfigStatus,
+                AnyDeskStatus = notification.AnyDeskStatus,
+            };
 
-        await _hub.Clients.All.SendAsync("AnyDeskReadyForHandoff", payload, cancellationToken);
+            await _hub.Clients.All.SendAsync("AnyDeskReadyForHandoff", payload, cancellationToken);
+            await _hub.Clients.All.SendAsync("OperatorStateChanged", new OperatorStateEventPayload { ConversationId = notification.ConversationId }, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast AnyDeskReadyForHandoff for {ConversationId}", notification.ConversationId);
+        }
     }
 }

@@ -10,4 +10,10 @@ public sealed class NullAdminEventNotifier : IAdminEventNotifier
 
     public Task NotifyAnyDeskReadyForHandoffAsync(AnyDeskReadyNotification notification, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
+
+    public Task NotifyWhatsAppStatusChangedAsync(string status, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
+
+    public Task NotifyOperatorStateChangedAsync(Guid? conversationId = null, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
 }

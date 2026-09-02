@@ -1,6 +1,7 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Admin;
 using LedSupBot.Application.Takeover;
+using LedSupBot.Application.WhatsApp;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Domain.Enums;
 using Microsoft.AspNetCore.Mvc;
@@ -88,11 +89,12 @@ public static class AdminEndpointExtensions
     private static async Task<IResult> SystemStatusAsync(
         [FromServices] IWhatsAppConnectionStateStore state,
         [FromServices] IOptions<WorkflowOptions> workflow,
+        [FromServices] IServiceProvider services,
         CancellationToken cancellationToken)
     {
-        _ = cancellationToken;
+        var whatsAppConnection = await WhatsAppLiveStatusResolver.GetCurrentAsync(services, state, cancellationToken);
         return Results.Ok(new SystemStatusDto(
-            state.Current.ToString(),
+            whatsAppConnection.ToString(),
             "connected",
             "configured",
             workflow.Value.AutoReplyEnabled));

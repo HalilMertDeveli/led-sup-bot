@@ -221,6 +221,10 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("LastCustomerMessageAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("LastInboundWhatsAppAddress")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<DateTimeOffset>("StartedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -261,6 +265,10 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                     b.Property<string>("DisplayName")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
+
+                    b.Property<string>("LinkedWhatsAppLid")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<string>("PhoneNumber")
                         .IsRequired()

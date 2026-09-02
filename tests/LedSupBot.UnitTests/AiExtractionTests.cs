@@ -179,7 +179,7 @@ public sealed class AiExtractionGateTests
 {
     [Theory]
     [InlineData("5x3", true)]
-    [InlineData("123456789", true)]
+    [InlineData("anydesk 123 45", true)]
     public void Gate_Controls_When_Ai_Is_Invoked(string text, bool expectInvoke)
     {
         var deterministic = DeterministicExtractionResult.Analyze(text);
@@ -205,7 +205,7 @@ public sealed class AiExtractionGateTests
     [Fact]
     public void Gate_Invokes_For_Unitless_Dimensions()
     {
-        var text = "500x300";
+        var text = "5x3";
         var deterministic = DeterministicExtractionResult.Analyze(text);
         Assert.True(AiExtractionGate.ShouldInvokeAi(text, deterministic));
     }

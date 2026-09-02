@@ -1,3 +1,4 @@
+import "./safeSignalDiagnostics.js";
 import {
   DisconnectReason,
   downloadMediaMessage,
@@ -11,11 +12,12 @@ import pino from "pino";
 import qrcode from "qrcode-terminal";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
-import { mapBaileysMessage, resolveOutboundJid } from "./messageMap.js";
+import { mapBaileysMessage, resolveOutboundJid, isGroupJid, normalizeWhatsAppJid } from "./messageMap.js";
 import { cacheMediaStub } from "./mediaCache.js";
 import { messageObservabilityFields, redactJid } from "./observability.js";
 import { jidDomain } from "./messageMap.js";
 import { forwardEventToAspNet } from "./webhook.js";
+import { assertNonSelfJid, isSelfJid, remoteJidType, setConnectedSelfJids } from "./selfIdentity.js";
 
 /** @type {ReturnType<typeof makeWASocket> | null} */
 let sock = null;
@@ -99,6 +101,12 @@ export async function startWhatsApp() {
         { event: "LID_PN_MAPPING", lid: redactJid(lid), pnJid: redactJid(jid) },
         "WhatsApp shared phone number for LID contact",
       );
+      void forwardEventToAspNet({
+        eventType: "LidPhoneMapping",
+        remoteJid: lid,
+        senderPnJid: jid,
+        timestamp: new Date().toISOString(),
+      });
     });
 
     sock.ev.on("connection.update", (update) => {
@@ -117,6 +125,14 @@ export async function startWhatsApp() {
 
       if (connection === "open") {
         setStatus("CONNECTED");
+        const selfJids = [sock?.user?.id, sock?.user?.lid].filter(Boolean);
+        setConnectedSelfJids(selfJids);
+        void forwardEventToAspNet({
+          eventType: "ConnectedIdentity",
+          selfPnJid: sock?.user?.id ? normalizeWhatsAppJid(sock.user.id) : null,
+          selfLidJid: sock?.user?.lid ? normalizeWhatsAppJid(sock.user.lid) : null,
+          timestamp: new Date().toISOString(),
+        });
       } else if (connection === "connecting") {
         setStatus("CONNECTING");
       } else if (connection === "close") {
@@ -151,20 +167,50 @@ export async function startWhatsApp() {
             logger.debug({ event: "BAILEYS_MESSAGE_SKIPPED", reason: "status_broadcast" }, "message skipped");
             continue;
           }
+          if (isGroupJid(msg.key.remoteJid)) {
+            logger.info(
+              {
+                event: "BAILEYS_MESSAGE_SKIPPED",
+                reason: "whatsapp_group",
+                remoteJid: redactJid(msg.key.remoteJid),
+              },
+              "group message skipped — no automation or persistence",
+            );
+            continue;
+          }
 
           const mapped = mapBaileysMessage(msg);
           const botOriginated = botSentIds.has(mapped.externalMessageId);
+          const selfMatch = isSelfJid(mapped.remoteJid);
 
-          cacheMediaStub(msg);
+          if (mapped.fromMe) {
+            logger.info(
+              {
+                event: "BAILEYS_MESSAGE_SKIPPED",
+                reason: botOriginated ? "bot_outbound_echo" : "from_me",
+                fromMe: true,
+                remoteJidType: remoteJidType(mapped.remoteJid),
+                selfMatch,
+                botOriginated,
+              },
+              "fromMe message skipped — no inbound automation",
+            );
+            continue;
+          }
 
           logger.info(
             {
               event: "BAILEYS_MESSAGE_RECEIVED",
               upsertType: type,
+              fromMe: false,
+              remoteJidType: remoteJidType(mapped.remoteJid),
+              selfMatch,
               ...messageObservabilityFields(mapped, { botOriginated }),
             },
-            "messages.upsert event received",
+            "messages.upsert customer inbound",
           );
+
+          cacheMediaStub(msg);
 
           logger.info(
             {
@@ -185,6 +231,36 @@ export async function startWhatsApp() {
         }
       }
     });
+
+    sock.ev.on("messages.update", (updates) => {
+      for (const update of updates) {
+        const messageId = update?.key?.id;
+        if (!messageId || !botSentIds.has(messageId)) {
+          continue;
+        }
+
+        const deliveryStatus = mapBaileysDeliveryStatus(update?.update?.status);
+        if (!deliveryStatus) {
+          continue;
+        }
+
+        logger.info(
+          {
+            event: "OUTBOUND_DELIVERY_ACK",
+            messageId,
+            deliveryStatus,
+          },
+          "bot outbound delivery acknowledgement",
+        );
+
+        void forwardEventToAspNet({
+          eventType: "MessageDeliveryUpdate",
+          externalMessageId: messageId,
+          deliveryStatus,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    });
   } finally {
     starting = false;
   }
@@ -200,6 +276,24 @@ export async function sendText(toAddress, text) {
     throw new Error("Invalid outbound destination");
   }
 
+  try {
+    assertNonSelfJid(jid);
+  } catch (error) {
+    logger.warn(
+      {
+        event: "OUTBOUND_SEND_BLOCKED",
+        reason: "self_destination",
+        destinationType: jidDomain(jid),
+      },
+      "outbound blocked: self destination",
+    );
+    throw error;
+  }
+
+  const exactRoutePreserved = String(toAddress || "").includes("@")
+    ? normalizeWhatsAppJid(toAddress) === jid
+    : true;
+
   const result = await sock.sendMessage(jid, { text });
   const id = result?.key?.id;
   if (id) {
@@ -209,8 +303,12 @@ export async function sendText(toAddress, text) {
   logger.info(
     {
       event: "OUTBOUND_SEND_COMPLETED",
-      requestedDomain: jidDomain(toAddress.includes("@") ? toAddress : `${String(toAddress).replace(/\D/g, "")}@s.whatsapp.net`),
-      resolvedJid: redactJid(jid),
+      routeSource: "conversation_live_route",
+      destinationType: jidDomain(jid),
+      exactRoutePreserved,
+      connectorRequestAccepted: true,
+      sockSendMessageCalled: true,
+      baileysMessageIdPresent: Boolean(id),
       messageId: id || null,
       resultRemoteJid: redactJid(result?.key?.remoteJid),
       resultFromMe: Boolean(result?.key?.fromMe),
@@ -218,7 +316,31 @@ export async function sendText(toAddress, text) {
     "outbound send completed",
   );
 
-  return { externalMessageId: id || null, remoteJid: jid, resultRemoteJid: result?.key?.remoteJid || null };
+  return {
+    externalMessageId: id || null,
+    remoteJid: jid,
+    resultRemoteJid: result?.key?.remoteJid || null,
+    destinationType: jidDomain(jid),
+    exactRoutePreserved,
+  };
+}
+
+function mapBaileysDeliveryStatus(status) {
+  if (status === undefined || status === null) return null;
+  switch (Number(status)) {
+    case 0:
+      return "Failed";
+    case 1:
+    case 2:
+      return "Sent";
+    case 3:
+      return "Delivered";
+    case 4:
+    case 5:
+      return "Read";
+    default:
+      return null;
+  }
 }
 
 export async function sendPresence(toAddress, state) {
@@ -230,6 +352,8 @@ export async function sendPresence(toAddress, state) {
   if (!jid) {
     throw new Error("Invalid outbound destination");
   }
+
+  assertNonSelfJid(jid);
 
   const presence = state === "composing" ? "composing" : "paused";
   await sock.sendPresenceUpdate(presence, jid);

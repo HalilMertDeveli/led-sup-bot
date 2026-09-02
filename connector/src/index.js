@@ -3,6 +3,8 @@ import express from "express";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 import { getStatus, sendText, sendPresence, startWhatsApp, downloadMediaByMessageId } from "./whatsapp.js";
+import { getConnectedSelfJids } from "./selfIdentity.js";
+import { getSignalDiagnosticCounters } from "./safeSignalDiagnostics.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -23,7 +25,13 @@ app.get("/status", requireSecret, (_req, res) => {
     status: getStatus(),
     unofficial: true,
     metaApproved: false,
+    selfIdentityRegistered: getConnectedSelfJids().size > 0,
+    signalDiagnostics: getSignalDiagnosticCounters(),
   });
+});
+
+app.get("/self-jids", requireSecret, (_req, res) => {
+  res.json({ jids: [...getConnectedSelfJids()] });
 });
 
 app.post("/send/text", requireSecret, async (req, res) => {
@@ -37,8 +45,10 @@ app.post("/send/text", requireSecret, async (req, res) => {
     return res.json({
       ok: true,
       externalMessageId: result.externalMessageId,
-      remoteJid: result.remoteJid,
-      resultRemoteJid: result.resultRemoteJid,
+      destinationType: result.destinationType,
+      baileysMessageIdPresent: Boolean(result.externalMessageId),
+      exactRoutePreserved: result.exactRoutePreserved ?? true,
+      sockSendMessageCalled: true,
     });
   } catch (error) {
     logger.error({ err: error?.message }, "send text failed");

@@ -5,6 +5,12 @@ public static class WorkflowPrompts
     public const string Greeting =
         "Merhaba, kolay gelsin. Size yardımcı olabilmem için birkaç bilgi alacağım.";
 
+    public const string NaturalGreetingNoIssue =
+        "Merhaba, kolay gelsin. Size nasıl yardımcı olabilirim?";
+
+    public const string NaturalGreetingWithIssue =
+        "Merhaba, kaydınızdaki sorunla devam edebiliriz.";
+
     public const string AskScreenSize =
         "Ekran ölçüleriniz nedir? Yatayda ve dikeyde kaç cm?";
 
@@ -59,6 +65,6 @@ public static class WorkflowPrompts
          - Config bağlantısı: {(configConfirmed ? "Yapıldı" : "Bekleniyor")}
          - AnyDesk: Alındı
 
-         Bilgileri aldım. Şimdi teknik ekibimiz devam edecek.
+         Gerekli teknik bilgileri aldım, teşekkürler.
          """;
 }

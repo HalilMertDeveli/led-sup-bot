@@ -18,6 +18,9 @@ public sealed class CustomerConfiguration : IEntityTypeConfiguration<Customer>
         builder.Property(x => x.DisplayName)
             .HasMaxLength(256);
 
+        builder.Property(x => x.LinkedWhatsAppLid)
+            .HasMaxLength(64);
+
         builder.HasIndex(x => x.PhoneNumber)
             .IsUnique()
             .HasDatabaseName("ix_customers_phone_number");
@@ -39,6 +42,11 @@ public sealed class ConversationConfiguration : IEntityTypeConfiguration<Convers
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(64);
         builder.Property(x => x.BotMode).HasConversion<string>().HasMaxLength(32);
         builder.Property(x => x.CurrentStage).HasConversion<string>().HasMaxLength(64);
+
+        builder.Property(x => x.LastInboundWhatsAppAddress)
+            .HasMaxLength(64);
+
+        builder.Ignore(x => x.WhatsAppRouteJid);
 
         builder.HasIndex(x => x.CustomerId).HasDatabaseName("ix_conversations_customer_id");
         builder.HasIndex(x => x.Status).HasDatabaseName("ix_conversations_status");

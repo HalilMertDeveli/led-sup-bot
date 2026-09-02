@@ -10,6 +10,8 @@ public static class DependencyInjection
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
         services.AddSingleton<IWhatsAppConnectionStateStore, WhatsAppConnectionStateStore>();
+        services.AddSingleton<IWhatsAppSelfIdentityStore, WhatsAppSelfIdentityStore>();
+        services.AddSingleton<IWhatsAppTestAllowlist, WhatsAppTestAllowlist>();
         services.AddScoped<IWhatsAppInboundEventHandler, WhatsAppInboundEventHandler>();
         services.AddScoped<IWhatsAppOutboundRecorder, WhatsAppOutboundRecorder>();
         services.AddSingleton<IAdminEventNotifier, NullAdminEventNotifier>();

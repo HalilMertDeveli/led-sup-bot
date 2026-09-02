@@ -243,7 +243,7 @@ public sealed class AiWorkflowIntegrationTests
             []);
 
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "Merhaba");
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "123456789");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "5x3 AnyDesk 123456789");
 
         await using var scope = _fixture.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();

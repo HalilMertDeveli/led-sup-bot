@@ -42,4 +42,6 @@ public sealed class ConversationContext
     public ContextConfig? Config { get; init; }
 
     public ContextAnyDesk? AnyDesk { get; init; }
+
+    public BotMode BotMode { get; init; }
 }

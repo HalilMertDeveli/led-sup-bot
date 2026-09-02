@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.WhatsApp;
 using LedSupBot.Infrastructure.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -30,7 +31,6 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
 
     public Task ConnectAsync(CancellationToken cancellationToken = default)
     {
-        // Connector process owns the session; ASP.NET only observes status.
         _logger.LogInformation("Connect requested — ensure the Node connector process is running");
         return Task.CompletedTask;
     }
@@ -66,9 +66,12 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
 
     public async Task<string?> SendTextMessageAsync(string toPhoneE164, string body, CancellationToken cancellationToken = default)
     {
-        var destination = toPhoneE164.Contains('@')
-            ? toPhoneE164.Trim()
-            : new string(toPhoneE164.Where(char.IsDigit).ToArray());
+        var destination = NormalizeDestination(toPhoneE164);
+        var destinationType = WhatsAppEventMapper.IsLidJid(destination)
+            ? "lid"
+            : WhatsAppEventMapper.IsGroupJid(destination)
+                ? "g.us"
+                : "s.whatsapp.net";
 
         using var response = await _http.PostAsJsonAsync(
             "send/text",
@@ -77,12 +80,30 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
 
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Connector send failed with status {Status}", (int)response.StatusCode);
+            _logger.LogWarning(
+                "Connector send failed connectorHttp={ConnectorHttp} destinationType={DestinationType}",
+                (int)response.StatusCode,
+                destinationType);
             throw new InvalidOperationException($"Connector send failed: {(int)response.StatusCode}");
         }
 
         var payload = await response.Content.ReadFromJsonAsync<SendPayload>(cancellationToken: cancellationToken);
-        return payload?.ExternalMessageId;
+        var messageIdPresent = payload?.BaileysMessageIdPresent == true ||
+                               !string.IsNullOrWhiteSpace(payload?.ExternalMessageId);
+
+        _logger.LogInformation(
+            "Connector send accepted connectorHttp={ConnectorHttp} destinationType={DestinationType} baileysMessageIdPresent={MessageIdPresent} exactRoutePreserved={ExactRoutePreserved} sockSendMessageCalled=true",
+            (int)response.StatusCode,
+            payload?.DestinationType ?? destinationType,
+            messageIdPresent,
+            payload?.ExactRoutePreserved ?? true);
+
+        if (!messageIdPresent)
+        {
+            throw new InvalidOperationException("Connector accepted send but Baileys message id was not produced.");
+        }
+
+        return payload!.ExternalMessageId;
     }
 
     public async Task SendComposingAsync(string toPhoneE164, CancellationToken cancellationToken = default)
@@ -97,9 +118,7 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
 
     private async Task SendPresenceAsync(string toPhoneE164, string state, CancellationToken cancellationToken)
     {
-        var destination = toPhoneE164.Contains('@')
-            ? toPhoneE164.Trim()
-            : new string(toPhoneE164.Where(char.IsDigit).ToArray());
+        var destination = NormalizeDestination(toPhoneE164);
 
         using var response = await _http.PostAsJsonAsync(
             "send/presence",
@@ -145,6 +164,16 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
         return new WhatsAppMediaDownloadResult(mediaId, mimeType, content);
     }
 
+    private static string NormalizeDestination(string toAddress)
+    {
+        if (toAddress.Contains('@', StringComparison.Ordinal))
+        {
+            return WhatsAppEventMapper.NormalizeWhatsAppAddress(toAddress.Trim());
+        }
+
+        return new string(toAddress.Where(char.IsDigit).ToArray());
+    }
+
     private static WhatsAppConnectionStatus MapStatus(string? status) => status?.ToUpperInvariant() switch
     {
         "CONNECTED" => WhatsAppConnectionStatus.Connected,
@@ -161,6 +190,16 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
 
     private sealed class SendPayload
     {
+        public bool Ok { get; set; }
+
         public string? ExternalMessageId { get; set; }
+
+        public string? DestinationType { get; set; }
+
+        public bool BaileysMessageIdPresent { get; set; }
+
+        public bool ExactRoutePreserved { get; set; }
+
+        public bool SockSendMessageCalled { get; set; }
     }
 }

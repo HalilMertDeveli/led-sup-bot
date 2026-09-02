@@ -6,7 +6,8 @@ public sealed record PendingCustomerInbound(
     Guid MessageId,
     string ExternalMessageId,
     Domain.Enums.MessageType MessageType,
-    string? TextContent);
+    string? TextContent,
+    string? WhatsAppDeliveryRoute = null);
 
 public interface IConversationReplyCoordinator
 {

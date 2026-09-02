@@ -1,11 +1,12 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Admin;
+using LedSupBot.Application.Media;
+using LedSupBot.Application.Takeover;
+using LedSupBot.Application.WhatsApp;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Application.Workflow.Ai;
 using LedSupBot.Application.Workflow.Context;
 using LedSupBot.Infrastructure.Configuration;
-using LedSupBot.Application.Media;
-using LedSupBot.Application.Takeover;
 using LedSupBot.Infrastructure.Media;
 using LedSupBot.Infrastructure.OpenAi;
 using LedSupBot.Infrastructure.Persistence;
@@ -31,11 +32,11 @@ public static class DependencyInjection
         services.Configure<WorkflowOptions>(configuration.GetSection(WorkflowOptions.SectionName));
         services.Configure<AiExtractionOptions>(configuration.GetSection(AiExtractionOptions.SectionName));
         services.Configure<AdminOptions>(configuration.GetSection(AdminOptions.SectionName));
-        var openAiSection = configuration.GetSection(OpenAiOptions.SectionName).Get<OpenAiOptions>() ?? new OpenAiOptions();
-        services.PostConfigure<AiExtractionOptions>(opts => opts.ModelName = openAiSection.Model);
+        services.Configure<WhatsAppTestModeOptions>(configuration.GetSection(WhatsAppTestModeOptions.SectionName));
+        services.Configure<WhatsAppAutomationOptions>(configuration.GetSection(WhatsAppAutomationOptions.SectionName));
 
         services.AddSingleton<IBackgroundWorkQueue, InMemoryBackgroundWorkQueue>();
-        RegisterAiServices(services, configuration);
+        AiServiceRegistration.Register(services, configuration);
 
         var connectionString = configuration.GetSection(DatabaseOptions.SectionName)["ConnectionString"];
         if (!string.IsNullOrWhiteSpace(connectionString))
@@ -54,6 +55,7 @@ public static class DependencyInjection
             services.AddScoped<IWorkflowOutboundDispatcher, WorkflowOutboundDispatcher>();
             services.AddSingleton<IConversationReplyCoordinator, ConversationReplyCoordinator>();
             services.AddScoped<IConversationContextBuilder, ConversationContextBuilder>();
+            services.AddScoped<HybridResponseComposer>();
             services.AddScoped<AiResponsePlanner>();
             services.AddScoped<AiExtractionValidator>();
             services.AddScoped<AiExtractionOrchestrator>();
@@ -70,6 +72,13 @@ public static class DependencyInjection
         if (connectorEnabled && !string.IsNullOrWhiteSpace(connectorSecret))
         {
             services.AddHttpClient<IWhatsAppClient, ConnectorWhatsAppClient>();
+            services.AddHttpClient<IWhatsAppSelfIdentitySync, WhatsAppSelfIdentitySync>((sp, client) =>
+            {
+                var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WhatsAppConnectorOptions>>().Value;
+                client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
+                client.DefaultRequestHeaders.Remove("X-Connector-Secret");
+                client.DefaultRequestHeaders.Add("X-Connector-Secret", options.SharedSecret);
+            });
         }
         else
         {
@@ -77,28 +86,5 @@ public static class DependencyInjection
         }
 
         return services;
-    }
-
-    private static void RegisterAiServices(IServiceCollection services, IConfiguration configuration)
-    {
-        var openAiOptions = configuration.GetSection(OpenAiOptions.SectionName).Get<OpenAiOptions>() ?? new OpenAiOptions();
-        if (!string.IsNullOrWhiteSpace(openAiOptions.ApiKey))
-        {
-            services.AddHttpClient<IAiService, OpenAiExtractionService>(client =>
-            {
-                client.BaseAddress = new Uri(openAiOptions.BaseUrl);
-                client.Timeout = TimeSpan.FromSeconds(openAiOptions.TimeoutSeconds > 0 ? openAiOptions.TimeoutSeconds : 30);
-            });
-            services.AddHttpClient<IAiConversationPlanner, OpenAiConversationPlannerService>(client =>
-            {
-                client.BaseAddress = new Uri(openAiOptions.BaseUrl);
-                client.Timeout = TimeSpan.FromSeconds(openAiOptions.TimeoutSeconds > 0 ? openAiOptions.TimeoutSeconds : 30);
-            });
-        }
-        else
-        {
-            services.AddSingleton<IAiService, UnavailableAiService>();
-            services.AddSingleton<IAiConversationPlanner, UnavailableAiConversationPlanner>();
-        }
     }
 }

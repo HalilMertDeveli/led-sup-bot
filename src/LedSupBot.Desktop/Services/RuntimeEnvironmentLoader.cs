@@ -5,34 +5,34 @@ namespace LedSupBot.Desktop.Services;
 
 public sealed class RuntimeEnvironmentLoader
 {
-    private readonly Dictionary<string, string> _rootEnv = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _connectorEnv = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _config = new(StringComparer.OrdinalIgnoreCase);
+    private readonly string? _projectRoot;
 
     public RuntimeEnvironmentLoader(DesktopSettings settings)
     {
-        if (string.IsNullOrWhiteSpace(settings.ProjectRoot))
+        _projectRoot = settings.ProjectRoot;
+
+        if (string.IsNullOrWhiteSpace(_projectRoot))
         {
             return;
         }
 
-        var rootEnvPath = Path.Combine(settings.ProjectRoot, ".env");
-        foreach (var kv in EnvFileLoader.Load(rootEnvPath))
-        {
-            _rootEnv[kv.Key] = kv.Value;
-        }
+        LocalRuntimeConfigLoader.EnsureTemplateExists(_projectRoot);
 
-        var connectorEnvPath = Path.Combine(settings.ProjectRoot, "connector", ".env");
-        foreach (var kv in EnvFileLoader.Load(connectorEnvPath))
-        {
-            _connectorEnv[kv.Key] = kv.Value;
-        }
-
-        MergeProcessEnvironment(_rootEnv);
-        MergeProcessEnvironment(_connectorEnv);
+        MergeEnvFile(Path.Combine(_projectRoot, ".env"));
+        MergeEnvFile(Path.Combine(_projectRoot, "connector", ".env"));
+        LocalRuntimeConfigLoader.MergeInto(_config, _projectRoot);
+        MergeProcessEnvironment();
+        NormalizeDatabaseKeys();
     }
 
     public bool HasDatabaseConnectionString =>
-        !string.IsNullOrWhiteSpace(Get("DATABASE_CONNECTION_STRING"));
+        !string.IsNullOrWhiteSpace(GetDatabaseConnectionString());
+
+    public string DatabaseConfigMissingMessage =>
+        string.IsNullOrWhiteSpace(_projectRoot)
+            ? "Database ayarı eksik: appsettings.Local.json"
+            : $"Database ayarı eksik: {LocalRuntimeConfigLoader.GetLocalConfigPath(_projectRoot)}";
 
     public string? GetConnectorSharedSecret() =>
         Get("WHATSAPP_CONNECTOR_SHARED_SECRET") ?? Get("CONNECTOR_SHARED_SECRET");
@@ -41,7 +41,7 @@ public sealed class RuntimeEnvironmentLoader
     {
         var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var kv in _rootEnv)
+        foreach (var kv in _config)
         {
             env[kv.Key] = kv.Value;
         }
@@ -49,26 +49,18 @@ public sealed class RuntimeEnvironmentLoader
         env["ASPNETCORE_ENVIRONMENT"] = Get("ASPNETCORE_ENVIRONMENT") ?? "Development";
         env["ASPNETCORE_URLS"] = settings.ApiBaseUrl.TrimEnd('/');
 
-        if (!env.ContainsKey("WHATSAPP_CONNECTOR_ENABLED"))
-        {
-            env["WHATSAPP_CONNECTOR_ENABLED"] = "true";
-        }
+        SetDefault(env, "WHATSAPP_CONNECTOR_ENABLED", "true");
+        SetDefault(env, "WHATSAPP_CONNECTOR_BASE_URL", $"http://127.0.0.1:{settings.ConnectorPort}");
+        SetDefault(env, "WORKFLOW_AUTO_REPLY_ENABLED", "true");
 
-        if (!env.ContainsKey("WHATSAPP_CONNECTOR_BASE_URL"))
-        {
-            env["WHATSAPP_CONNECTOR_BASE_URL"] = $"http://127.0.0.1:{settings.ConnectorPort}";
-        }
-
-        if (!env.ContainsKey("WORKFLOW_AUTO_REPLY_ENABLED"))
-        {
-            env["WORKFLOW_AUTO_REPLY_ENABLED"] = "true";
-        }
+        ApplyAspNetCoreKeys(env);
 
         var secret = GetConnectorSharedSecret();
         if (!string.IsNullOrWhiteSpace(secret))
         {
             env["WHATSAPP_CONNECTOR_SHARED_SECRET"] = secret;
             env["CONNECTOR_SHARED_SECRET"] = secret;
+            env["WhatsAppConnector__SharedSecret"] = secret;
         }
 
         return env;
@@ -78,22 +70,13 @@ public sealed class RuntimeEnvironmentLoader
     {
         var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var kv in _connectorEnv)
+        foreach (var kv in _config)
         {
             env[kv.Key] = kv.Value;
         }
 
-        foreach (var kv in _rootEnv)
-        {
-            env.TryAdd(kv.Key, kv.Value);
-        }
-
         env["PORT"] = settings.ConnectorPort.ToString();
-
-        if (!env.ContainsKey("ASPNET_WEBHOOK_URL"))
-        {
-            env["ASPNET_WEBHOOK_URL"] = $"{settings.ApiBaseUrl.TrimEnd('/')}/internal/whatsapp/events";
-        }
+        SetDefault(env, "ASPNET_WEBHOOK_URL", $"{settings.ApiBaseUrl.TrimEnd('/')}/internal/whatsapp/events");
 
         var secret = GetConnectorSharedSecret();
         if (!string.IsNullOrWhiteSpace(secret))
@@ -105,17 +88,15 @@ public sealed class RuntimeEnvironmentLoader
         return env;
     }
 
-    private string? Get(string key)
+    private void MergeEnvFile(string path)
     {
-        if (_rootEnv.TryGetValue(key, out var root))
+        foreach (var kv in EnvFileLoader.Load(path))
         {
-            return root;
+            _config[kv.Key] = kv.Value;
         }
-
-        return _connectorEnv.TryGetValue(key, out var connector) ? connector : null;
     }
 
-    private static void MergeProcessEnvironment(Dictionary<string, string> target)
+    private void MergeProcessEnvironment()
     {
         foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
         {
@@ -129,7 +110,76 @@ public sealed class RuntimeEnvironmentLoader
                 continue;
             }
 
-            target.TryAdd(key, value);
+            _config[key] = value;
         }
     }
+
+    private void NormalizeDatabaseKeys()
+    {
+        var conn = GetDatabaseConnectionString();
+        if (string.IsNullOrWhiteSpace(conn))
+        {
+            return;
+        }
+
+        _config["DATABASE_CONNECTION_STRING"] = conn;
+        _config["Database__ConnectionString"] = conn;
+    }
+
+    private string? GetDatabaseConnectionString() =>
+        Get("DATABASE_CONNECTION_STRING") ?? Get("Database__ConnectionString");
+
+    private static void ApplyAspNetCoreKeys(Dictionary<string, string> env)
+    {
+        var conn = env.TryGetValue("DATABASE_CONNECTION_STRING", out var dbFlat) && !string.IsNullOrWhiteSpace(dbFlat)
+            ? dbFlat
+            : env.TryGetValue("Database__ConnectionString", out var dbAsp) && !string.IsNullOrWhiteSpace(dbAsp)
+                ? dbAsp
+                : null;
+
+        if (!string.IsNullOrWhiteSpace(conn))
+        {
+            env["DATABASE_CONNECTION_STRING"] = conn;
+            env["Database__ConnectionString"] = conn;
+        }
+
+        CopyAspNet(env, "OPENAI_API_KEY", "OpenAI__ApiKey");
+        CopyAspNet(env, "OPENAI_MODEL", "OpenAI__Model");
+        CopyAspNet(env, "AI_PROVIDER", "AI__Provider");
+        CopyAspNet(env, "GEMINI_API_KEY", "Gemini__ApiKey");
+        CopyAspNet(env, "GEMINI_MODEL", "Gemini__Model");
+        CopyAspNet(env, "WHATSAPP_CONNECTOR_ENABLED", "WhatsAppConnector__Enabled");
+        CopyAspNet(env, "WHATSAPP_CONNECTOR_BASE_URL", "WhatsAppConnector__BaseUrl");
+        CopyAspNet(env, "WHATSAPP_CONNECTOR_SHARED_SECRET", "WhatsAppConnector__SharedSecret");
+        CopyAspNet(env, "WORKFLOW_AUTO_REPLY_ENABLED", "Workflow__AutoReplyEnabled");
+        CopyAspNet(env, "WHATSAPP_TEST_MODE_ENABLED", "WhatsAppTestMode__Enabled");
+        CopyAspNet(env, "WHATSAPP_TEST_MODE_ALLOWED_PHONE", "WhatsAppTestMode__AllowedPhoneNumber");
+        CopyAspNet(env, "ADMIN_DASHBOARD_PASSWORD", "Admin__DashboardPassword");
+        CopyAspNet(env, "ADMIN_SESSION_SECRET", "Admin__SessionSecret");
+    }
+
+    private static void CopyAspNet(Dictionary<string, string> env, string flatKey, string aspNetKey)
+    {
+        if (env.TryGetValue(flatKey, out var flat) && !string.IsNullOrWhiteSpace(flat))
+        {
+            env[aspNetKey] = flat;
+            return;
+        }
+
+        if (env.TryGetValue(aspNetKey, out var asp) && !string.IsNullOrWhiteSpace(asp))
+        {
+            env[flatKey] = asp;
+        }
+    }
+
+    private static void SetDefault(Dictionary<string, string> env, string key, string value)
+    {
+        if (!env.ContainsKey(key) || string.IsNullOrWhiteSpace(env[key]))
+        {
+            env[key] = value;
+        }
+    }
+
+    private string? Get(string key) =>
+        _config.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
 }

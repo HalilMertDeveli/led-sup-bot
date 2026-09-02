@@ -19,6 +19,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
     private readonly AiExtractionOrchestrator _aiOrchestrator;
     private readonly AiResponsePlanner _responsePlanner;
     private readonly IConversationContextBuilder _contextBuilder;
+    private readonly HybridResponseComposer _responseComposer;
     private readonly IAdminEventNotifier _notifier;
     private readonly AiExtractionAuditWriter _aiAudit;
     private readonly WorkflowOptions _options;
@@ -31,6 +32,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         AiExtractionOrchestrator aiOrchestrator,
         AiResponsePlanner responsePlanner,
         IConversationContextBuilder contextBuilder,
+        HybridResponseComposer responseComposer,
         IAdminEventNotifier notifier,
         AiExtractionAuditWriter aiAudit,
         IOptions<WorkflowOptions> options,
@@ -42,6 +44,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         _aiOrchestrator = aiOrchestrator;
         _responsePlanner = responsePlanner;
         _contextBuilder = contextBuilder;
+        _responseComposer = responseComposer;
         _notifier = notifier;
         _aiAudit = aiAudit;
         _options = options.Value;
@@ -69,19 +72,17 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             return;
         }
 
+        _logger.LogInformation(
+            "Conversation resolved conversationId={ConversationId} botMode={BotMode} workflowResolved=true",
+            inbound.ConversationId,
+            conversation.BotMode);
+
         var supportCase = await LoadOrCreateCaseAsync(conversation.Id, cancellationToken);
-        var outboundTexts = new List<string>();
+        var clarificationTexts = new List<string>();
         var handoffPending = false;
         string? configExampleImagePath = null;
-        var stage = conversation.CurrentStage;
 
-        if (stage == ConversationStage.Start)
-        {
-            outboundTexts.Add(WorkflowPrompts.Greeting);
-            stage = ConversationStage.AskScreenSize;
-        }
-
-        await ApplyInboundContentAsync(conversation.Id, supportCase, inbound, outboundTexts, cancellationToken);
+        await ApplyInboundContentAsync(conversation.Id, supportCase, inbound, clarificationTexts, cancellationToken);
 
         if (!await IsAutoReplyAllowedAsync(conversation.Id, cancellationToken))
         {
@@ -106,20 +107,43 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             effectiveStage,
             cancellationToken);
 
-        var aiAddedReply = false;
+        ValidatedAiResponsePlan? aiPlan = null;
         if (inbound.MessageType == MessageType.Text && !string.IsNullOrWhiteSpace(inbound.TextContent))
         {
-            var plan = await _responsePlanner.TryPlanAsync(context, inbound.TextContent, cancellationToken);
-            if (plan?.IssueSummary is not null)
+            _logger.LogInformation(
+                "AI provider=Gemini geminiAttempted=true conversationId={ConversationId}",
+                conversation.Id);
+
+            aiPlan = await _responsePlanner.TryPlanAsync(context, inbound.TextContent, cancellationToken);
+
+            if (aiPlan?.HasUsableReply == true)
             {
-                await UpdateIssueSummaryAsync(supportCase.Id, plan.IssueSummary, cancellationToken);
-                supportCase.IssueSummary = plan.IssueSummary;
+                _logger.LogInformation(
+                    "Gemini planner success conversationId={ConversationId}",
+                    conversation.Id);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Gemini planner unavailable conversationId={ConversationId} fallback=deterministic",
+                    conversation.Id);
+            }
+            if (aiPlan?.IssueSummary is not null)
+            {
+                var mergedIssue = IssueSummaryMerger.Merge(supportCase.IssueSummary, aiPlan.IssueSummary);
+                if (!string.IsNullOrWhiteSpace(mergedIssue) &&
+                    !string.Equals(mergedIssue, supportCase.IssueSummary, StringComparison.Ordinal))
+                {
+                    await UpdateIssueSummaryAsync(supportCase.Id, mergedIssue, cancellationToken);
+                    supportCase.IssueSummary = mergedIssue;
+                }
             }
 
-            if (plan?.HasUsableReply == true)
+            if (aiPlan?.NeedsHuman == true)
             {
-                outboundTexts.Add(plan.Reply!);
-                aiAddedReply = true;
+                _logger.LogInformation(
+                    "AI suggested human escalation for conversation {ConversationId}; server retains BotMode authority",
+                    conversation.Id);
             }
         }
 
@@ -128,25 +152,32 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             await TryEmitAnyDeskAlertAsync(conversation, supportCase, slots, cancellationToken);
         }
 
-        if (!aiAddedReply &&
-            !outboundTexts.Any(t => t.Contains("teyit", StringComparison.OrdinalIgnoreCase) ||
-                                    t.Contains("Yatay", StringComparison.OrdinalIgnoreCase) ||
-                                    t.Contains("Dikey", StringComparison.OrdinalIgnoreCase) ||
-                                    t.Contains("Örnek:", StringComparison.OrdinalIgnoreCase)))
+        var composed = _responseComposer.Compose(new HybridResponseComposeInput(
+            context,
+            slots,
+            effectiveStage,
+            inbound,
+            clarificationTexts,
+            aiPlan,
+            assetAvailable,
+            exampleCompleted,
+            _options.ConfigExampleImagePath));
+
+        var outboundTexts = composed.OutboundTexts.ToList();
+        configExampleImagePath = composed.ConfigExampleImagePath ?? configExampleImagePath;
+
+        if (composed.ConfigExampleMarkedSent && !exampleCompleted)
         {
-            AppendStagePrompt(effectiveStage, inbound, assetAvailable, exampleCompleted, outboundTexts, ref configExampleImagePath);
-            if (effectiveStage == ConversationStage.SendConfigExample && !exampleCompleted)
+            await MarkExampleSentAsync(supportCase.Id, cancellationToken);
+            exampleCompleted = true;
+            effectiveStage = WorkflowStageResolver.ResolveEffectiveStage(
+                slots,
+                assetAvailable,
+                exampleCompleted || !assetAvailable);
+            if (effectiveStage == ConversationStage.AskAnyDesk &&
+                outboundTexts.All(t => !t.Contains("AnyDesk", StringComparison.OrdinalIgnoreCase)))
             {
-                await MarkExampleSentAsync(supportCase.Id, cancellationToken);
-                exampleCompleted = true;
-                effectiveStage = WorkflowStageResolver.ResolveEffectiveStage(
-                    slots,
-                    assetAvailable,
-                    exampleCompleted || !assetAvailable);
-                if (effectiveStage == ConversationStage.AskAnyDesk)
-                {
-                    outboundTexts.Add(WorkflowPrompts.AskAnyDesk);
-                }
+                outboundTexts.Add(WorkflowPrompts.AskAnyDesk);
             }
         }
 
@@ -185,16 +216,39 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
         if (outboundTexts.Count > 0)
         {
+            var replySource = aiPlan?.HasUsableReply == true ? "Gemini" : "workflow";
+            _logger.LogInformation(
+                "Reply produced source={Source} count={Count} conversationId={ConversationId}",
+                replySource,
+                outboundTexts.Count,
+                conversation.Id);
             _logger.LogInformation(
                 "Workflow dispatching {Count} outbound text(s) for conversation {ConversationId}",
                 outboundTexts.Count,
                 conversation.Id);
-            await _outbound.SendTextsAsync(conversation.Id, inbound.CustomerPhoneE164, outboundTexts, cancellationToken);
+            try
+            {
+                await _outbound.SendTextsAsync(
+                    conversation.Id,
+                    inbound.CustomerPhoneE164,
+                    inbound.WhatsAppDeliveryRoute,
+                    outboundTexts,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Outbound send failed conversationId={ConversationId} destinationType={DestinationType}",
+                    conversation.Id,
+                    inbound.CustomerPhoneE164.Contains('@') ? "jid" : "e164");
+                throw;
+            }
         }
         else
         {
             _logger.LogInformation(
-                "Workflow produced no outbound texts for conversation {ConversationId} stage={Stage}",
+                "Reply produced source=none conversationId={ConversationId} stage={Stage}",
                 conversation.Id,
                 effectiveStage);
         }
@@ -204,6 +258,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             await _outbound.TrySendConfigExampleImageAsync(
                 conversation.Id,
                 inbound.CustomerPhoneE164,
+                inbound.WhatsAppDeliveryRoute,
                 configExampleImagePath,
                 WorkflowPrompts.ConfigExampleSent,
                 cancellationToken);
@@ -280,7 +335,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         Guid conversationId,
         TechnicalSupportCase supportCase,
         WorkflowInboundMessage inbound,
-        List<string> outboundTexts,
+        List<string> clarificationTexts,
         CancellationToken cancellationToken)
     {
         if (inbound.MessageType == MessageType.Image)
@@ -313,10 +368,10 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
         var deterministic = DeterministicExtractionResult.Analyze(inbound.TextContent);
 
-        await ApplyScreenSlotsAsync(supportCase.Id, inbound.TextContent, slots, outboundTexts, cancellationToken);
+        await ApplyScreenSlotsAsync(supportCase.Id, inbound.TextContent, slots, clarificationTexts, cancellationToken);
         await ApplyReceiverSlotAsync(supportCase.Id, inbound.TextContent, cancellationToken);
-        await ApplyConfigSlotAsync(supportCase.Id, inbound.TextContent, slots, outboundTexts, cancellationToken);
-        await ApplyAnyDeskSlotAsync(supportCase.Id, inbound.TextContent, outboundTexts, cancellationToken);
+        await ApplyConfigSlotAsync(supportCase.Id, inbound.TextContent, slots, clarificationTexts, cancellationToken);
+        await ApplyAnyDeskSlotAsync(supportCase.Id, inbound.TextContent, clarificationTexts, cancellationToken);
 
         var aiValidated = await _aiOrchestrator.TryExtractAsync(
             inbound.TextContent,
@@ -334,12 +389,12 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                 return;
             }
 
-            await ApplyAiValidatedSlotsAsync(supportCase.Id, slots, aiValidated, outboundTexts, cancellationToken);
+            await ApplyAiValidatedSlotsAsync(supportCase.Id, slots, aiValidated, clarificationTexts, cancellationToken);
             foreach (var prompt in aiValidated.ClarificationPrompts)
             {
-                if (!outboundTexts.Contains(prompt))
+                if (!clarificationTexts.Contains(prompt))
                 {
-                    outboundTexts.Add(prompt);
+                    clarificationTexts.Add(prompt);
                 }
             }
 
@@ -373,7 +428,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         Guid caseId,
         WorkflowSlotState slotsBeforeAi,
         ValidatedAiExtraction ai,
-        List<string> outboundTexts,
+        List<string> clarificationTexts,
         CancellationToken cancellationToken)
     {
         if (ai.Screen is { Complete: true } screen && !slotsBeforeAi.IsScreenComplete)
@@ -419,7 +474,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         }
         else if (ai.ConfigConfirmed == false && !slotsBeforeAi.ConfigConfirmed)
         {
-            outboundTexts.Add(WorkflowPrompts.ExplainConfigConnection);
+            clarificationTexts.Add(WorkflowPrompts.ExplainConfigConnection);
         }
 
         if (!string.IsNullOrWhiteSpace(ai.AnyDeskAddress) && !slotsBeforeAi.HasAnyDesk)
@@ -445,24 +500,38 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         Guid caseId,
         string text,
         WorkflowSlotState slots,
-        List<string> outboundTexts,
+        List<string> clarificationTexts,
         CancellationToken cancellationToken)
     {
+        if (AnyDeskParser.TryParse(text, out _))
+        {
+            return;
+        }
+
         var parsed = ScreenSizeParser.Parse(text);
         if (!parsed.ParsedAny)
         {
             return;
         }
 
+        if (slots.IsScreenComplete)
+        {
+            if (parsed.WidthCm is > 0 && parsed.HeightCm is > 0)
+            {
+                await UpsertScreenAsync(caseId, parsed.WidthCm.Value, parsed.HeightCm.Value, text, cancellationToken);
+            }
+            return;
+        }
+
         if (parsed.NeedsMeterConfirmation)
         {
-            outboundTexts.Add(WorkflowPrompts.AskMeterConfirmation);
+            clarificationTexts.Add(WorkflowPrompts.AskMeterConfirmation);
             return;
         }
 
         if (parsed.Ambiguous)
         {
-            outboundTexts.Add(WorkflowPrompts.AskScreenClarification);
+            clarificationTexts.Add(WorkflowPrompts.AskScreenClarification);
             return;
         }
 
@@ -478,14 +547,14 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         if (width is > 0 && height is null)
         {
             await UpsertScreenAsync(caseId, width.Value, 0, text, cancellationToken);
-            outboundTexts.Add(WorkflowPrompts.AskMissingHeight);
+            clarificationTexts.Add(WorkflowPrompts.AskMissingHeight);
             return;
         }
 
         if (height is > 0 && width is null)
         {
             await UpsertScreenAsync(caseId, 0, height.Value, text, cancellationToken);
-            outboundTexts.Add(WorkflowPrompts.AskMissingWidth);
+            clarificationTexts.Add(WorkflowPrompts.AskMissingWidth);
         }
     }
 
@@ -521,7 +590,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         Guid caseId,
         string text,
         WorkflowSlotState slots,
-        List<string> outboundTexts,
+        List<string> clarificationTexts,
         CancellationToken cancellationToken)
     {
         if (slots.ConfigConfirmed)
@@ -538,14 +607,14 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
         if (result == ConfigConfirmationResult.Negative)
         {
-            outboundTexts.Add(WorkflowPrompts.ExplainConfigConnection);
+            clarificationTexts.Add(WorkflowPrompts.ExplainConfigConnection);
         }
     }
 
     private async Task ApplyAnyDeskSlotAsync(
         Guid caseId,
         string text,
-        List<string> outboundTexts,
+        List<string> clarificationTexts,
         CancellationToken cancellationToken)
     {
         var exists = await _db.AnyDeskInformations
@@ -571,58 +640,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
         if (AnyDeskParser.LooksLikeAttempt(text))
         {
-            outboundTexts.Add(WorkflowPrompts.AskAnyDeskClarification);
-        }
-    }
-
-    private void AppendStagePrompt(
-        ConversationStage effectiveStage,
-        WorkflowInboundMessage inbound,
-        bool assetAvailable,
-        bool exampleCompleted,
-        List<string> outboundTexts,
-        ref string? configExampleImagePath)
-    {
-        switch (effectiveStage)
-        {
-            case ConversationStage.AskScreenSize:
-                outboundTexts.Add(WorkflowPrompts.AskScreenSize);
-                break;
-
-            case ConversationStage.AskPanelLabelPhotos:
-                outboundTexts.Add(inbound.MessageType == MessageType.Text
-                    ? WorkflowPrompts.RemindPanelLabelPhotos
-                    : WorkflowPrompts.AskPanelLabelPhotos);
-                break;
-
-            case ConversationStage.AskReceiverCount:
-                outboundTexts.Add(
-                    inbound.MessageType == MessageType.Text && !string.IsNullOrWhiteSpace(inbound.TextContent)
-                        ? WorkflowPrompts.AskReceiverClarification
-                        : WorkflowPrompts.AskReceiverCount);
-                break;
-
-            case ConversationStage.AskConfigConnection:
-                outboundTexts.Add(WorkflowPrompts.AskConfigConnection);
-                break;
-
-            case ConversationStage.SendConfigExample when !exampleCompleted:
-                if (assetAvailable)
-                {
-                    outboundTexts.Add(WorkflowPrompts.ConfigExampleSent);
-                    configExampleImagePath = _options.ConfigExampleImagePath;
-                }
-                else
-                {
-                    outboundTexts.Add(WorkflowPrompts.ConfigExampleUnavailable);
-                    _logger.LogWarning("Config example asset not configured; step skipped deterministically");
-                }
-
-                break;
-
-            case ConversationStage.AskAnyDesk:
-                outboundTexts.Add(WorkflowPrompts.AskAnyDesk);
-                break;
+            clarificationTexts.Add(WorkflowPrompts.AskAnyDeskClarification);
         }
     }
 

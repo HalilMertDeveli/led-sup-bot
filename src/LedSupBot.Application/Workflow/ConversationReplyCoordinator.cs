@@ -180,7 +180,8 @@ public sealed class ConversationReplyCoordinator : IConversationReplyCoordinator
             last.ExternalMessageId,
             messageType,
             textSegments.Count > 0 ? string.Join('\n', textSegments) : last.TextContent,
-            batch.Select(m => m.MessageId).ToList());
+            batch.Select(m => m.MessageId).ToList(),
+            last.WhatsAppDeliveryRoute);
     }
 
     private ConversationReplyState GetOrCreateState(Guid conversationId)

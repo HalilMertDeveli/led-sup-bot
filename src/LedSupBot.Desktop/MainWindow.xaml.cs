@@ -1,5 +1,7 @@
-﻿using System.ComponentModel;
+﻿using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Windows;
+using System.Windows.Input;
 using LedSupBot.Desktop.ViewModels;
 
 namespace LedSupBot.Desktop;
@@ -11,15 +13,52 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Loaded += (_, _) => _trayMinimizeEnabled = true;
+        Loaded += OnLoaded;
         StateChanged += OnStateChanged;
     }
 
-    private void PasswordBox_OnPasswordChanged(object sender, RoutedEventArgs e)
+    private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel vm && sender is System.Windows.Controls.PasswordBox box)
+        _trayMinimizeEnabled = true;
+
+        if (DataContext is MainViewModel vm)
         {
-            vm.Password = box.Password;
+            vm.ActiveMessages.CollectionChanged += OnActiveMessagesCollectionChanged;
+        }
+
+        DataContextChanged += (_, args) =>
+        {
+            if (args.OldValue is MainViewModel oldVm)
+            {
+                oldVm.ActiveMessages.CollectionChanged -= OnActiveMessagesCollectionChanged;
+            }
+            if (args.NewValue is MainViewModel newVm)
+            {
+                newVm.ActiveMessages.CollectionChanged += OnActiveMessagesCollectionChanged;
+            }
+        };
+    }
+
+    private void OnActiveMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.Action == NotifyCollectionChangedAction.Add)
+        {
+            Dispatcher.InvokeAsync(() =>
+            {
+                MessagesScrollViewer?.ScrollToBottom();
+            }, System.Windows.Threading.DispatcherPriority.Background);
+        }
+    }
+
+    private void MessageComposerBox_OnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Shift) == 0)
+        {
+            e.Handled = true;
+            if (DataContext is MainViewModel vm && vm.SendMessageCommand.CanExecute(null))
+            {
+                vm.SendMessageCommand.Execute(null);
+            }
         }
     }
 

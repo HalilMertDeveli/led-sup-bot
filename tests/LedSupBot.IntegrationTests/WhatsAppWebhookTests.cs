@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.WhatsApp;
 using LedSupBot.Domain.Enums;
 using LedSupBot.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -45,6 +46,7 @@ public sealed class WhatsAppWebhookFixture : IAsyncLifetime
             builder.UseSetting("Admin:DashboardPassword", AdminPassword);
             builder.UseSetting("Admin:SessionSecret", AdminSessionSecret);
             builder.UseSetting("Workflow:AutoReplyEnabled", "false");
+            builder.UseSetting("WhatsAppTestMode:Enabled", "false");
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IWhatsAppClient>();
@@ -165,7 +167,7 @@ public sealed class WhatsAppWebhookTests
     }
 
     [Fact]
-    public async Task FromMe_Without_BotOriginated_Maps_Technician_And_Sets_Human_Mode()
+    public async Task FromMe_Without_BotOriginated_Does_Not_Enter_Customer_Pipeline()
     {
         var client = _fixture.Factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Connector-Secret", _fixture.SharedSecret);
@@ -203,12 +205,10 @@ public sealed class WhatsAppWebhookTests
         var conversation = await db.Conversations
             .Include(c => c.Customer)
             .SingleAsync(c => c.Customer.PhoneNumber == phone);
-        Assert.Equal(BotMode.Human, conversation.BotMode);
-
-        var message = await db.Messages.SingleAsync(m => m.ExternalMessageId == techMsg.externalMessageId);
-        Assert.Equal(MessageSender.Technician, message.SentBy);
-        Assert.Equal(ConversationStage.HumanHandoff, conversation.CurrentStage);
-        Assert.Equal(ConversationStatus.InHumanSupport, conversation.Status);
+        Assert.Equal(BotMode.Bot, conversation.BotMode);
+        Assert.Equal(ConversationStage.Start, conversation.CurrentStage);
+        Assert.Equal(ConversationStatus.Active, conversation.Status);
+        Assert.False(await db.Messages.AnyAsync(m => m.ExternalMessageId == techMsg.externalMessageId));
     }
 
     [Fact]
@@ -317,6 +317,7 @@ public sealed class WhatsAppWebhookTests
         });
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await WaitForSentTextAsync();
         Assert.NotEmpty(_fixture.WhatsApp.SentTexts);
         Assert.Contains(_fixture.WhatsApp.SentTexts, t =>
             t.Contains("cm", StringComparison.OrdinalIgnoreCase) ||
@@ -381,7 +382,17 @@ public sealed class WhatsAppWebhookTests
         });
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await WaitForSentTextAsync();
         Assert.NotEmpty(_fixture.WhatsApp.SentTexts);
+    }
+
+    private async Task WaitForSentTextAsync()
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(8);
+        while (_fixture.WhatsApp.SentTexts.Count == 0 && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(100);
+        }
     }
 
     private async Task<WebApplicationFactory<Program>> CreateAutoReplyFactoryAsync()
@@ -397,11 +408,18 @@ public sealed class WhatsAppWebhookTests
             builder.UseSetting("Admin:DashboardPassword", _fixture.AdminPassword);
             builder.UseSetting("Admin:SessionSecret", _fixture.AdminSessionSecret);
             builder.UseSetting("Workflow:AutoReplyEnabled", "true");
+            builder.UseSetting("Workflow:InboundCoalescing:Enabled", "false");
+            builder.UseSetting("Workflow:NaturalTiming:Enabled", "false");
+            builder.UseSetting("WhatsAppTestMode:Enabled", "false");
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IWhatsAppClient>();
                 services.AddSingleton(_fixture.WhatsApp);
                 services.AddSingleton<IWhatsAppClient>(sp => sp.GetRequiredService<RecordingWhatsAppClient>());
+                var selfStore = new WhatsAppSelfIdentityStore();
+                selfStore.SetSelfJids(["905469124845@s.whatsapp.net", "268040956571702@lid"]);
+                services.RemoveAll<IWhatsAppSelfIdentityStore>();
+                services.AddSingleton<IWhatsAppSelfIdentityStore>(selfStore);
             });
         });
 

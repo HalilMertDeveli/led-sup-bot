@@ -21,6 +21,8 @@ public partial class App : System.Windows.Application
 
     private async void OnStartup(object sender, StartupEventArgs e)
     {
+        RegisterGlobalExceptionHandlers();
+
         try
         {
             _settings = DesktopSettingsLoader.Load();
@@ -71,16 +73,45 @@ public partial class App : System.Windows.Application
             return Task.CompletedTask;
         }
 
-        _apiClient = new LedSupBotApiClient(_settings!.ApiBaseUrl);
-        _signalR = new AdminSignalRService(_apiClient, _settings.ApiBaseUrl);
-        _mainViewModel = new MainViewModel(_apiClient, _signalR, _notifications!, _tray);
+        return Dispatcher.InvokeAsync(() =>
+        {
+            _apiClient = new LedSupBotApiClient(_settings!.ApiBaseUrl);
+            _signalR = new AdminSignalRService(_apiClient, _settings.ApiBaseUrl);
+            _mainViewModel = new MainViewModel(_apiClient, _signalR, _notifications!, _settings, _tray);
 
-        _mainWindow = new MainWindow { DataContext = _mainViewModel };
-        MainWindow = _mainWindow;
-        _tray!.AttachMainWindow(_mainWindow);
-        _tray.ExitRequested += OnTrayExitRequested;
+            _mainWindow = new MainWindow { DataContext = _mainViewModel };
+            MainWindow = _mainWindow;
+            _tray!.AttachMainWindow(_mainWindow);
+            _tray.ExitRequested += OnTrayExitRequested;
+        }).Task;
+    }
 
-        return Task.CompletedTask;
+    private static void RegisterGlobalExceptionHandlers()
+    {
+        Current.DispatcherUnhandledException += (_, args) =>
+        {
+            DesktopLog.Error("DispatcherUnhandledException", args.Exception);
+            args.Handled = true;
+            System.Windows.MessageBox.Show(
+                "Beklenmeyen bir hata oluştu. Uygulama açık kalacak.",
+                "LED Support",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        };
+
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            if (args.ExceptionObject is Exception ex)
+            {
+                DesktopLog.Error("UnhandledException", ex);
+            }
+        };
+
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            DesktopLog.Error("UnobservedTaskException", args.Exception);
+            args.SetObserved();
+        };
     }
 
     private void OnTrayExitRequested()

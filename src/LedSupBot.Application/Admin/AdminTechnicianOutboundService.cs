@@ -1,5 +1,6 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Takeover;
+using LedSupBot.Application.WhatsApp;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -20,6 +21,7 @@ public sealed class AdminTechnicianOutboundService : IAdminTechnicianOutboundSer
     private readonly IApplicationDbContext _db;
     private readonly IWhatsAppClient _whatsAppClient;
     private readonly IConversationTakeoverService _takeover;
+    private readonly IWhatsAppSelfIdentityStore _selfIdentity;
     private readonly IAdminEventNotifier _notifier;
     private readonly ILogger<AdminTechnicianOutboundService> _logger;
 
@@ -27,12 +29,14 @@ public sealed class AdminTechnicianOutboundService : IAdminTechnicianOutboundSer
         IApplicationDbContext db,
         IWhatsAppClient whatsAppClient,
         IConversationTakeoverService takeover,
+        IWhatsAppSelfIdentityStore selfIdentity,
         IAdminEventNotifier notifier,
         ILogger<AdminTechnicianOutboundService> logger)
     {
         _db = db;
         _whatsAppClient = whatsAppClient;
         _takeover = takeover;
+        _selfIdentity = selfIdentity;
         _notifier = notifier;
         _logger = logger;
     }
@@ -84,8 +88,16 @@ public sealed class AdminTechnicianOutboundService : IAdminTechnicianOutboundSer
         string? externalId;
         try
         {
-            externalId = await _whatsAppClient.SendTextMessageAsync(
+            var destination = await WhatsAppOutboundDestinationResolver.ResolveAsync(
+                _db,
+                _selfIdentity,
+                conversationId,
+                conversation.LastInboundWhatsAppAddress,
                 conversation.Customer.PhoneNumber,
+                cancellationToken);
+
+            externalId = await _whatsAppClient.SendTextMessageAsync(
+                destination.Address,
                 text.Trim(),
                 cancellationToken);
         }

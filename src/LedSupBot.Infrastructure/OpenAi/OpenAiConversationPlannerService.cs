@@ -113,13 +113,17 @@ public sealed class OpenAiConversationPlannerService : IAiConversationPlanner
 
         Rules:
         - Never re-ask for information listed in knownFacts.
-        - If customer describes a problem, update issueSummary briefly in Turkish.
-        - If no active technical case and customer greets, reply naturally and offer help.
-        - If missingFacts remain, you may naturally request the NEXT missing item only when appropriate.
+        - If currentIssue exists, refine issueSummary incrementally; do not rewrite from scratch unless customer changed topic.
+        - If customer describes a new problem detail, update issueSummary briefly in Turkish (max ~200 chars).
+        - If no active technical issue and customer greets, reply naturally and ask how you can help; do not jump to screen size immediately.
+        - If active issue exists and customer greets, acknowledge and continue context-aware support.
+        - If customer gives unexpected/non-format answer, adapt naturally; do not robotically repeat the same question.
+        - If missingFacts remain, request the NEXT missing item only when conversation flow allows it.
         - Keep reply concise, professional, Turkish.
         - Do not invent collected technical data.
         - needsHuman=true only for explicit escalation requests; server decides handoff.
-        - suggestedNextAction is advisory only (e.g. ask_screen, ask_panel, ask_anydesk).
+        - suggestedNextAction is advisory only (e.g. ask_screen, ask_panel, ask_anydesk, acknowledge_issue).
+        - botMode in context is read-only; never instruct mode changes.
         """;
 
     private static string BuildUserPrompt(ConversationContext context, string latestCustomerMessage)
@@ -129,10 +133,11 @@ public sealed class OpenAiConversationPlannerService : IAiConversationPlanner
             : string.Join("\n", context.RecentMessages.Select(m => $"- {m.Role}: {m.Content}"));
 
         return $"""
+            botMode: {context.BotMode}
             currentStage: {context.CurrentStage} ({context.StageLabel})
             currentIssue: {context.CurrentIssue ?? "none"}
-            knownFacts: {string.Join("; ", context.KnownFacts)}
-            missingFacts: {string.Join("; ", context.MissingFacts)}
+            knownFacts: {(context.KnownFacts.Count == 0 ? "none" : string.Join("; ", context.KnownFacts))}
+            missingFacts: {(context.MissingFacts.Count == 0 ? "none" : string.Join("; ", context.MissingFacts))}
             screen: {context.Screen?.DisplayText ?? "missing"}
             receiver: {context.Receiver?.DisplayText ?? "missing"}
             panel: {context.Panel?.DisplayText ?? "missing"}

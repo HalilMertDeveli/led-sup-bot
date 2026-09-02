@@ -52,7 +52,7 @@ public sealed class AiResponsePlanner
             }
 
             var reply = SanitizeReply(raw.Reply, context);
-            var issue = SanitizeIssueSummary(raw.IssueSummary);
+            var issue = SanitizeIssueSummary(raw.IssueSummary, context.CurrentIssue);
 
             if (string.IsNullOrWhiteSpace(reply) && string.IsNullOrWhiteSpace(issue))
             {
@@ -89,13 +89,65 @@ public sealed class AiResponsePlanner
             trimmed = trimmed[..1800];
         }
 
-        if (context.Screen?.Complete == true &&
-            ContainsScreenReAsk(trimmed))
+        if (context.Screen?.Complete == true && ContainsScreenReAsk(trimmed))
         {
             return null;
         }
 
+        if (context.Receiver?.Complete == true && ContainsReceiverReAsk(trimmed))
+        {
+            return null;
+        }
+
+        if (context.Panel?.Complete == true && ContainsPanelReAsk(trimmed))
+        {
+            return null;
+        }
+
+        if (context.Config?.Complete == true && ContainsConfigReAsk(trimmed))
+        {
+            return null;
+        }
+
+        if (context.AnyDesk?.Complete == true && ContainsAnyDeskReAsk(trimmed))
+        {
+            return null;
+        }
+
+        trimmed = RemoveUnwantedContactPromises(trimmed);
+
         return trimmed;
+    }
+
+    private static string RemoveUnwantedContactPromises(string reply)
+    {
+        var patterns = new[]
+        {
+            @"teknik\s+ekibimiz\s+(?:en\s+kısa\s+sürede\s+)?sizinle\s+iletişime\s+geçecek(?:tir)?\.?",
+            @"ekibimiz\s+(?:en\s+kısa\s+sürede\s+)?sizinle\s+iletişime\s+geçecek(?:tir)?\.?",
+            @"ekibimiz\s+(?:en\s+kısa\s+sürede\s+)?sizinle\s+irtibata\s+geçecek(?:tir)?\.?",
+            @"teknik\s+ekibimiz\s+(?:en\s+kısa\s+sürede\s+)?sizi\s+arayacak(?:tır)?\.?",
+            @"sizinle\s+iletişime\s+geçeceğiz\.?",
+            @"sizinle\s+irtibata\s+geçeceğiz\.?"
+        };
+
+        var cleaned = reply;
+        foreach (var pattern in patterns)
+        {
+            cleaned = System.Text.RegularExpressions.Regex.Replace(
+                cleaned,
+                pattern,
+                "",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        }
+
+        cleaned = cleaned.Trim();
+        if (string.IsNullOrWhiteSpace(cleaned))
+        {
+            return "Gerekli teknik bilgileri aldım, teşekkürler.";
+        }
+
+        return cleaned;
     }
 
     private static bool ContainsScreenReAsk(string reply)
@@ -103,17 +155,48 @@ public sealed class AiResponsePlanner
         var lower = reply.ToLowerInvariant();
         return lower.Contains("ekran ölç") ||
                lower.Contains("ekran olcu") ||
-               lower.Contains("ekran boyut");
+               lower.Contains("ekran boyut") ||
+               lower.Contains("en ve boy") ||
+               lower.Contains("yatay ve dikey");
     }
 
-    private static string? SanitizeIssueSummary(string? summary)
+    private static bool ContainsReceiverReAsk(string reply)
+    {
+        var lower = reply.ToLowerInvariant();
+        return lower.Contains("receiver") ||
+               lower.Contains("reciever") ||
+               lower.Contains("yeşil kart") ||
+               lower.Contains("yesil kart");
+    }
+
+    private static bool ContainsPanelReAsk(string reply)
+    {
+        var lower = reply.ToLowerInvariant();
+        return lower.Contains("panel etiket") ||
+               lower.Contains("etiket foto");
+    }
+
+    private static bool ContainsConfigReAsk(string reply)
+    {
+        var lower = reply.ToLowerInvariant();
+        return lower.Contains("config kablo") ||
+               lower.Contains("yazıcı kablo") ||
+               lower.Contains("yazici kablo");
+    }
+
+    private static bool ContainsAnyDeskReAsk(string reply)
+    {
+        var lower = reply.ToLowerInvariant();
+        return lower.Contains("anydesk");
+    }
+
+    private static string? SanitizeIssueSummary(string? summary, string? existingIssue)
     {
         if (string.IsNullOrWhiteSpace(summary))
         {
             return null;
         }
 
-        var trimmed = summary.Trim();
-        return trimmed.Length <= 500 ? trimmed : trimmed[..500];
+        return IssueSummaryMerger.Merge(existingIssue, summary);
     }
 }

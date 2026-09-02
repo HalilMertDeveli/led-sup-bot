@@ -8,7 +8,7 @@ namespace LedSupBot.Application.Workflow.Context;
 
 public sealed class ConversationContextBuilder : IConversationContextBuilder
 {
-    private const int MaxRecentMessages = 14;
+    private const int MaxRecentMessages = 10;
 
     private readonly IApplicationDbContext _db;
 
@@ -65,6 +65,7 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
             AnyDesk = new ContextAnyDesk(
                 slots.HasAnyDesk ? "AnyDesk alındı" : "AnyDesk bekleniyor",
                 slots.HasAnyDesk),
+            BotMode = conversation.BotMode,
         };
     }
 

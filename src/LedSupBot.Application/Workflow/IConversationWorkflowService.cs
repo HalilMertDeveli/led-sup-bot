@@ -14,4 +14,5 @@ public sealed record WorkflowInboundMessage(
     string ExternalMessageId,
     MessageType MessageType,
     string? TextContent,
-    IReadOnlyList<Guid>? CoalescedMessageIds = null);
+    IReadOnlyList<Guid>? CoalescedMessageIds = null,
+    string? WhatsAppDeliveryRoute = null);

@@ -320,6 +320,55 @@ public sealed class WorkflowIntegrationTests
         Assert.NotNull(supportCase?.SummaryMarkdown);
         Assert.Contains("500", supportCase!.SummaryMarkdown);
     }
+
+    [Fact]
+    public async Task Screen_Dimensions_Followed_By_AnyDesk_Preserves_Dimensions_And_Never_Regresses_To_AskScreenSize()
+    {
+        var (conversation, customer) = await _fixture.SeedConversationAsync();
+
+        // 1. Customer initiates request
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "Led ekran kurulumu yapmak istiyorum");
+
+        // 2. Customer provides natural language dimensions
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "192cm yükseklik 160 cm genişlik");
+
+        var caseAfterDims = await _fixture.LoadCaseAsync(conversation.Id);
+        Assert.NotNull(caseAfterDims?.ScreenInformation);
+        Assert.Equal(160, caseAfterDims!.ScreenInformation!.Width);
+        Assert.Equal(192, caseAfterDims.ScreenInformation.Height);
+
+        var convAfterDims = await _fixture.LoadConversationAsync(conversation.Id);
+        Assert.NotEqual(ConversationStage.AskScreenSize, convAfterDims.CurrentStage);
+
+        // 3. Customer provides AnyDesk address
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "123 456 789");
+
+        var caseAfterAnyDesk = await _fixture.LoadCaseAsync(conversation.Id);
+        Assert.NotNull(caseAfterAnyDesk?.ScreenInformation);
+        Assert.Equal(160, caseAfterAnyDesk!.ScreenInformation!.Width);
+        Assert.Equal(192, caseAfterAnyDesk.ScreenInformation.Height);
+        Assert.NotNull(caseAfterAnyDesk.AnyDeskInformation);
+        Assert.Equal("123456789", caseAfterAnyDesk.AnyDeskInformation!.AnyDeskAddress);
+
+        var convAfterAnyDesk = await _fixture.LoadConversationAsync(conversation.Id);
+        Assert.NotEqual(ConversationStage.AskScreenSize, convAfterAnyDesk.CurrentStage);
+    }
+
+    [Fact]
+    public async Task Compact_Dimensions_192x160_Persists_Width_And_Height()
+    {
+        var (conversation, customer) = await _fixture.SeedConversationAsync();
+
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "192x160");
+
+        var supportCase = await _fixture.LoadCaseAsync(conversation.Id);
+        Assert.NotNull(supportCase?.ScreenInformation);
+        Assert.Equal(192, supportCase!.ScreenInformation!.Width);
+        Assert.Equal(160, supportCase.ScreenInformation.Height);
+
+        var conv = await _fixture.LoadConversationAsync(conversation.Id);
+        Assert.NotEqual(ConversationStage.AskScreenSize, conv.CurrentStage);
+    }
 }
 
 public sealed class RecordingWhatsAppClient : IWhatsAppClient

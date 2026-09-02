@@ -17,6 +17,8 @@ artifacts/
 # Test / coverage
 TestResults/
 coverage/
+.test-output/
+.runtime/
 *.coverage
 *.coveragexml
 
@@ -26,6 +28,7 @@ admin/dist/
 admin/.vite/
 connector/node_modules/
 connector/.sessions/
+connector/.session-backups/
 connector/.env
 *.tsbuildinfo
 npm-debug.log*
@@ -46,6 +49,7 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+appsettings.Local.json
 *.pfx
 *.p12
 *.pem
