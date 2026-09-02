@@ -1,6 +1,7 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Media;
 using LedSupBot.Application.Workflow;
+using LedSupBot.Application.Workflow.Context;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using LedSupBot.Infrastructure.Persistence;
@@ -15,8 +16,8 @@ namespace LedSupBot.IntegrationTests;
 public sealed class WorkflowFixture : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
-        .WithDatabase("led_sup_bot_workflow")
+        .WithImage("pgvector/pgvector:pg16")
+        .WithDatabase("led_sup_bot_wf")
         .WithUsername("postgres")
         .WithPassword("postgres")
         .Build();
@@ -39,9 +40,12 @@ public sealed class WorkflowFixture : IAsyncLifetime
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Database:ConnectionString"] = ConnectionString,
-                ["Workflow:AutoReplyEnabled"] = "false",
+                ["Workflow:AutoReplyEnabled"] = "true",
+                ["Workflow:NaturalTiming:Enabled"] = "false",
+                ["Workflow:InboundCoalescing:Enabled"] = "false",
                 ["Workflow:ConfigExampleImagePath"] = "",
                 ["WhatsAppConnector:Enabled"] = "false",
+                ["WhatsAppAutomation:ExcludedPhoneNumbers:0"] = "+90 506 336 09 19",
                 ["MediaStorage:RootPath"] = MediaRoot,
                 ["MediaStorage:MaxFileSizeBytes"] = "10485760",
             })
@@ -72,8 +76,6 @@ public sealed class WorkflowFixture : IAsyncLifetime
             disposable.Dispose();
         }
 
-        await _postgres.DisposeAsync();
-
         try
         {
             if (Directory.Exists(MediaRoot))
@@ -85,6 +87,8 @@ public sealed class WorkflowFixture : IAsyncLifetime
         {
             // Best effort temp cleanup.
         }
+
+        await _postgres.DisposeAsync();
     }
 
     public async Task<(Conversation Conversation, Customer Customer)> SeedConversationAsync(string? phone = null)
@@ -133,7 +137,9 @@ public sealed class WorkflowFixture : IAsyncLifetime
             WhatsApp.SetDownload(externalId, "image/png", TestImageBytes.CreatePng());
             var pipeline = scope.ServiceProvider.GetRequiredService<IInboundMediaPipeline>();
             var supportCase = await db.TechnicalSupportCases
-                .FirstOrDefaultAsync(c => c.ConversationId == conversationId);
+                .Where(c => c.ConversationId == conversationId && c.Status != SupportCaseStatus.Completed)
+                .OrderByDescending(c => c.CreatedAt)
+                .FirstOrDefaultAsync();
             if (supportCase is null)
             {
                 supportCase = new TechnicalSupportCase
@@ -181,6 +187,21 @@ public sealed class WorkflowFixture : IAsyncLifetime
             .FirstOrDefaultAsync(c => c.ConversationId == conversationId);
     }
 
+    public async Task<TechnicalSupportCase?> LoadCompletedCaseAsync(Guid conversationId)
+    {
+        await using var scope = Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        return await db.TechnicalSupportCases
+            .Include(c => c.ScreenInformation)
+            .Include(c => c.ReceiverInformation)
+            .Include(c => c.ConfigConnection)
+            .Include(c => c.AnyDeskInformation)
+            .Include(c => c.PanelLabelPhotos)
+            .Where(c => c.ConversationId == conversationId && c.Status == SupportCaseStatus.Completed)
+            .OrderByDescending(c => c.CompletedAt)
+            .FirstOrDefaultAsync();
+    }
+
     public async Task<Conversation> LoadConversationAsync(Guid conversationId)
     {
         await using var scope = Services.CreateAsyncScope();
@@ -198,6 +219,83 @@ public sealed class WorkflowIntegrationTests
     private readonly WorkflowFixture _fixture;
 
     public WorkflowIntegrationTests(WorkflowFixture fixture) => _fixture = fixture;
+
+    [Fact]
+    public async Task P2A_Production_ContextBuilder_Uses_Persisted_LastBotQuestion()
+    {
+        var (conversation, _) = await _fixture.SeedConversationAsync();
+        await using var scope = _fixture.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var supportCase = new TechnicalSupportCase { ConversationId = conversation.Id, Status = SupportCaseStatus.CollectingInformation };
+        db.TechnicalSupportCases.Add(supportCase);
+        db.Messages.Add(new Message
+        {
+            ConversationId = conversation.Id, Direction = MessageDirection.Outbound, MessageType = MessageType.Text,
+            SentBy = MessageSender.Bot, Content = "Kaç tane receiver var?", DeliveryStatus = DeliveryStatus.Sent,
+            ExternalMessageId = $"p2-bot-{Guid.NewGuid():N}", CreatedAt = DateTimeOffset.UtcNow.AddSeconds(-2)
+        });
+        db.Messages.Add(new Message
+        {
+            ConversationId = conversation.Id, Direction = MessageDirection.Outbound, MessageType = MessageType.Text,
+            SentBy = MessageSender.Bot, Content = "Tamam.", DeliveryStatus = DeliveryStatus.Sent,
+            ExternalMessageId = $"p21-bot-{Guid.NewGuid():N}", CreatedAt = DateTimeOffset.UtcNow.AddSeconds(-1)
+        });
+        var inbound = new Message
+        {
+            ConversationId = conversation.Id, Direction = MessageDirection.Inbound, MessageType = MessageType.Text,
+            SentBy = MessageSender.Customer, Content = "4", DeliveryStatus = DeliveryStatus.Delivered,
+            ExternalMessageId = $"p2-customer-{Guid.NewGuid():N}"
+        };
+        db.Messages.Add(inbound);
+        await db.SaveChangesAsync();
+
+        var builder = scope.ServiceProvider.GetRequiredService<IConversationContextBuilder>();
+        var context = await builder.BuildAsync(conversation, supportCase,
+            new WorkflowInboundMessage(conversation.Id, conversation.Customer?.PhoneNumber ?? "905551234567", inbound.Id,
+                inbound.ExternalMessageId!, MessageType.Text, "4"),
+            new WorkflowSlotState(), ConversationStage.AskReceiverCount);
+
+        Assert.Equal("Kaç tane receiver var?", context.LastBotQuestion);
+        Assert.Equal(PendingWorkflowFact.ReceiverCount, context.PendingFact);
+    }
+
+    [Fact]
+    public async Task P21_Interruption_Then_FreshScope_Resume_Uses_Persisted_ReceiverCount_State()
+    {
+        var (conversation, customer) = await _fixture.SeedConversationAsync();
+        await using (var scope = _fixture.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var supportCase = new TechnicalSupportCase { ConversationId = conversation.Id, Status = SupportCaseStatus.CollectingInformation };
+            db.TechnicalSupportCases.Add(supportCase);
+            db.ScreenInformations.Add(new ScreenInformation { TechnicalSupportCaseId = supportCase.Id, Width = 320, Height = 160 });
+            db.PanelLabelPhotos.Add(new PanelLabelPhoto
+            {
+                TechnicalSupportCaseId = supportCase.Id, StorageKey = $"cases/{supportCase.Id:N}/label.png",
+                ContentType = "image/png", SizeBytes = 10
+            });
+            db.Messages.Add(new Message
+            {
+                ConversationId = conversation.Id, Direction = MessageDirection.Outbound, MessageType = MessageType.Text,
+                SentBy = MessageSender.Bot, Content = "Kaç tane receiver var?", DeliveryStatus = DeliveryStatus.Sent,
+                ExternalMessageId = $"p21-prompt-{Guid.NewGuid():N}"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        _fixture.WhatsApp.SentTexts.Clear();
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"p21-{Guid.NewGuid():N}", MessageType.Text,
+            "ekranın yarısı neden gelmiyor?");
+
+        Assert.DoesNotContain(_fixture.WhatsApp.SentTexts, x => x.Contains("kaç tane receiver", StringComparison.OrdinalIgnoreCase));
+        Assert.Null((await _fixture.LoadCaseAsync(conversation.Id))!.ReceiverInformation);
+        Assert.Equal(BotMode.Bot, (await _fixture.LoadConversationAsync(conversation.Id)).BotMode);
+
+        _fixture.WhatsApp.SentTexts.Clear();
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"p21-{Guid.NewGuid():N}", MessageType.Text, "devam");
+        Assert.Contains(_fixture.WhatsApp.SentTexts, x => x.Contains("receiver", StringComparison.OrdinalIgnoreCase));
+        Assert.Null((await _fixture.LoadCaseAsync(conversation.Id))!.ReceiverInformation);
+    }
 
     [Fact]
     public async Task New_Conversation_Advances_Stage_And_Prompts_Screen_Size()
@@ -272,8 +370,8 @@ public sealed class WorkflowIntegrationTests
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "Merhaba");
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "500 cm x 300 cm");
 
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-img-1", MessageType.Image, null);
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-img-2", MessageType.Image, null);
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-img-{Guid.NewGuid():N}", MessageType.Image, null);
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-img-{Guid.NewGuid():N}", MessageType.Image, null);
 
         var supportCase = await _fixture.LoadCaseAsync(conversation.Id);
         Assert.Equal(2, supportCase!.PanelLabelPhotos.Count);
@@ -306,17 +404,13 @@ public sealed class WorkflowIntegrationTests
         var (conversation, customer) = await _fixture.SeedConversationAsync();
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "Merhaba");
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "500 cm x 300 cm");
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-img", MessageType.Image, null);
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "8 tane");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-img-{Guid.NewGuid():N}", MessageType.Image, null);
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "8 tane E120");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "playbox");
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "evet");
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "123456789");
 
-        var updated = await _fixture.LoadConversationAsync(conversation.Id);
-        Assert.Equal(BotMode.Human, updated.BotMode);
-        Assert.Equal(ConversationStatus.InHumanSupport, updated.Status);
-        Assert.Equal(ConversationStage.HumanHandoff, updated.CurrentStage);
-
-        var supportCase = await _fixture.LoadCaseAsync(conversation.Id);
+        var supportCase = await _fixture.LoadCompletedCaseAsync(conversation.Id);
         Assert.NotNull(supportCase?.SummaryMarkdown);
         Assert.Contains("500", supportCase!.SummaryMarkdown);
     }
@@ -368,6 +462,62 @@ public sealed class WorkflowIntegrationTests
 
         var conv = await _fixture.LoadConversationAsync(conversation.Id);
         Assert.NotEqual(ConversationStage.AskScreenSize, conv.CurrentStage);
+    }
+
+    [Fact]
+    public async Task Excluded_Phone_Number_Inbound_Is_Persisted_But_Receives_Zero_Bot_Automation()
+    {
+        var excludedPhone = "905063360919";
+        var (conversation, customer) = await _fixture.SeedConversationAsync(excludedPhone);
+
+        _fixture.WhatsApp.SentTexts.Clear();
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "Merhaba yardÄ±m lazÄ±m");
+
+        // Outbound texts must be EMPTY because customer is on exclusion list!
+        Assert.Empty(_fixture.WhatsApp.SentTexts);
+
+        // But inbound message is persisted in DB for operator visibility
+        await using var scope = _fixture.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var msgExists = await db.Messages.AnyAsync(m => m.ConversationId == conversation.Id && m.Direction == MessageDirection.Inbound);
+        Assert.True(msgExists);
+    }
+
+    [Fact]
+    public async Task Final_Summary_Does_Not_Promise_Technical_Team_Will_Call()
+    {
+        var (conversation, customer) = await _fixture.SeedConversationAsync();
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "Merhaba");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "500 cm x 300 cm");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-img-{Guid.NewGuid():N}", MessageType.Image, null);
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "8 tane E120");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "playbox");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "evet");
+
+        var caseBefore = await _fixture.LoadCaseAsync(conversation.Id);
+
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "123456789");
+
+        await using var scope = _fixture.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var anyDesk = await db.AnyDeskInformations.FirstOrDefaultAsync(a => a.TechnicalSupportCaseId == caseBefore!.Id);
+        var config = await db.ConfigConnections.FirstOrDefaultAsync(c => c.TechnicalSupportCaseId == caseBefore!.Id);
+        var receiver = await db.ReceiverInformations.FirstOrDefaultAsync(r => r.TechnicalSupportCaseId == caseBefore!.Id);
+        var screen = await db.ScreenInformations.FirstOrDefaultAsync(s => s.TechnicalSupportCaseId == caseBefore!.Id);
+        var photos = await db.PanelLabelPhotos.Where(p => p.TechnicalSupportCaseId == caseBefore!.Id).ToListAsync();
+
+        var conv = await db.Conversations.SingleAsync(c => c.Id == conversation.Id);
+        var cases = await db.TechnicalSupportCases.Where(c => c.ConversationId == conversation.Id).ToListAsync();
+
+        Assert.True(cases.Count >= 2,
+            $"Cases={cases.Count}, Stage={conv.CurrentStage}, AnyDesk={(anyDesk != null ? anyDesk.AnyDeskAddress : "null")}, Config={(config != null ? config.Status.ToString() : "null")}, ExampleSent={(config != null ? config.ExampleImageSent.ToString() : "null")}, Recv={(receiver != null ? receiver.Count.ToString() : "null")}, Screen={(screen != null ? screen.Width + "x" + screen.Height : "null")}, Photos={photos.Count}");
+
+        var completedCase = cases.FirstOrDefault(c => c.Status == SupportCaseStatus.Completed);
+        Assert.NotNull(completedCase);
+        Assert.NotNull(completedCase.SummaryMarkdown);
+        Assert.DoesNotContain("teknik ekibimiz devam edecek", completedCase.SummaryMarkdown, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sizinle iletiÅŸime", completedCase.SummaryMarkdown, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sizi arayacak", completedCase.SummaryMarkdown, StringComparison.OrdinalIgnoreCase);
     }
 }
 

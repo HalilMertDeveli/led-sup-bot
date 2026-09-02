@@ -152,7 +152,9 @@ public sealed class ConversationTakeoverService : IConversationTakeoverService
             .Include(c => c.ConfigConnection)
             .Include(c => c.AnyDeskInformation)
             .Include(c => c.PanelLabelPhotos)
-            .FirstOrDefaultAsync(c => c.ConversationId == conversation.Id, cancellationToken);
+            .Where(c => c.ConversationId == conversation.Id && c.Status != SupportCaseStatus.Completed && c.Status != SupportCaseStatus.Cancelled)
+            .OrderByDescending(c => c.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
 
         var stageConversation = new Conversation
         {
@@ -161,8 +163,7 @@ public sealed class ConversationTakeoverService : IConversationTakeoverService
         };
 
         var slots = WorkflowSlotState.FromCase(supportCase, stageConversation);
-        var assetAvailable = !string.IsNullOrWhiteSpace(_workflowOptions.ConfigExampleImagePath) &&
-                             File.Exists(_workflowOptions.ConfigExampleImagePath);
+        var assetAvailable = ConfigAssetResolver.IsAssetAvailable(_workflowOptions.ConfigExampleImagePath);
         var exampleCompleted = supportCase?.ConfigConnection?.ExampleImageSent == true;
 
         return WorkflowStageResolver.ResolveEffectiveStage(

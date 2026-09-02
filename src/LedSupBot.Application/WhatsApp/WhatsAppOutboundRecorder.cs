@@ -58,6 +58,14 @@ public sealed class WhatsAppOutboundRecorder : IWhatsAppOutboundRecorder
 
         db.Messages.Add(message);
         await db.SaveChangesAsync(cancellationToken);
+
+        var notifier = _services.GetService<IAdminEventNotifier>();
+        if (notifier is not null)
+        {
+            await notifier.NotifyMessageReceivedAsync(conversationId, message.Id, cancellationToken);
+            await notifier.NotifyConversationUpdatedAsync(conversationId, cancellationToken);
+        }
+
         return message.Id;
     }
 
@@ -84,6 +92,13 @@ public sealed class WhatsAppOutboundRecorder : IWhatsAppOutboundRecorder
         try
         {
             await db.SaveChangesAsync(cancellationToken);
+
+            var notifier = _services.GetService<IAdminEventNotifier>();
+            if (notifier is not null)
+            {
+                await notifier.NotifyMessageReceivedAsync(message.ConversationId, message.Id, cancellationToken);
+                await notifier.NotifyConversationUpdatedAsync(message.ConversationId, cancellationToken);
+            }
         }
         catch (DbUpdateException)
         {

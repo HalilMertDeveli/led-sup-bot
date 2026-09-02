@@ -89,14 +89,6 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
             inboundEvent.MessageType,
             inboundEvent.FromMe);
 
-        // Defense in depth: even a direct/replayed webhook must not put a
-        // local authenticated-account message into customer automation.
-        if (inboundEvent.FromMe)
-        {
-            _logger.LogInformation("fromMe WhatsApp event ignored; no customer automation");
-            return;
-        }
-
         if (_selfIdentity.SelfJids.Count == 0)
         {
             var identitySync = _services.GetService<IWhatsAppSelfIdentitySync>();
@@ -307,7 +299,9 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
         {
             var db = _services.GetRequiredService<IApplicationDbContext>();
             var supportCase = await db.TechnicalSupportCases
-                .FirstOrDefaultAsync(c => c.ConversationId == conversationId, cancellationToken);
+                .Where(c => c.ConversationId == conversationId && c.Status != SupportCaseStatus.Completed && c.Status != SupportCaseStatus.Cancelled)
+                .OrderByDescending(c => c.CreatedAt)
+                .FirstOrDefaultAsync(cancellationToken);
 
             if (supportCase is null)
             {
@@ -396,7 +390,8 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
         var deliveryRoute = ResolveWhatsAppDeliveryRoute(inboundEvent, _selfIdentity);
 
         var coordinator = _services.GetService<IConversationReplyCoordinator>();
-        if (coordinator is not null)
+        var workflowOptions = _services.GetService<IOptions<WorkflowOptions>>()?.Value;
+        if (coordinator is not null && workflowOptions?.InboundCoalescing.Enabled == true)
         {
             coordinator.EnqueueCustomerInbound(new PendingCustomerInbound(
                 conversationId,

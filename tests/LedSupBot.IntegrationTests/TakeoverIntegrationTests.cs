@@ -15,7 +15,7 @@ namespace LedSupBot.IntegrationTests;
 public sealed class TakeoverFixture : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
+        .WithImage("pgvector/pgvector:pg16")
         .WithDatabase("led_sup_bot_takeover")
         .WithUsername("postgres")
         .WithPassword("postgres")
@@ -38,6 +38,8 @@ public sealed class TakeoverFixture : IAsyncLifetime
             {
                 ["Database:ConnectionString"] = ConnectionString,
                 ["Workflow:AutoReplyEnabled"] = "true",
+                ["Workflow:InboundCoalescing:Enabled"] = "false",
+                ["Workflow:NaturalTiming:Enabled"] = "false",
                 ["Workflow:ConfigExampleImagePath"] = "",
                 ["WhatsAppConnector:Enabled"] = "false",
                 ["MediaStorage:RootPath"] = Path.Combine(Path.GetTempPath(), "led-sup-bot-takeover-media", Guid.NewGuid().ToString("N")),
@@ -127,8 +129,11 @@ public sealed class TakeoverFixture : IAsyncLifetime
         {
             TechnicalSupportCaseId = supportCase.Id,
             Count = 8,
+            ReceiverModel = ReceiverModel.E120,
+            Model = "E120",
             RawUtterance = "8",
         });
+        supportCase.PlayerType = PlayerType.Playbox;
         db.ConfigConnections.Add(new ConfigConnectionInfo
         {
             TechnicalSupportCaseId = supportCase.Id,
@@ -309,7 +314,7 @@ public sealed class TakeoverIntegrationTests
             ConversationId = conversation.Id,
             Direction = MessageDirection.Inbound,
             MessageType = MessageType.Text,
-            Content = "Abi ekranımız 500'e 300, arkada 8 tane kart var",
+            Content = "Abi ekranÄ±mÄ±z 500'e 300, arkada 8 tane kart var",
             ExternalMessageId = $"race-{Guid.NewGuid():N}",
             DeliveryStatus = DeliveryStatus.Delivered,
             SentBy = MessageSender.Customer,
@@ -370,7 +375,7 @@ public sealed class BlockingAiService : IAiService
         }
 
         return new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(500, 300, null, null, 0.98, false),
             new ReceiverSlotCandidate(8, 0.97),
             null, null, []);

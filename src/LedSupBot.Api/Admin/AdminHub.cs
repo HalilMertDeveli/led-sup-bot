@@ -15,41 +15,6 @@ public sealed class AdminHub : Hub
     internal static string ConversationGroup(Guid conversationId) => $"conversation:{conversationId:D}";
 }
 
-public sealed class ConversationEventPayload
-{
-    public Guid ConversationId { get; set; }
-}
-
-public sealed class MessageEventPayload
-{
-    public Guid ConversationId { get; set; }
-    public Guid MessageId { get; set; }
-}
-
-public sealed class WhatsAppStatusEventPayload
-{
-    public string? Status { get; set; }
-}
-
-public sealed class OperatorStateEventPayload
-{
-    public Guid? ConversationId { get; set; }
-    public Guid? MessageId { get; set; }
-    public string? Status { get; set; }
-}
-
-public sealed class AnyDeskAlertEvent
-{
-    public Guid ConversationId { get; set; }
-    public string? CustomerDisplayName { get; set; }
-    public string? IssueSummary { get; set; }
-    public string? ScreenSummary { get; set; }
-    public string? ReceiverSummary { get; set; }
-    public string? PanelStatus { get; set; }
-    public string? ConfigStatus { get; set; }
-    public string? AnyDeskStatus { get; set; }
-}
-
 public sealed class SignalRAdminEventNotifier : IAdminEventNotifier
 {
     private readonly IHubContext<AdminHub> _hub;

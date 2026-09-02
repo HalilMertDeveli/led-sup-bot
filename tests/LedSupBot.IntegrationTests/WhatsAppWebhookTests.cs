@@ -15,7 +15,7 @@ namespace LedSupBot.IntegrationTests;
 public sealed class WhatsAppWebhookFixture : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
+        .WithImage("pgvector/pgvector:pg16")
         .WithDatabase("led_sup_bot_wa")
         .WithUsername("postgres")
         .WithPassword("postgres")
@@ -205,10 +205,10 @@ public sealed class WhatsAppWebhookTests
         var conversation = await db.Conversations
             .Include(c => c.Customer)
             .SingleAsync(c => c.Customer.PhoneNumber == phone);
-        Assert.Equal(BotMode.Bot, conversation.BotMode);
-        Assert.Equal(ConversationStage.Start, conversation.CurrentStage);
-        Assert.Equal(ConversationStatus.Active, conversation.Status);
-        Assert.False(await db.Messages.AnyAsync(m => m.ExternalMessageId == techMsg.externalMessageId));
+        Assert.Equal(BotMode.Human, conversation.BotMode);
+        Assert.Equal(ConversationStage.HumanHandoff, conversation.CurrentStage);
+        Assert.Equal(ConversationStatus.InHumanSupport, conversation.Status);
+        Assert.True(await db.Messages.AnyAsync(m => m.ExternalMessageId == techMsg.externalMessageId && m.SentBy == MessageSender.Technician));
     }
 
     [Fact]

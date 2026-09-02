@@ -1,6 +1,7 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Admin;
 using LedSupBot.Application.Media;
+using LedSupBot.Application.Knowledge;
 using LedSupBot.Application.Takeover;
 using LedSupBot.Application.WhatsApp;
 using LedSupBot.Application.Workflow;
@@ -8,6 +9,7 @@ using LedSupBot.Application.Workflow.Ai;
 using LedSupBot.Application.Workflow.Context;
 using LedSupBot.Infrastructure.Configuration;
 using LedSupBot.Infrastructure.Media;
+using LedSupBot.Infrastructure.Knowledge;
 using LedSupBot.Infrastructure.OpenAi;
 using LedSupBot.Infrastructure.Persistence;
 using LedSupBot.Infrastructure.Queue;
@@ -34,6 +36,19 @@ public static class DependencyInjection
         services.Configure<AdminOptions>(configuration.GetSection(AdminOptions.SectionName));
         services.Configure<WhatsAppTestModeOptions>(configuration.GetSection(WhatsAppTestModeOptions.SectionName));
         services.Configure<WhatsAppAutomationOptions>(configuration.GetSection(WhatsAppAutomationOptions.SectionName));
+        services.Configure<KnowledgeOptions>(configuration.GetSection(KnowledgeOptions.SectionName));
+        services.Configure<EmbeddingOptions>(configuration.GetSection(EmbeddingOptions.SectionName));
+        services.AddScoped<IPdfKnowledgeExtractor, PdfKnowledgeExtractor>();
+        services.AddHttpClient<IDocumentFallbackExtractor, GeminiDocumentFallbackExtractor>((sp, client) =>
+        {
+            var value = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<GeminiOptions>>().Value;
+            client.BaseAddress = new Uri(value.BaseUrl); client.Timeout = TimeSpan.FromMinutes(4);
+        });
+        services.AddHttpClient<IEmbeddingService, GeminiEmbeddingService>((sp, client) =>
+        {
+            var value = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<GeminiOptions>>().Value;
+            client.BaseAddress = new Uri(value.BaseUrl); client.Timeout = TimeSpan.FromSeconds(value.TimeoutSeconds);
+        });
 
         services.AddSingleton<IBackgroundWorkQueue, InMemoryBackgroundWorkQueue>();
         AiServiceRegistration.Register(services, configuration);
@@ -46,10 +61,13 @@ public static class DependencyInjection
                 options.UseNpgsql(connectionString, npgsql =>
                 {
                     npgsql.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
+                    npgsql.UseVector();
                 });
             });
 
             services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<ApplicationDbContext>());
+            services.AddScoped<KnowledgeImporter>();
+            services.AddScoped<ITechnicalKnowledgeRetriever, TechnicalKnowledgeRetriever>();
             services.AddScoped<IConversationTakeoverService, ConversationTakeoverService>();
             services.AddScoped<IConversationWorkflowService, ConversationWorkflowService>();
             services.AddScoped<IWorkflowOutboundDispatcher, WorkflowOutboundDispatcher>();

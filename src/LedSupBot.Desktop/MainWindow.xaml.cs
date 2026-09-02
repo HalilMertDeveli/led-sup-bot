@@ -41,7 +41,7 @@ public partial class MainWindow : Window
 
     private void OnActiveMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        if (e.Action == NotifyCollectionChangedAction.Add)
+        if (e.Action is NotifyCollectionChangedAction.Add or NotifyCollectionChangedAction.Reset)
         {
             Dispatcher.InvokeAsync(() =>
             {

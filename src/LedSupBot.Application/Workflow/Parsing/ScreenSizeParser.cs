@@ -5,6 +5,12 @@ namespace LedSupBot.Application.Workflow.Parsing;
 
 public static partial class ScreenSizeParser
 {
+    private const string WidthLabelPattern =
+        @"(?:yatayda|yataydaki|yatay|genişliğinde|genisliginde|genişlikte|genislikte|genişliği|genisligi|genişlik|genislik|eninde|enine|eni|en|width|w)";
+
+    private const string HeightLabelPattern =
+        @"(?:dikeyde|dikeydeki|dikey|dikeu|yüksekliğinde|yuksekliginde|yükseklikte|yukseklikte|yüksekliği|yuksekligi|yükseklik|yukseklik|yukseklk|boyunda|boyuna|boyu|boy|height|h)";
+
     public static ScreenSizeParseResult Parse(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -12,16 +18,21 @@ public static partial class ScreenSizeParser
             return ScreenSizeParseResult.Empty;
         }
 
-        var normalized = text.Trim().ToLowerInvariant();
+        var normalized = text.Trim().ToLower(new CultureInfo("tr-TR"));
 
-        // 1. Explicit labeled dimensions (e.g. "192cm yükseklik 160 cm genişlik", "genişlik 160 yükseklik 192")
+        if (IsHumanOrUnrelatedMeasurement(normalized))
+        {
+            return ScreenSizeParseResult.Empty;
+        }
+
+        // 1. Explicit labeled dimensions (e.g. "Dikeyde 160 cm, yatayda 320 cm", "genişlik 160 yükseklik 192", "boy 160 en 320")
         var labeled = TryLabeledDimensions(normalized);
         if (labeled is not null)
         {
             return labeled;
         }
 
-        // 2. Explicit meter pairs (e.g. "5 metre x 3 metre", "5m x 3m")
+        // 2. Explicit meter pairs (e.g. "5 metre x 3 metre", "5m x 3m", "3.2 metre en 1.6 metre boy")
         var meterPair = TryMeterPair(normalized);
         if (meterPair is not null)
         {
@@ -35,7 +46,7 @@ public static partial class ScreenSizeParser
             return cmPair;
         }
 
-        // 4. Dimension pairs with separator 'x', '×', '*' (e.g. "192x160", "500x300", "192 x 160")
+        // 4. Dimension pairs with separator 'x', '×', '*', 'ye', 'e' (e.g. "192x160", "500x300", "320 ye 160", "320'ye 160")
         var dimPair = TryDimensionPair(normalized);
         if (dimPair is not null)
         {
@@ -49,7 +60,7 @@ public static partial class ScreenSizeParser
             return spaced;
         }
 
-        // 6. Single dimension with label (e.g. "Yatay 500 cm", "Dikey 300 cm")
+        // 6. Single dimension with label (e.g. "Yatay 500 cm", "Dikey 300 cm", "en 320", "boy 160")
         var single = TrySingleDimension(normalized);
         if (single is not null)
         {
@@ -65,11 +76,80 @@ public static partial class ScreenSizeParser
         return ScreenSizeParseResult.Empty;
     }
 
+    public static ScreenSizeParseResult ParseWithContext(string? text, decimal? knownWidth, decimal? knownHeight)
+    {
+        var parsed = Parse(text);
+        if (parsed.ParsedAny)
+        {
+            return parsed;
+        }
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return ScreenSizeParseResult.Empty;
+        }
+
+        var normalized = text.Trim().ToLower(new CultureInfo("tr-TR"));
+
+        if (IsHumanOrUnrelatedMeasurement(normalized))
+        {
+            return ScreenSizeParseResult.Empty;
+        }
+
+        // If one dimension is already known and customer provides a single standalone number
+        var match = Regex.Match(normalized, @"^(?:olarak\s+)?(?<!\d)(\d+(?:[.,]\d+)?)\s*(cm|centimetre|santimetre|m|metre|meter)?\.?$", RegexOptions.CultureInvariant);
+        if (match.Success)
+        {
+            var val = ToCentimeters(ParseNumber(match.Groups[1].Value), match.Groups[2].Value);
+            if (val is > 0)
+            {
+                if (knownWidth is > 0 && (knownHeight is null or <= 0))
+                {
+                    return new ScreenSizeParseResult
+                    {
+                        ParsedAny = true,
+                        WidthCm = null,
+                        HeightCm = val,
+                    };
+                }
+
+                if (knownHeight is > 0 && (knownWidth is null or <= 0))
+                {
+                    return new ScreenSizeParseResult
+                    {
+                        ParsedAny = true,
+                        WidthCm = val,
+                        HeightCm = null,
+                    };
+                }
+            }
+        }
+
+        return ScreenSizeParseResult.Empty;
+    }
+
+    private static bool IsHumanOrUnrelatedMeasurement(string text)
+    {
+        // "boyum 180 cm", "benim boyum 180", "kilom 80", "yaşım 30", "2+2 kaç"
+        if (Regex.IsMatch(text, @"\b(?:boyum|kilom|kilo|yaşım|yasim|yaşındayım|yasindayim|kişiyiz|kisiyiz|fiyat|ücret|ucret|lira|tl|hava|derece|nüfus|nufus|hayvan|başkent|baskent|şaka|saka|yemek)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            // If it doesn't explicitly mention ekran / panel / modül / kasa
+            return !Regex.IsMatch(text, @"\b(?:ekran|panel|modül|modul|kasa)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+
+        // Math expressions like 2+2, 5*5, 10/2 (without dimension context)
+        if (Regex.IsMatch(text, @"\d+\s*[\+\/\=]\s*\d+", RegexOptions.CultureInvariant))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
     private static ScreenSizeParseResult? TryLabeledDimensions(string text)
     {
-        // First determine if the text uses number-first or label-first structure
         var firstNumMatch = Regex.Match(text, @"\d+(?:[.,]\d+)?", RegexOptions.CultureInvariant);
-        var firstLabelMatch = Regex.Match(text, @"\b(yatay|genişlik|genislik|width|dikey|yükseklik|yukseklik|height)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var firstLabelMatch = Regex.Match(text, $@"\b({WidthLabelPattern}|{HeightLabelPattern})\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         if (!firstNumMatch.Success || !firstLabelMatch.Success)
         {
@@ -83,16 +163,14 @@ public static partial class ScreenSizeParser
 
         if (isNumberFirst)
         {
-            // Number-first: "192cm yükseklik 160 cm genişlik", "500 cm yatay 300 cm dikey"
-            var numFirstMatches = Regex.Matches(
-                text,
-                @"(?<!\d)(\d+(?:[.,]\d+)?)\s*(cm|centimetre|santimetre|m|metre|meter)?\s*(?:(?:lik|likte|lık|lik|de|da)\s+)?(yatay|genişlik|genislik|width|dikey|yükseklik|yukseklik|height)\b",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            // Number first: "160 cm dikeyde", "320 cm yatayda", "320 genişlik 160 yükseklik", "3.2 metre en 1.6 metre boy"
+            var numFirstPattern = $@"(?<!\d)(\d+(?:[.,]\d+)?)\s*(cm|centimetre|santimetre|m|metre|meter)?\s*(?:(?:lik|likte|lık|lik|de|da|e|ye|a|ya)\s+)?\b({WidthLabelPattern}|{HeightLabelPattern})\b";
+            var numFirstMatches = Regex.Matches(text, numFirstPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
             foreach (Match m in numFirstMatches)
             {
                 var val = ToCentimeters(ParseNumber(m.Groups[1].Value), m.Groups[2].Value);
-                var label = m.Groups[3].Value.ToLowerInvariant();
+                var label = m.Groups[3].Value.ToLower(new CultureInfo("tr-TR"));
                 if (IsWidthLabel(label))
                 {
                     width = val;
@@ -105,15 +183,13 @@ public static partial class ScreenSizeParser
         }
         else
         {
-            // Label-first: "genişlik 160 yükseklik 192", "yükseklik: 192 cm, genişlik: 160 cm", "Yatay 500 cm dikey 300 cm"
-            var labelFirstMatches = Regex.Matches(
-                text,
-                @"\b(yatay|genişlik|genislik|width|dikey|yükseklik|yukseklik|height)\s*[:=]?\s*(?:olarak\s+)?(\d+(?:[.,]\d+)?)\s*(cm|centimetre|santimetre|m|metre|meter)?\b",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            // Label first: "dikeyde 160 cm", "genişlik: 320", "en 320 boy 160", "yükseklik 192 cm"
+            var labelFirstPattern = $@"\b({WidthLabelPattern}|{HeightLabelPattern})\s*[:=]?\s*(?:olarak\s+)?(?<!\d)(\d+(?:[.,]\d+)?)\s*(cm|centimetre|santimetre|m|metre|meter)?\b";
+            var labelFirstMatches = Regex.Matches(text, labelFirstPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
             foreach (Match m in labelFirstMatches)
             {
-                var label = m.Groups[1].Value.ToLowerInvariant();
+                var label = m.Groups[1].Value.ToLower(new CultureInfo("tr-TR"));
                 var val = ToCentimeters(ParseNumber(m.Groups[2].Value), m.Groups[3].Value);
                 if (IsWidthLabel(label))
                 {
@@ -140,10 +216,10 @@ public static partial class ScreenSizeParser
     }
 
     private static bool IsWidthLabel(string label) =>
-        label is "yatay" or "genişlik" or "genislik" or "width";
+        Regex.IsMatch(label, $"^{WidthLabelPattern}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static bool IsHeightLabel(string label) =>
-        label is "dikey" or "yükseklik" or "yukseklik" or "height";
+        Regex.IsMatch(label, $"^{HeightLabelPattern}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static ScreenSizeParseResult? TryMeterPair(string text)
     {
@@ -258,7 +334,8 @@ public static partial class ScreenSizeParser
 
     private static ScreenSizeParseResult? TrySingleDimension(string text)
     {
-        var widthOnly = Regex.Match(text, @"^(?:yatay|genişlik|genislik|width)\s*[:=]?\s*(\d+(?:[.,]\d+)?)\s*(cm|centimetre|santimetre|m|metre|meter)?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var widthOnlyPattern = $@"^(?:{WidthLabelPattern})\s*[:=]?\s*(?:olarak\s+)?(?<!\d)(\d+(?:[.,]\d+)?)\s*(cm|centimetre|santimetre|m|metre|meter)?\.?$";
+        var widthOnly = Regex.Match(text, widthOnlyPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         if (widthOnly.Success)
         {
             return new ScreenSizeParseResult
@@ -268,7 +345,8 @@ public static partial class ScreenSizeParser
             };
         }
 
-        var heightOnly = Regex.Match(text, @"^(?:dikey|yükseklik|yukseklik|height)\s*[:=]?\s*(\d+(?:[.,]\d+)?)\s*(cm|centimetre|santimetre|m|metre|meter)?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var heightOnlyPattern = $@"^(?:{HeightLabelPattern})\s*[:=]?\s*(?:olarak\s+)?(?<!\d)(\d+(?:[.,]\d+)?)\s*(cm|centimetre|santimetre|m|metre|meter)?\.?$";
+        var heightOnly = Regex.Match(text, heightOnlyPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         if (heightOnly.Success)
         {
             return new ScreenSizeParseResult
@@ -319,18 +397,18 @@ public static partial class ScreenSizeParser
     private static bool HasExplicitMeterUnit(string text) =>
         MeterUnitPattern().IsMatch(text);
 
-    [GeneratedRegex(@"(?<!\d)(\d+(?:[.,]\d+)?)\s*(?:cm|centimetre|santimetre)?\s*[x×*]\s*(\d+(?:[.,]\d+)?)\s*(?:cm|centimetre|santimetre)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<!\d)(\d+(?:[.,]\d+)?)\s*(?:cm|centimetre|santimetre)?\s*(?:[x×*]|(?:'?(?:ye|e|ya|a)\b))\s*(\d+(?:[.,]\d+)?)\s*(?:cm|centimetre|santimetre)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex CentimeterPairPattern();
 
-    [GeneratedRegex(@"\b(\d+(?:[.,]\d+)?)\s*(?:m|metre|meter)\s*[x×*]\s*(\d+(?:[.,]\d+)?)\s*(?:m|metre|meter)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\b(\d+(?:[.,]\d+)?)\s*(?:m|metre|meter)\s*(?:[x×*]|(?:'?(?:ye|e|ya|a)\b)|ve\s+)\s*(\d+(?:[.,]\d+)?)\s*(?:m|metre|meter)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex MeterPairPattern();
 
-    [GeneratedRegex(@"(?<!\d)(\d+(?:[.,]\d+)?)\s*[x×*]\s*(\d+(?:[.,]\d+)?)(?!\d)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<!\d)(\d+(?:[.,]\d+)?)\s*(?:[x×*]|(?:'?(?:ye|e|ya|a)\b))\s*(\d+(?:[.,]\d+)?)(?!\d)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex PairPattern();
 
-    [GeneratedRegex(@"^\s*(?<!\d)(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)(?!\d)\s*(?:cm|centimetre|santimetre)?\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^(?:ekran\s+)?(?<!\d)(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)\s*(?:cm|centimetre|santimetre)?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SpacePairPattern();
 
-    [GeneratedRegex(@"\b(\d+(?:[.,]\d+)?)\s*(?:m|metre|meter)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\b(?:\d+(?:[.,]\d+)?)\s*(?:m|metre|meter)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex MeterUnitPattern();
 }

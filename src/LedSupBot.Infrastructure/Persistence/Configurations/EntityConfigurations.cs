@@ -1,6 +1,7 @@
 using LedSupBot.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Pgvector;
 
 namespace LedSupBot.Infrastructure.Persistence.Configurations;
 
@@ -32,6 +33,44 @@ public sealed class CustomerConfiguration : IEntityTypeConfiguration<Customer>
     }
 }
 
+public sealed class KnowledgeDocumentConfiguration : IEntityTypeConfiguration<KnowledgeDocument>
+{
+    public void Configure(EntityTypeBuilder<KnowledgeDocument> builder)
+    {
+        builder.ToTable("knowledge_documents"); builder.HasKey(x => x.Id);
+        builder.Property(x => x.Manufacturer).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.ProductType).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.ProductFamily).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.Model).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.DocumentType).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.DocumentVersion).HasMaxLength(64);
+        builder.Property(x => x.Language).HasMaxLength(16).IsRequired();
+        builder.Property(x => x.OriginalFileName).HasMaxLength(512).IsRequired();
+        builder.Property(x => x.RelativePath).HasMaxLength(1024).IsRequired();
+        builder.Property(x => x.Sha256).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.ExtractionMethod).HasMaxLength(64);
+        builder.Property(x => x.ExtractionVersion).HasMaxLength(64);
+        builder.Property(x => x.ExtractionQuality).HasConversion<string>().HasMaxLength(16);
+        builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
+        builder.HasIndex(x => x.Sha256).IsUnique().HasDatabaseName("ux_knowledge_documents_sha256");
+        builder.HasIndex(x => x.Model).HasDatabaseName("ix_knowledge_documents_model");
+        builder.HasIndex(x => x.Status).HasDatabaseName("ix_knowledge_documents_status");
+    }
+}
+
+public sealed class KnowledgeChunkConfiguration : IEntityTypeConfiguration<KnowledgeChunk>
+{
+    public void Configure(EntityTypeBuilder<KnowledgeChunk> builder)
+    {
+        builder.ToTable("knowledge_chunks"); builder.HasKey(x => x.Id);
+        builder.Property(x => x.SectionTitle).HasMaxLength(256);
+        builder.Property(x => x.Content).HasColumnType("text").IsRequired();
+        builder.Property(x => x.Embedding).HasColumnType("vector(768)");
+        builder.HasIndex(x => new { x.DocumentId, x.ChunkIndex }).IsUnique().HasDatabaseName("ux_knowledge_chunks_document_index");
+        builder.HasOne(x => x.Document).WithMany(x => x.Chunks).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public sealed class ConversationConfiguration : IEntityTypeConfiguration<Conversation>
 {
     public void Configure(EntityTypeBuilder<Conversation> builder)
@@ -58,9 +97,9 @@ public sealed class ConversationConfiguration : IEntityTypeConfiguration<Convers
             .HasForeignKey(x => x.ConversationId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        builder.HasOne(x => x.TechnicalSupportCase)
+        builder.HasMany(x => x.TechnicalSupportCases)
             .WithOne(x => x.Conversation)
-            .HasForeignKey<TechnicalSupportCase>(x => x.ConversationId)
+            .HasForeignKey(x => x.ConversationId)
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasMany(x => x.AiExtractionResults)
@@ -104,9 +143,12 @@ public sealed class TechnicalSupportCaseConfiguration : IEntityTypeConfiguration
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(64);
         builder.Property(x => x.SummaryMarkdown).HasMaxLength(16000);
         builder.Property(x => x.IssueSummary).HasMaxLength(2000);
+        builder.Property(x => x.AiOperatorSummary).HasMaxLength(2000);
+        builder.Property(x => x.PlayerType).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.ProcessorHdmiConnected);
+        builder.Property(x => x.QuestionAttemptsJson).HasMaxLength(2000);
 
         builder.HasIndex(x => x.ConversationId)
-            .IsUnique()
             .HasDatabaseName("ix_technical_support_cases_conversation_id");
         builder.HasIndex(x => x.Status).HasDatabaseName("ix_technical_support_cases_status");
     }
@@ -144,6 +186,7 @@ public sealed class ReceiverInformationConfiguration : IEntityTypeConfiguration<
 
         builder.Property(x => x.Manufacturer).HasMaxLength(128);
         builder.Property(x => x.Model).HasMaxLength(128);
+        builder.Property(x => x.ReceiverModel).HasConversion<string>().HasMaxLength(32);
         builder.Property(x => x.Notes).HasMaxLength(2000);
         builder.Property(x => x.RawUtterance).HasMaxLength(1024);
 

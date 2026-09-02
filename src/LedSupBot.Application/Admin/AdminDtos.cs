@@ -41,15 +41,19 @@ public sealed record CaseDetailDto(
     SupportCaseStatus Status,
     string? SummaryMarkdown,
     string? IssueSummary,
+    string? AiOperatorSummary,
     ScreenDetailDto? Screen,
     ReceiverDetailDto? Receiver,
     ConfigDetailDto? Config,
     AnyDeskDetailDto? AnyDesk,
-    IReadOnlyList<PhotoDetailDto> Photos);
+    IReadOnlyList<PhotoDetailDto> Photos,
+    int CompletedCasesCount = 0,
+    PlayerType? PlayerType = null,
+    bool? ProcessorHdmiConnected = null);
 
 public sealed record ScreenDetailDto(decimal WidthCm, decimal HeightCm, string DisplayText);
 
-public sealed record ReceiverDetailDto(int Count);
+public sealed record ReceiverDetailDto(int Count, string? Model = null, string? DisplayText = null);
 
 public sealed record ConfigDetailDto(ConfigConnectionStatus Status, bool ExampleImageSent, string DisplayText);
 
@@ -99,6 +103,7 @@ public sealed record CompactFocusDto(
     string? BotReplyStatusLabel,
     string? CustomerDisplayName,
     string? IssueSummary,
+    string? AiOperatorSummary,
     ConversationStage? CurrentStage,
     string? StageLabel,
     string? ScreenSummary,
@@ -108,4 +113,9 @@ public sealed record CompactFocusDto(
     string AnyDeskStatus,
     int PhotoCount,
     bool ShowAnyDeskAlert,
-    IReadOnlyList<CompactRecentMessageDto> RecentMessages);
+    IReadOnlyList<CompactRecentMessageDto> RecentMessages,
+    int CompletedCasesCount = 0,
+    string? ReceiverModel = null,
+    int? ReceiverCount = null,
+    string? PlayerType = null,
+    string? ProcessorHdmiStatus = null);

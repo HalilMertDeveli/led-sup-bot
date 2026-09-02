@@ -14,7 +14,7 @@ public sealed class AiExtractionValidatorTests
     public void Validates_Explicit_Meters_Converted_To_Cm()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(null, null, 5, 3, 0.96, false),
             null, null, null, []));
 
@@ -27,7 +27,7 @@ public sealed class AiExtractionValidatorTests
     public void Validates_500x300_Cm_From_Ai()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(500, 300, null, null, 0.98, false),
             null, null, null, []));
 
@@ -41,7 +41,7 @@ public sealed class AiExtractionValidatorTests
     public void Validates_500_Cm_Yatay_300_Cm_Dikey()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(500, 300, null, null, 0.95, false),
             null, null, null, []));
 
@@ -52,7 +52,7 @@ public sealed class AiExtractionValidatorTests
     public void Meter_Units_Converted_To_Cm_Not_Confirmation()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(null, null, 5, 3, 0.95, false),
             null, null, null, []));
 
@@ -66,7 +66,7 @@ public sealed class AiExtractionValidatorTests
     public void Validates_8_Yeşil_Kart()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             null,
             new ReceiverSlotCandidate(8, 0.97),
             null, null, []));
@@ -78,7 +78,7 @@ public sealed class AiExtractionValidatorTests
     public void Validates_8_Receiver_Typo_Reciever()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             null,
             new ReceiverSlotCandidate(8, 0.96),
             null, null, []));
@@ -90,7 +90,7 @@ public sealed class AiExtractionValidatorTests
     public void Multi_Slot_500x300_And_8_Receiver()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(500, 300, null, null, 0.98, false),
             new ReceiverSlotCandidate(8, 0.97),
             null, null, []));
@@ -103,7 +103,7 @@ public sealed class AiExtractionValidatorTests
     public void Informal_Turkish_Multi_Slot()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(500, 300, null, null, 0.92, false),
             new ReceiverSlotCandidate(8, 0.91),
             null, null, []));
@@ -116,7 +116,7 @@ public sealed class AiExtractionValidatorTests
     public void Ambiguous_5x3_Does_Not_Persist()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(null, null, null, null, 0.6, true),
             null, null, null,
             ["screen unit ambiguous"]));
@@ -129,7 +129,7 @@ public sealed class AiExtractionValidatorTests
     public void Invalid_Partial_Screen_500_Only_Low_Confidence()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(500, null, null, null, 0.5, false),
             null, null, null, []));
 
@@ -141,7 +141,7 @@ public sealed class AiExtractionValidatorTests
     public void Validates_AnyDesk_Address()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             null, null, null,
             new AnyDeskSlotCandidate("123456789", 0.99),
             []));
@@ -153,7 +153,7 @@ public sealed class AiExtractionValidatorTests
     public void Validates_Config_Confirmation()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.Confirmation,
+            ConversationIntent.WorkflowInformation,
             null, null,
             new ConfigSlotCandidate(true, true, 0.94),
             null, []));
@@ -165,7 +165,7 @@ public sealed class AiExtractionValidatorTests
     public void Low_Confidence_Does_Not_Persist_Slots()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(500, 300, null, null, 0.4, false),
             new ReceiverSlotCandidate(8, 0.3),
             null, null, []));
@@ -213,7 +213,7 @@ public sealed class AiExtractionGateTests
     [Fact]
     public void Gate_Invokes_For_Complex_Multi_Slot_Message()
     {
-        var text = "Abi ekranımız 500'e 300, arkada 8 tane kart var";
+        var text = "Abi ekranımız 5x3 gibi, arkada 8 tane kart var";
         var deterministic = DeterministicExtractionResult.Analyze(text);
         Assert.True(AiExtractionGate.ShouldInvokeAi(text, deterministic));
     }
@@ -261,7 +261,7 @@ public sealed class AiExtractionOrchestratorTests
     public async Task Orchestrator_Returns_Validated_On_Success()
     {
         var ai = new FakeAiService(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(500, 300, null, null, 0.98, false),
             new ReceiverSlotCandidate(8, 0.97),
             null, null, []));
@@ -272,9 +272,9 @@ public sealed class AiExtractionOrchestratorTests
             NullLogger<AiExtractionOrchestrator>.Instance);
 
         var result = await orchestrator.TryExtractAsync(
-            "Abi ekranımız 500'e 300, arkada 8 tane kart var",
+            "Abi ekranımız 5x3 gibi, arkada 8 tane kart var",
             new Dictionary<string, string?>(),
-            DeterministicExtractionResult.Analyze("Abi ekranımız 500'e 300, arkada 8 tane kart var"),
+            DeterministicExtractionResult.Analyze("Abi ekranımız 5x3 gibi, arkada 8 tane kart var"),
             CancellationToken.None);
 
         Assert.NotNull(result);
@@ -285,7 +285,7 @@ public sealed class AiExtractionOrchestratorTests
     public async Task Orchestrator_Skips_When_Gate_Closed()
     {
         var ai = new FakeAiService(new AiStructuredExtraction(
-            CustomerMessageIntent.Greeting, null, null, null, null, []));
+            ConversationIntent.CasualConversation, null, null, null, null, []));
         var orchestrator = new AiExtractionOrchestrator(
             ai,
             new AiExtractionValidator(Options.Create(new AiExtractionOptions())),

@@ -217,9 +217,14 @@ public static class AdminEndpointExtensions
     private static async Task<IResult> DismissAnyDeskAlertAsync(
         Guid conversationId,
         [FromServices] IAdminConversationService admin,
+        [FromServices] IAdminEventNotifier notifier,
         CancellationToken cancellationToken)
     {
         var ok = await admin.DismissAnyDeskAlertAsync(conversationId, cancellationToken);
+        if (ok)
+        {
+            await notifier.NotifyConversationUpdatedAsync(conversationId, cancellationToken);
+        }
         return ok ? Results.Ok(new { ok = true }) : Results.NotFound();
     }
 

@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import express from "express";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
-import { getStatus, sendText, sendPresence, startWhatsApp, downloadMediaByMessageId } from "./whatsapp.js";
+import { getStatus, sendText, sendImage, sendPresence, startWhatsApp, downloadMediaByMessageId } from "./whatsapp.js";
 import { getConnectedSelfJids } from "./selfIdentity.js";
 import { getSignalDiagnosticCounters } from "./safeSignalDiagnostics.js";
 
@@ -53,6 +53,36 @@ app.post("/send/text", requireSecret, async (req, res) => {
   } catch (error) {
     logger.error({ err: error?.message }, "send text failed");
     return res.status(503).json({ error: "send_failed" });
+  }
+});
+
+app.post("/send/image", requireSecret, async (req, res) => {
+  try {
+    const toRaw = String(req.body?.to || "").trim();
+    const caption = req.body?.caption ? String(req.body.caption) : null;
+    const imageBase64 = String(req.body?.imageBase64 || "").trim();
+
+    if (!toRaw || !imageBase64) {
+      return res.status(400).json({ error: "to and imageBase64 are required" });
+    }
+
+    const imageBuffer = Buffer.from(imageBase64, "base64");
+    if (imageBuffer.length === 0) {
+      return res.status(400).json({ error: "invalid_image_data" });
+    }
+
+    const result = await sendImage(toRaw, imageBuffer, caption);
+    return res.json({
+      ok: true,
+      externalMessageId: result.externalMessageId,
+      destinationType: result.destinationType,
+      baileysMessageIdPresent: Boolean(result.externalMessageId),
+      exactRoutePreserved: result.exactRoutePreserved ?? true,
+      sockSendMessageCalled: true,
+    });
+  } catch (error) {
+    logger.error({ err: error?.message }, "send image failed");
+    return res.status(503).json({ error: "send_image_failed" });
   }
 });
 

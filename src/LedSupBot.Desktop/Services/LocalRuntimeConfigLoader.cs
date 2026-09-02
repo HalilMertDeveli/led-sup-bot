@@ -36,6 +36,7 @@ public static class LocalRuntimeConfigLoader
             SetMapped(target, overwrite, "WHATSAPP_CONNECTOR_ENABLED", root, "WhatsAppConnector", "Enabled");
             SetMapped(target, overwrite, "WHATSAPP_CONNECTOR_BASE_URL", root, "WhatsAppConnector", "BaseUrl");
             SetMapped(target, overwrite, "WORKFLOW_AUTO_REPLY_ENABLED", root, "Workflow", "AutoReplyEnabled");
+            SetMapped(target, overwrite, "WORKFLOW_CONFIG_EXAMPLE_IMAGE_PATH", root, "Workflow", "ConfigExampleImagePath");
             SetMapped(target, overwrite, "WHATSAPP_TEST_MODE_ENABLED", root, "WhatsAppTestMode", "Enabled");
             SetMapped(target, overwrite, "WHATSAPP_TEST_MODE_ALLOWED_PHONE", root, "WhatsAppTestMode", "AllowedPhoneNumber");
             SetMapped(target, overwrite, "ADMIN_DASHBOARD_PASSWORD", root, "Admin", "DashboardPassword");

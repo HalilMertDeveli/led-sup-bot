@@ -131,14 +131,36 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
         }
     }
 
-    public Task<string?> SendImageMessageAsync(
+    public async Task<string?> SendImageMessageAsync(
         string toPhoneE164,
         Stream image,
         string contentType,
         string? caption = null,
         CancellationToken cancellationToken = default)
     {
-        throw new NotSupportedException("Image send via connector is deferred to a later phase.");
+        var destination = NormalizeDestination(toPhoneE164);
+        using var ms = new MemoryStream();
+        await image.CopyToAsync(ms, cancellationToken);
+        var base64 = Convert.ToBase64String(ms.ToArray());
+
+        using var response = await _http.PostAsJsonAsync(
+            "send/image",
+            new
+            {
+                to = destination,
+                caption,
+                imageBase64 = base64
+            },
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Connector image send failed with status {Status}", (int)response.StatusCode);
+            throw new InvalidOperationException($"Connector image send failed: {(int)response.StatusCode}");
+        }
+
+        var result = await response.Content.ReadFromJsonAsync<SendPayload>(cancellationToken: cancellationToken);
+        return result?.ExternalMessageId;
     }
 
     public async Task<WhatsAppMediaDownloadResult> DownloadMediaAsync(string mediaId, CancellationToken cancellationToken = default)

@@ -30,6 +30,10 @@ public static class DesktopLog
 
     public static void Info(string operation, string message) => Write("INFO", operation, message);
 
+    public static void Warn(string operation, string message) => Write("WARN", operation, message);
+
+    public static void Debug(string operation, string message) => Write("DEBUG", operation, message);
+
     public static void Error(string operation, Exception ex, int? httpStatus = null)
     {
         var status = httpStatus is null ? "" : $" status={httpStatus}";

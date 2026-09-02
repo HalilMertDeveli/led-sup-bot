@@ -89,6 +89,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             _logger.LogInformation(
                 "Workflow halted before outbound; conversation {ConversationId} is no longer in Bot mode",
                 conversation.Id);
+            await _notifier.NotifyConversationUpdatedAsync(conversation.Id, cancellationToken);
             return;
         }
 
@@ -108,6 +109,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             cancellationToken);
 
         ValidatedAiResponsePlan? aiPlan = null;
+        var localIntent = ConversationSemantics.Detect(inbound.TextContent);
         if (inbound.MessageType == MessageType.Text && !string.IsNullOrWhiteSpace(inbound.TextContent))
         {
             _logger.LogInformation(
@@ -147,6 +149,11 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             }
         }
 
+        var effectiveIntent = ConversationSemantics.PreferBackendRecognized(
+            localIntent,
+            aiPlan?.Intent ?? LedSupBot.Application.Abstractions.ConversationIntent.Unclear);
+        var responseAction = ConversationSemantics.ResolveAction(effectiveIntent);
+
         if (AnyDeskReadinessDetector.IsReadyForHandoff(slots, effectiveStage))
         {
             await TryEmitAnyDeskAlertAsync(conversation, supportCase, slots, cancellationToken);
@@ -161,7 +168,10 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             aiPlan,
             assetAvailable,
             exampleCompleted,
-            _options.ConfigExampleImagePath));
+            ResolveConfigExampleImagePath(),
+            responseAction,
+            WorkflowStageResolver.ResolvePendingFact(effectiveStage),
+            effectiveIntent));
 
         var outboundTexts = composed.OutboundTexts.ToList();
         configExampleImagePath = composed.ConfigExampleImagePath ?? configExampleImagePath;
@@ -181,31 +191,53 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             }
         }
 
-        if (effectiveStage == ConversationStage.CollectingFinalInfo &&
-            slots.IsScreenComplete &&
-            slots.HasPanelLabelPhoto &&
-            slots.ReceiverCount is > 0 &&
-            slots.ConfigConfirmed &&
-            slots.HasAnyDesk)
+        var allRequiredFactsResolved =
+            (slots.IsScreenComplete || slots.IsScreenDeferred) &&
+            (slots.HasPanelLabelPhoto || slots.IsPanelPhotoDeferred) &&
+            (slots.IsReceiverCountKnown || slots.IsReceiverCountDeferred) &&
+            (slots.IsReceiverModelKnown || slots.IsReceiverModelDeferred) &&
+            (slots.IsPlayerComplete || slots.IsPlayerTypeDeferred) &&
+            (slots.IsProcessorHdmiComplete || slots.IsProcessorHdmiDeferred) &&
+            (slots.ConfigConfirmed || slots.IsConfigConnectionDeferred) &&
+            (slots.HasAnyDesk || slots.IsAnyDeskDeferred);
+
+        if (effectiveStage == ConversationStage.CollectingFinalInfo && allRequiredFactsResolved)
         {
             var summary = WorkflowPrompts.BuildSummary(
-                slots.WidthCm!.Value,
-                slots.HeightCm!.Value,
-                slots.ReceiverCount!.Value,
+                slots.WidthCm,
+                slots.HeightCm,
+                slots.ReceiverCount,
+                slots.ReceiverModel is not null ? ReceiverModelParser.ToDisplayString(slots.ReceiverModel.Value) : null,
+                slots.PlayerType,
+                slots.ProcessorHdmiConnected,
                 slots.ConfigConfirmed,
                 slots.HasPanelLabelPhoto);
 
-            await _db.TechnicalSupportCases
-                .Where(c => c.Id == supportCase.Id)
-                .ExecuteUpdateAsync(
-                    s => s
-                        .SetProperty(c => c.SummaryMarkdown, summary)
-                        .SetProperty(c => c.Status, SupportCaseStatus.ReadyForTechnician),
-                    cancellationToken);
+            var now = DateTimeOffset.UtcNow;
+            var trackedCase = await _db.TechnicalSupportCases.FirstOrDefaultAsync(c => c.Id == supportCase.Id, cancellationToken);
+            if (trackedCase is not null)
+            {
+                trackedCase.SummaryMarkdown = summary;
+                trackedCase.Status = SupportCaseStatus.Completed;
+                trackedCase.CompletedAt = now;
+            }
 
-            outboundTexts.Add(summary);
-            handoffPending = true;
-            effectiveStage = ConversationStage.CollectingFinalInfo;
+            // Open new Active case for the same conversation
+            var newCase = new TechnicalSupportCase
+            {
+                ConversationId = conversation.Id,
+                Status = SupportCaseStatus.CollectingInformation,
+                AiOperatorSummary = "Önceki destek kaydı tamamlandı. Müşteri yeni bir soru veya talep ilettiğinde yeni kayıt toplanacaktır."
+            };
+            _db.TechnicalSupportCases.Add(newCase);
+            await _db.SaveChangesAsync(cancellationToken);
+
+            outboundTexts.Clear();
+            var allCollected = slots.IsScreenComplete && slots.HasPanelLabelPhoto && slots.IsReceiverCountKnown && slots.ConfigConfirmed && slots.HasAnyDesk;
+            outboundTexts.Add(allCollected
+                ? "Gerekli teknik bilgileri aldım, teşekkürler."
+                : "Paylaştığınız bilgileri kaydettim, teşekkürler.");
+            effectiveStage = ConversationStage.Start;
         }
 
         await _db.Conversations
@@ -213,6 +245,23 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             .ExecuteUpdateAsync(
                 s => s.SetProperty(c => c.CurrentStage, effectiveStage),
                 cancellationToken);
+
+        var pendingFact = WorkflowStageResolver.ResolvePendingFact(effectiveStage);
+        if (pendingFact != PendingWorkflowFact.None &&
+            responseAction != ConversationResponseAction.AnswerOnly &&
+            responseAction != ConversationResponseAction.ClarifyCurrentStep &&
+            !slots.IsFactKnown(pendingFact) &&
+            !slots.IsFactDeferred(pendingFact.ToString()))
+        {
+            var factKey = pendingFact.ToString();
+            supportCase.IncrementQuestionAttempts(factKey);
+            var trackedCase = await _db.TechnicalSupportCases.FirstOrDefaultAsync(c => c.Id == supportCase.Id, cancellationToken);
+            if (trackedCase is not null)
+            {
+                trackedCase.QuestionAttemptsJson = supportCase.QuestionAttemptsJson;
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+        }
 
         if (outboundTexts.Count > 0)
         {
@@ -275,6 +324,8 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                         .SetProperty(c => c.CurrentStage, ConversationStage.HumanHandoff),
                     cancellationToken);
         }
+
+        await _notifier.NotifyConversationUpdatedAsync(conversation.Id, cancellationToken);
     }
 
     private async Task UpdateIssueSummaryAsync(Guid caseId, string issueSummary, CancellationToken cancellationToken)
@@ -355,11 +406,29 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         var receiver = await _db.ReceiverInformations
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.TechnicalSupportCaseId == supportCase.Id, cancellationToken);
+
+        ReceiverModel? receiverModel = null;
+        if (receiver?.ReceiverModel is not null && receiver.ReceiverModel != ReceiverModel.Unknown)
+        {
+            receiverModel = receiver.ReceiverModel;
+        }
+        else if (!string.IsNullOrWhiteSpace(receiver?.Model))
+        {
+            var parsedModel = ReceiverModelParser.Normalize(receiver.Model);
+            if (parsedModel != ReceiverModel.Unknown)
+            {
+                receiverModel = parsedModel;
+            }
+        }
+
         var slots = new WorkflowSlotState
         {
             WidthCm = screen is { Width: > 0 } ? screen.Width : null,
             HeightCm = screen is { Height: > 0 } ? screen.Height : null,
-            ReceiverCount = receiver?.Count,
+            ReceiverCount = receiver?.Count > 0 ? receiver.Count : null,
+            ReceiverModel = receiverModel,
+            PlayerType = supportCase.PlayerType,
+            ProcessorHdmiConnected = supportCase.ProcessorHdmiConnected,
             ConfigConfirmed = await _db.ConfigConnections.AsNoTracking()
                 .AnyAsync(c => c.TechnicalSupportCaseId == supportCase.Id && c.Status == ConfigConnectionStatus.Confirmed, cancellationToken),
             HasAnyDesk = await _db.AnyDeskInformations.AsNoTracking()
@@ -370,6 +439,8 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
         await ApplyScreenSlotsAsync(supportCase.Id, inbound.TextContent, slots, clarificationTexts, cancellationToken);
         await ApplyReceiverSlotAsync(supportCase.Id, inbound.TextContent, cancellationToken);
+        await ApplyPlayerSlotAsync(supportCase.Id, inbound.TextContent, cancellationToken);
+        await ApplyProcessorHdmiSlotAsync(supportCase.Id, inbound.TextContent, slots, clarificationTexts, cancellationToken);
         await ApplyConfigSlotAsync(supportCase.Id, inbound.TextContent, slots, clarificationTexts, cancellationToken);
         await ApplyAnyDeskSlotAsync(supportCase.Id, inbound.TextContent, clarificationTexts, cancellationToken);
 
@@ -420,6 +491,9 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             ["widthCm"] = slots.WidthCm?.ToString("0"),
             ["heightCm"] = slots.HeightCm?.ToString("0"),
             ["receiverCount"] = slots.ReceiverCount?.ToString(),
+            ["receiverModel"] = slots.ReceiverModel is not null ? ReceiverModelParser.ToDisplayString(slots.ReceiverModel.Value) : null,
+            ["playerType"] = slots.PlayerType is not null ? PlayerTypeParser.ToDisplayString(slots.PlayerType.Value) : null,
+            ["processorHdmiConnected"] = slots.ProcessorHdmiConnected == true ? "true" : null,
             ["configConfirmed"] = slots.ConfigConfirmed ? "true" : null,
             ["anyDesk"] = slots.HasAnyDesk ? "present" : null,
         };
@@ -453,12 +527,13 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                 .FirstOrDefaultAsync(r => r.TechnicalSupportCaseId == caseId, cancellationToken);
             if (existing is null)
             {
-                _db.ReceiverInformations.Add(new ReceiverInformation
+                existing = new ReceiverInformation
                 {
                     TechnicalSupportCaseId = caseId,
                     Count = ai.ReceiverCount.Value,
                     RawUtterance = "ai-validated",
-                });
+                };
+                _db.ReceiverInformations.Add(existing);
             }
             else
             {
@@ -508,7 +583,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             return;
         }
 
-        var parsed = ScreenSizeParser.Parse(text);
+        var parsed = ScreenSizeParser.ParseWithContext(text, slots.WidthCm, slots.HeightCm);
         if (!parsed.ParsedAny)
         {
             return;
@@ -560,7 +635,10 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
     private async Task ApplyReceiverSlotAsync(Guid caseId, string text, CancellationToken cancellationToken)
     {
-        if (!ReceiverCountParser.TryParse(text, out var count))
+        var hasCount = ReceiverCountParser.TryParse(text, out var count);
+        var hasModel = ReceiverModelParser.TryParse(text, out var model) && model != ReceiverModel.Unknown;
+
+        if (!hasCount && !hasModel)
         {
             return;
         }
@@ -570,20 +648,69 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
         if (existing is null)
         {
-            _db.ReceiverInformations.Add(new ReceiverInformation
+            existing = new ReceiverInformation
             {
                 TechnicalSupportCaseId = caseId,
-                Count = count,
                 RawUtterance = text,
-            });
+            };
+            if (hasCount) existing.Count = count;
+            if (hasModel)
+            {
+                existing.ReceiverModel = model;
+                existing.Model = ReceiverModelParser.ToDisplayString(model);
+            }
+            _db.ReceiverInformations.Add(existing);
         }
         else
         {
-            existing.Count = count;
+            if (hasCount) existing.Count = count;
+            if (hasModel)
+            {
+                existing.ReceiverModel = model;
+                existing.Model = ReceiverModelParser.ToDisplayString(model);
+            }
             existing.RawUtterance = text;
         }
 
         await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task ApplyPlayerSlotAsync(Guid caseId, string text, CancellationToken cancellationToken)
+    {
+        if (!PlayerTypeParser.TryParse(text, out var playerType) || playerType == PlayerType.Unknown)
+        {
+            return;
+        }
+
+        await _db.TechnicalSupportCases
+            .Where(c => c.Id == caseId)
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(c => c.PlayerType, playerType),
+                cancellationToken);
+    }
+
+    private async Task ApplyProcessorHdmiSlotAsync(
+        Guid caseId,
+        string text,
+        WorkflowSlotState slots,
+        List<string> clarificationTexts,
+        CancellationToken cancellationToken)
+    {
+        var result = ProcessorHdmiParser.Parse(text, inHdmiContext: slots.PlayerType == PlayerType.Processor);
+        if (result == ProcessorHdmiParseResult.Confirmed)
+        {
+            await _db.TechnicalSupportCases
+                .Where(c => c.Id == caseId)
+                .ExecuteUpdateAsync(
+                    s => s.SetProperty(c => c.ProcessorHdmiConnected, true),
+                    cancellationToken);
+            return;
+        }
+
+        if (result == ProcessorHdmiParseResult.NeedsClarification)
+        {
+            clarificationTexts.Add(WorkflowPrompts.ExplainProcessorHdmi);
+        }
     }
 
     private async Task ApplyConfigSlotAsync(
@@ -601,7 +728,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         var result = ConfigConfirmationParser.Parse(text);
         if (result == ConfigConfirmationResult.Confirmed)
         {
-            await UpsertConfigAsync(caseId, ConfigConnectionStatus.Confirmed, exampleSent: null, cancellationToken);
+            await UpsertConfigAsync(caseId, ConfigConnectionStatus.Confirmed, exampleSent: true, cancellationToken);
             return;
         }
 
@@ -648,7 +775,9 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
     {
         var existing = await _db.TechnicalSupportCases
             .AsNoTracking()
-            .FirstOrDefaultAsync(c => c.ConversationId == conversationId, cancellationToken);
+            .Where(c => c.ConversationId == conversationId && c.Status != SupportCaseStatus.Completed)
+            .OrderByDescending(c => c.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (existing is not null)
         {
@@ -778,7 +907,13 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         await _db.SaveChangesAsync(cancellationToken);
     }
 
-    private bool ConfigExampleAssetAvailable() =>
-        !string.IsNullOrWhiteSpace(_options.ConfigExampleImagePath) &&
-        File.Exists(_options.ConfigExampleImagePath);
+    private bool ConfigExampleAssetAvailable()
+    {
+        return ConfigAssetResolver.IsAssetAvailable(_options.ConfigExampleImagePath);
+    }
+
+    private string? ResolveConfigExampleImagePath()
+    {
+        return ConfigAssetResolver.ResolvePath(_options.ConfigExampleImagePath);
+    }
 }

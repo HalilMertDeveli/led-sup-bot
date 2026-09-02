@@ -105,11 +105,13 @@ app.UseCors(policy =>
 
 var aiOptions = app.Services.GetRequiredService<IOptions<AiOptions>>().Value;
 var geminiOptions = app.Services.GetRequiredService<IOptions<GeminiOptions>>().Value;
+var openAiOptions = app.Services.GetRequiredService<IOptions<OpenAiOptions>>().Value;
 var aiStatus = string.Equals(aiOptions.Provider, "Gemini", StringComparison.OrdinalIgnoreCase)
     ? (string.IsNullOrWhiteSpace(geminiOptions.ApiKey) ? "gemini_not_configured" : $"gemini:{geminiOptions.Model}")
     : string.Equals(aiOptions.Provider, "OpenAI", StringComparison.OrdinalIgnoreCase)
         ? "openai_explicit"
         : "unavailable";
+var openAiStatus = string.IsNullOrWhiteSpace(openAiOptions.ApiKey) ? "not_configured" : "configured";
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -120,6 +122,7 @@ app.MapGet("/", () => Results.Ok(new
     metaApproved = false,
     aiProvider = aiOptions.Provider,
     aiIntegration = aiStatus,
+    openAiIntegration = openAiStatus,
     databaseSchema = "ef_core_postgresql",
     autoMigrateOnStartup = false,
     autoCustomerReplies = false

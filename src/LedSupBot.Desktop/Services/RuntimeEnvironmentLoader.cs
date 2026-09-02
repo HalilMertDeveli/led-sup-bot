@@ -53,6 +53,15 @@ public sealed class RuntimeEnvironmentLoader
         SetDefault(env, "WHATSAPP_CONNECTOR_BASE_URL", $"http://127.0.0.1:{settings.ConnectorPort}");
         SetDefault(env, "WORKFLOW_AUTO_REPLY_ENABLED", "true");
 
+        if (!string.IsNullOrWhiteSpace(settings.ProjectRoot))
+        {
+            var defaultCableAsset = Path.Combine(settings.ProjectRoot, "assets", "support", "usb-a-usb-b-printer-cable.jpg");
+            if (File.Exists(defaultCableAsset))
+            {
+                SetDefault(env, "WORKFLOW_CONFIG_EXAMPLE_IMAGE_PATH", defaultCableAsset);
+            }
+        }
+
         ApplyAspNetCoreKeys(env);
 
         var secret = GetConnectorSharedSecret();
@@ -152,6 +161,7 @@ public sealed class RuntimeEnvironmentLoader
         CopyAspNet(env, "WHATSAPP_CONNECTOR_BASE_URL", "WhatsAppConnector__BaseUrl");
         CopyAspNet(env, "WHATSAPP_CONNECTOR_SHARED_SECRET", "WhatsAppConnector__SharedSecret");
         CopyAspNet(env, "WORKFLOW_AUTO_REPLY_ENABLED", "Workflow__AutoReplyEnabled");
+        CopyAspNet(env, "WORKFLOW_CONFIG_EXAMPLE_IMAGE_PATH", "Workflow__ConfigExampleImagePath");
         CopyAspNet(env, "WHATSAPP_TEST_MODE_ENABLED", "WhatsAppTestMode__Enabled");
         CopyAspNet(env, "WHATSAPP_TEST_MODE_ALLOWED_PHONE", "WhatsAppTestMode__AllowedPhoneNumber");
         CopyAspNet(env, "ADMIN_DASHBOARD_PASSWORD", "Admin__DashboardPassword");

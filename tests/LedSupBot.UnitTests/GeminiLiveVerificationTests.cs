@@ -1,4 +1,5 @@
 using System.Text.Json;
+using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Workflow.Ai;
 using LedSupBot.Application.Workflow.Context;
 using LedSupBot.Domain.Enums;
@@ -124,6 +125,60 @@ public sealed class GeminiLiveVerificationTests
             Assert.True(result.HasUsableReply, "Gemini must produce a usable reply.");
             Assert.NotNull(result.IssueSummary);
             Assert.NotEmpty(result.IssueSummary);
+        }
+    }
+
+    [Fact]
+    public async Task Gemini_General_Technical_Question_Returns_Structured_Decision_And_Diagnostic_Response()
+    {
+        var options = LoadOptions();
+        if (string.IsNullOrWhiteSpace(options.ApiKey))
+        {
+            return;
+        }
+
+        using var httpClient = new HttpClient { BaseAddress = new Uri(options.BaseUrl) };
+        var client = new GeminiStructuredClient(
+            httpClient,
+            Options.Create(options),
+            NullLogger<GeminiStructuredClient>.Instance);
+
+        var planner = new GeminiConversationPlannerService(
+            client,
+            NullLogger<GeminiConversationPlannerService>.Instance);
+
+        var responsePlanner = new AiResponsePlanner(planner);
+
+        var context = new ConversationContext
+        {
+            BotMode = BotMode.Bot,
+            CurrentStage = ConversationStage.Start,
+            StageLabel = "Başlangıç",
+            CurrentIssue = null,
+            KnownFacts = [],
+            MissingFacts = ["Ekran ölçüsü", "Panel etiket fotoğrafı", "Receiver modeli ve adedi"],
+            Screen = null,
+            Receiver = null,
+            Panel = null,
+            Config = null,
+            AnyDesk = null,
+            RecentMessages = []
+        };
+
+        var result = await responsePlanner.TryPlanAsync(
+            context,
+            "Ekranın sağ tarafı pembe çıkıyor, neden olabilir?",
+            CancellationToken.None);
+
+        if (result is not null)
+        {
+            Assert.True(result.HasUsableReply);
+            Assert.NotEqual(ConversationIntent.Unclear, result.Intent);
+            Assert.False(string.IsNullOrWhiteSpace(result.AiOperatorSummary));
+
+            var replyLower = result.Reply!.ToLowerInvariant();
+            Assert.DoesNotContain("ölçüleriniz nedir", replyLower);
+            Assert.DoesNotContain("kaç cm", replyLower);
         }
     }
 

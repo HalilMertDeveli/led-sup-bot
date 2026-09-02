@@ -14,7 +14,7 @@ namespace LedSupBot.IntegrationTests;
 public sealed class AiWorkflowFixture : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
+        .WithImage("pgvector/pgvector:pg16")
         .WithDatabase("led_sup_bot_ai")
         .WithUsername("postgres")
         .WithPassword("postgres")
@@ -149,7 +149,7 @@ public sealed class AiWorkflowIntegrationTests
         var (conversation, customer) = await _fixture.SeedConversationAsync();
         _fixture.Ai.Reset();
         _fixture.Ai.NextResponse = new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(500, 300, null, null, 0.98, false),
             new ReceiverSlotCandidate(8, 0.97),
             null, null, []);
@@ -160,7 +160,7 @@ public sealed class AiWorkflowIntegrationTests
             customer.PhoneNumber,
             $"ai-{Guid.NewGuid():N}",
             MessageType.Text,
-            "Abi ekranımız 500'e 300, arkada 8 tane kart var");
+            "Abi ekranÄ±mÄ±z 500'e 300, arkada 8 tane kart var");
 
         Assert.True(_fixture.Ai.CallCount > 0);
         var supportCase = await _fixture.LoadCaseAsync(conversation.Id);
@@ -174,7 +174,7 @@ public sealed class AiWorkflowIntegrationTests
         var (conversation, customer) = await _fixture.SeedConversationAsync();
         _fixture.Ai.Reset();
         _fixture.Ai.NextResponse = new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(null, null, null, null, 0.5, true),
             null, null, null,
             ["unit ambiguous"]);
@@ -192,7 +192,7 @@ public sealed class AiWorkflowIntegrationTests
         var (conversation, customer) = await _fixture.SeedConversationAsync();
         _fixture.Ai.Reset();
         _fixture.Ai.NextResponse = new AiStructuredExtraction(
-            CustomerMessageIntent.Confirmation,
+            ConversationIntent.WorkflowInformation,
             null, null,
             new ConfigSlotCandidate(true, true, 0.94),
             null, []);
@@ -201,7 +201,7 @@ public sealed class AiWorkflowIntegrationTests
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "500 cm x 300 cm");
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-img", MessageType.Image, null);
         await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "8 tane");
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "evet bağladım");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"ai-{Guid.NewGuid():N}", MessageType.Text, "evet baÄŸladÄ±m");
 
         var supportCase = await _fixture.LoadCaseAsync(conversation.Id);
         Assert.Equal(ConfigConnectionStatus.Confirmed, supportCase!.ConfigConnection!.Status);
@@ -223,7 +223,7 @@ public sealed class AiWorkflowIntegrationTests
 
         _fixture.Ai.Reset();
         _fixture.Ai.NextResponse = new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(500, 300, null, null, 0.99, false),
             null, null, null, []);
 
@@ -237,7 +237,7 @@ public sealed class AiWorkflowIntegrationTests
         var (conversation, customer) = await _fixture.SeedConversationAsync();
         _fixture.Ai.Reset();
         _fixture.Ai.NextResponse = new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             null, null, null,
             new AnyDeskSlotCandidate("123456789", 0.99),
             []);
@@ -257,7 +257,7 @@ public sealed class AiWorkflowIntegrationTests
 public sealed class RecordingAiService : IAiService
 {
     public AiStructuredExtraction NextResponse { get; set; } = new(
-        CustomerMessageIntent.Unknown, null, null, null, null, []);
+        ConversationIntent.Unclear, null, null, null, null, []);
 
     public int CallCount { get; private set; }
 

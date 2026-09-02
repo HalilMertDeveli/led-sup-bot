@@ -157,11 +157,23 @@ public sealed class CaseDetailDto
     [JsonPropertyName("issueSummary")]
     public string? IssueSummary { get; set; }
 
+    [JsonPropertyName("aiOperatorSummary")]
+    public string? AiOperatorSummary { get; set; }
+
+    [JsonPropertyName("completedCasesCount")]
+    public int CompletedCasesCount { get; set; }
+
     [JsonPropertyName("screen")]
     public ScreenDetailDto? Screen { get; set; }
 
     [JsonPropertyName("receiver")]
     public ReceiverDetailDto? Receiver { get; set; }
+
+    [JsonPropertyName("playerType")]
+    public string? PlayerType { get; set; }
+
+    [JsonPropertyName("processorHdmiConnected")]
+    public bool? ProcessorHdmiConnected { get; set; }
 
     [JsonPropertyName("config")]
     public ConfigDetailDto? Config { get; set; }
@@ -189,6 +201,12 @@ public sealed class ReceiverDetailDto
 {
     [JsonPropertyName("count")]
     public int Count { get; set; }
+
+    [JsonPropertyName("model")]
+    public string? Model { get; set; }
+
+    [JsonPropertyName("displayText")]
+    public string? DisplayText { get; set; }
 }
 
 public sealed class ConfigDetailDto
@@ -319,6 +337,9 @@ public sealed class CompactFocusResponse
     [JsonPropertyName("issueSummary")]
     public string? IssueSummary { get; set; }
 
+    [JsonPropertyName("aiOperatorSummary")]
+    public string? AiOperatorSummary { get; set; }
+
     [JsonPropertyName("currentStage")]
     public string? CurrentStage { get; set; }
 
@@ -330,6 +351,18 @@ public sealed class CompactFocusResponse
 
     [JsonPropertyName("receiverSummary")]
     public string? ReceiverSummary { get; set; }
+
+    [JsonPropertyName("receiverModel")]
+    public string? ReceiverModel { get; set; }
+
+    [JsonPropertyName("receiverCount")]
+    public int? ReceiverCount { get; set; }
+
+    [JsonPropertyName("playerType")]
+    public string? PlayerType { get; set; }
+
+    [JsonPropertyName("processorHdmiStatus")]
+    public string? ProcessorHdmiStatus { get; set; }
 
     [JsonPropertyName("panelStatus")]
     public string PanelStatus { get; set; } = "—";
@@ -345,6 +378,9 @@ public sealed class CompactFocusResponse
 
     [JsonPropertyName("showAnyDeskAlert")]
     public bool ShowAnyDeskAlert { get; set; }
+
+    [JsonPropertyName("completedCasesCount")]
+    public int CompletedCasesCount { get; set; }
 
     [JsonPropertyName("recentMessages")]
     public List<CompactRecentMessage> RecentMessages { get; set; } = [];
@@ -369,4 +405,64 @@ public sealed class TakeoverResponse
 
     [JsonPropertyName("botMode")]
     public string BotMode { get; set; } = "";
+}
+
+public sealed class ConversationEventPayload
+{
+    [JsonPropertyName("conversationId")]
+    public Guid ConversationId { get; set; }
+}
+
+public sealed class MessageEventPayload
+{
+    [JsonPropertyName("conversationId")]
+    public Guid ConversationId { get; set; }
+
+    [JsonPropertyName("messageId")]
+    public Guid MessageId { get; set; }
+}
+
+public sealed class WhatsAppStatusEventPayload
+{
+    [JsonPropertyName("status")]
+    public string? Status { get; set; }
+}
+
+public sealed class OperatorStateEventPayload
+{
+    [JsonPropertyName("conversationId")]
+    public Guid? ConversationId { get; set; }
+
+    [JsonPropertyName("messageId")]
+    public Guid? MessageId { get; set; }
+
+    [JsonPropertyName("status")]
+    public string? Status { get; set; }
+}
+
+public sealed class AnyDeskAlertEvent
+{
+    [JsonPropertyName("conversationId")]
+    public Guid ConversationId { get; set; }
+
+    [JsonPropertyName("customerDisplayName")]
+    public string? CustomerDisplayName { get; set; }
+
+    [JsonPropertyName("issueSummary")]
+    public string? IssueSummary { get; set; }
+
+    [JsonPropertyName("screenSummary")]
+    public string? ScreenSummary { get; set; }
+
+    [JsonPropertyName("receiverSummary")]
+    public string? ReceiverSummary { get; set; }
+
+    [JsonPropertyName("panelStatus")]
+    public string? PanelStatus { get; set; }
+
+    [JsonPropertyName("configStatus")]
+    public string? ConfigStatus { get; set; }
+
+    [JsonPropertyName("anyDeskStatus")]
+    public string? AnyDeskStatus { get; set; }
 }

@@ -78,7 +78,11 @@ Desktop.ini
 *.db-wal
 local-storage/
 data/media/
+**/data/media/
 .tmp/
+.phase21/
+knowledge/raw/
+knowledge/cache/
 
 # Logs
 logs/

@@ -15,7 +15,26 @@ public enum ConversationStage
     AskAnyDesk = 7,
     CollectingFinalInfo = 8,
     HumanHandoff = 9,
-    Completed = 10
+    Completed = 10,
+    AskReceiverModel = 11,
+    AskPlayerType = 12,
+    AskProcessorHdmi = 13
+}
+
+public enum ReceiverModel
+{
+    Unknown = 0,
+    E120 = 1,
+    E80 = 2,
+    _5A75E = 3,
+    E320Pro = 4
+}
+
+public enum PlayerType
+{
+    Unknown = 0,
+    Playbox = 1,
+    Processor = 2
 }
 
 public enum ConversationStatus

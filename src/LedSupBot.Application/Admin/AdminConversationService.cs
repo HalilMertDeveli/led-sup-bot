@@ -1,5 +1,6 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Workflow;
+using LedSupBot.Application.Workflow.Parsing;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -97,15 +98,15 @@ public sealed class AdminConversationService : IAdminConversationService
         var conversation = await _db.Conversations
             .AsNoTracking()
             .Include(c => c.Customer)
-            .Include(c => c.TechnicalSupportCase!)
+            .Include(c => c.TechnicalSupportCases)
                 .ThenInclude(tc => tc.ScreenInformation)
-            .Include(c => c.TechnicalSupportCase!)
+            .Include(c => c.TechnicalSupportCases)
                 .ThenInclude(tc => tc.ReceiverInformation)
-            .Include(c => c.TechnicalSupportCase!)
+            .Include(c => c.TechnicalSupportCases)
                 .ThenInclude(tc => tc.ConfigConnection)
-            .Include(c => c.TechnicalSupportCase!)
+            .Include(c => c.TechnicalSupportCases)
                 .ThenInclude(tc => tc.AnyDeskInformation)
-            .Include(c => c.TechnicalSupportCase!)
+            .Include(c => c.TechnicalSupportCases)
                 .ThenInclude(tc => tc.PanelLabelPhotos)
             .FirstOrDefaultAsync(c => c.Id == conversationId, cancellationToken);
 
@@ -113,6 +114,14 @@ public sealed class AdminConversationService : IAdminConversationService
         {
             return null;
         }
+
+        var activeCase = conversation.TechnicalSupportCases
+            .Where(tc => tc.Status != SupportCaseStatus.Completed && tc.Status != SupportCaseStatus.Cancelled)
+            .OrderByDescending(tc => tc.CreatedAt)
+            .FirstOrDefault()
+            ?? conversation.TechnicalSupportCases.OrderByDescending(tc => tc.CreatedAt).FirstOrDefault();
+
+        var completedCount = conversation.TechnicalSupportCases.Count(tc => tc.Status == SupportCaseStatus.Completed);
 
         var audits = await _db.BotModeChangeAudits
             .AsNoTracking()
@@ -135,7 +144,7 @@ public sealed class AdminConversationService : IAdminConversationService
                 conversation.Customer.Id,
                 AdminDisplayFormat.MaskPhone(conversation.Customer.PhoneNumber),
                 conversation.Customer.DisplayName),
-            conversation.TechnicalSupportCase is null ? null : MapCase(conversation.TechnicalSupportCase),
+            activeCase is null ? null : MapCase(activeCase, completedCount),
             audits,
             BuildBotReplyStatusLabel(conversation));
     }
@@ -237,7 +246,7 @@ public sealed class AdminConversationService : IAdminConversationService
                && conversation.BotMode == BotMode.Bot;
     }
 
-    private static CaseDetailDto MapCase(TechnicalSupportCase supportCase)
+    private static CaseDetailDto MapCase(TechnicalSupportCase supportCase, int completedCasesCount = 0)
     {
         ScreenDetailDto? screen = null;
         if (supportCase.ScreenInformation is { } s)
@@ -281,11 +290,15 @@ public sealed class AdminConversationService : IAdminConversationService
             supportCase.Status,
             supportCase.SummaryMarkdown,
             supportCase.IssueSummary,
+            supportCase.AiOperatorSummary,
             screen,
             receiver,
             config,
             anyDesk,
-            photos);
+            photos,
+            completedCasesCount,
+            supportCase.PlayerType,
+            supportCase.ProcessorHdmiConnected);
     }
 
     public async Task<CompactFocusDto> GetCompactFocusAsync(CancellationToken cancellationToken = default)
@@ -293,15 +306,15 @@ public sealed class AdminConversationService : IAdminConversationService
         var candidates = await _db.Conversations
             .AsNoTracking()
             .Include(c => c.Customer)
-            .Include(c => c.TechnicalSupportCase!)
+            .Include(c => c.TechnicalSupportCases)
                 .ThenInclude(tc => tc.ScreenInformation)
-            .Include(c => c.TechnicalSupportCase!)
+            .Include(c => c.TechnicalSupportCases)
                 .ThenInclude(tc => tc.ReceiverInformation)
-            .Include(c => c.TechnicalSupportCase!)
+            .Include(c => c.TechnicalSupportCases)
                 .ThenInclude(tc => tc.ConfigConnection)
-            .Include(c => c.TechnicalSupportCase!)
+            .Include(c => c.TechnicalSupportCases)
                 .ThenInclude(tc => tc.AnyDeskInformation)
-            .Include(c => c.TechnicalSupportCase!)
+            .Include(c => c.TechnicalSupportCases)
                 .ThenInclude(tc => tc.PanelLabelPhotos)
             .Where(c => c.Status != ConversationStatus.Completed && c.Status != ConversationStatus.Abandoned)
             .OrderByDescending(c => c.LastCustomerMessageAt ?? c.UpdatedAt)
@@ -316,11 +329,17 @@ public sealed class AdminConversationService : IAdminConversationService
         if (conversation is null)
         {
             return new CompactFocusDto(
-                null, null, null, null, null, null, null, null, null, "—", "—", "—", 0, false, []);
+                null, null, null, null, null, null, null, null, null, null, "—", "—", "—", 0, false, [], 0);
         }
 
-        var supportCase = conversation.TechnicalSupportCase;
-        var slots = WorkflowSlotState.FromCase(supportCase, conversation);
+        var activeCase = conversation.TechnicalSupportCases
+            .Where(tc => tc.Status != SupportCaseStatus.Completed && tc.Status != SupportCaseStatus.Cancelled)
+            .OrderByDescending(tc => tc.CreatedAt)
+            .FirstOrDefault()
+            ?? conversation.TechnicalSupportCases.OrderByDescending(tc => tc.CreatedAt).FirstOrDefault();
+
+        var completedCount = conversation.TechnicalSupportCases.Count(tc => tc.Status == SupportCaseStatus.Completed);
+        var slots = WorkflowSlotState.FromCase(activeCase, conversation);
 
         var recent = await _db.Messages
             .AsNoTracking()
@@ -337,22 +356,23 @@ public sealed class AdminConversationService : IAdminConversationService
             m.MessageType == MessageType.Image ? "📷 Fotoğraf" : Truncate(m.Content ?? "—", 120),
             m.CreatedAt)).ToList();
 
-        var receiverSummary = supportCase?.ReceiverInformation is { Count: > 0 } r
+        var receiverSummary = activeCase?.ReceiverInformation is { Count: > 0 } r
             ? string.Join(" ", new[] { r.Manufacturer, r.Model, $"×{r.Count}" }.Where(x => !string.IsNullOrWhiteSpace(x)))
             : null;
 
-        var showAlert = supportCase?.AnyDeskAlertSentAt is not null &&
-                        supportCase.AnyDeskAlertDismissedAt is null &&
-                        supportCase.AnyDeskInformation is null;
+        var showAlert = activeCase?.AnyDeskAlertSentAt is not null &&
+                        activeCase.AnyDeskAlertDismissedAt is null &&
+                        activeCase.AnyDeskInformation is null;
 
-        var photoCount = supportCase?.PanelLabelPhotos?.Count ?? 0;
+        var photoCount = activeCase?.PanelLabelPhotos?.Count ?? 0;
 
         return new CompactFocusDto(
             conversation.Id,
             conversation.BotMode,
             BuildBotReplyStatusLabel(conversation),
             AdminDisplayFormat.FormatCustomerIdentifier(conversation.Customer),
-            supportCase?.IssueSummary,
+            activeCase?.IssueSummary,
+            activeCase?.AiOperatorSummary,
             conversation.CurrentStage,
             AdminStageLabels.ToLabel(conversation.CurrentStage),
             slots.IsScreenComplete ? $"{slots.WidthCm:0}×{slots.HeightCm:0} cm" : null,
@@ -362,13 +382,14 @@ public sealed class AdminConversationService : IAdminConversationService
             slots.HasAnyDesk ? "alındı" : "bekleniyor",
             photoCount,
             showAlert,
-            recentDtos);
+            recentDtos,
+            completedCount);
     }
 
     public async Task<bool> DismissAnyDeskAlertAsync(Guid conversationId, CancellationToken cancellationToken = default)
     {
         var updated = await _db.TechnicalSupportCases
-            .Where(c => c.ConversationId == conversationId)
+            .Where(c => c.ConversationId == conversationId && c.Status != SupportCaseStatus.Completed)
             .ExecuteUpdateAsync(
                 s => s.SetProperty(c => c.AnyDeskAlertDismissedAt, DateTimeOffset.UtcNow),
                 cancellationToken);
@@ -376,10 +397,14 @@ public sealed class AdminConversationService : IAdminConversationService
         return updated > 0;
     }
 
-    private static bool HasPendingAnyDeskAlert(Conversation conversation) =>
-        conversation.TechnicalSupportCase?.AnyDeskAlertSentAt is not null &&
-        conversation.TechnicalSupportCase.AnyDeskAlertDismissedAt is null &&
-        conversation.TechnicalSupportCase.AnyDeskInformation is null;
+    private static bool HasPendingAnyDeskAlert(Conversation conversation)
+    {
+        var activeCase = conversation.TechnicalSupportCases
+            .FirstOrDefault(tc => tc.Status != SupportCaseStatus.Completed && tc.Status != SupportCaseStatus.Cancelled);
+        return activeCase?.AnyDeskAlertSentAt is not null &&
+               activeCase.AnyDeskAlertDismissedAt is null &&
+               activeCase.AnyDeskInformation is null;
+    }
 
     private static string Truncate(string value, int max) =>
         value.Length <= max ? value : value[..(max - 1)] + "…";

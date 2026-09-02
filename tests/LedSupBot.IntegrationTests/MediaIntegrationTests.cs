@@ -15,7 +15,7 @@ namespace LedSupBot.IntegrationTests;
 public sealed class MediaFixture : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
+        .WithImage("pgvector/pgvector:pg16")
         .WithDatabase("led_sup_bot_media")
         .WithUsername("postgres")
         .WithPassword("postgres")
@@ -40,6 +40,8 @@ public sealed class MediaFixture : IAsyncLifetime
             {
                 ["Database:ConnectionString"] = ConnectionString,
                 ["Workflow:AutoReplyEnabled"] = "false",
+                ["Workflow:InboundCoalescing:Enabled"] = "false",
+                ["Workflow:NaturalTiming:Enabled"] = "false",
                 ["Workflow:ConfigExampleImagePath"] = "",
                 ["WhatsAppConnector:Enabled"] = "false",
                 ["MediaStorage:RootPath"] = MediaRoot,

@@ -1,5 +1,7 @@
+using System.Globalization;
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Admin;
+using LedSupBot.Application.Workflow.Parsing;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +14,10 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
 
     private readonly IApplicationDbContext _db;
 
-    public ConversationContextBuilder(IApplicationDbContext db) => _db = db;
+    public ConversationContextBuilder(IApplicationDbContext db)
+    {
+        _db = db;
+    }
 
     public async Task<ConversationContext> BuildAsync(
         Conversation conversation,
@@ -38,8 +43,27 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
                 m.CreatedAt))
             .ToList();
 
-        var known = BuildKnownFacts(slots, supportCase);
+        var lastBotQuestion = recent
+            .Where(m => m.Role is "bot" or "technician")
+            .Where(m => IsRelevantBotQuestion(m.Content))
+            .Select(m => m.Content)
+            .LastOrDefault();
+
+        var completedCases = await _db.TechnicalSupportCases
+            .AsNoTracking()
+            .Where(tc => tc.ConversationId == conversation.Id && tc.Status == SupportCaseStatus.Completed)
+            .OrderByDescending(tc => tc.CompletedAt ?? tc.CreatedAt)
+            .Take(5)
+            .ToListAsync(cancellationToken);
+
+        var previousCasesSummary = completedCases.Count > 0
+            ? string.Join("; ", completedCases.Select(c => $"[Tamamlandı {c.CompletedAt:dd.MM.yyyy}: {c.IssueSummary ?? c.SummaryMarkdown ?? "LED Destek"}]"))
+            : null;
+
+        var known = BuildKnownFacts(slots, supportCase, completedCases.Count);
         var missing = BuildMissingFacts(slots, effectiveStage);
+        var askableMissing = BuildAskableMissingFacts(slots, effectiveStage);
+        var deferredMissing = BuildDeferredMissingFacts(slots, effectiveStage);
 
         return new ConversationContext
         {
@@ -47,25 +71,53 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
             CurrentStage = effectiveStage,
             StageLabel = AdminStageLabels.ToLabel(effectiveStage),
             RecentMessages = recent,
+            LastBotQuestion = lastBotQuestion,
+            PendingFact = WorkflowStageResolver.ResolvePendingFact(effectiveStage),
             CurrentIssue = supportCase.IssueSummary,
             KnownFacts = known,
-            MissingFacts = missing,
+            MissingFacts = askableMissing,
+            AskableMissingFacts = askableMissing,
+            DeferredMissingFacts = deferredMissing,
             Screen = new ContextScreen(
-                slots.IsScreenComplete ? $"{slots.WidthCm:0} × {slots.HeightCm:0} cm" : null,
-                slots.IsScreenComplete),
+                slots.IsScreenComplete ? $"{slots.WidthCm:0} × {slots.HeightCm:0} cm" : (slots.IsScreenDeferred ? "Bilgi alınamadı" : null),
+                slots.IsScreenComplete,
+                slots.IsScreenDeferred),
             Receiver = new ContextReceiver(
-                BuildReceiverText(supportCase.ReceiverInformation),
-                slots.ReceiverCount is > 0),
+                BuildReceiverText(supportCase.ReceiverInformation, slots),
+                slots.ReceiverCount is > 0,
+                slots.ReceiverCount is > 0,
+                slots.IsReceiverModelKnown,
+                slots.ReceiverCount,
+                slots.ReceiverModel,
+                slots.IsReceiverCountDeferred,
+                slots.IsReceiverModelDeferred),
+            Player = new ContextPlayer(
+                slots.PlayerType is not null ? PlayerTypeParser.ToDisplayString(slots.PlayerType.Value) : (slots.IsPlayerTypeDeferred ? "Bilgi alınamadı" : null),
+                slots.IsPlayerComplete,
+                slots.PlayerType,
+                slots.IsPlayerTypeDeferred),
+            ProcessorHdmi = new ContextProcessorHdmi(
+                slots.ProcessorHdmiConnected == true ? "HDMI bağlı" : (slots.IsProcessorHdmiDeferred ? "Bilgi alınamadı" : (slots.PlayerType == PlayerType.Processor ? "HDMI bekleniyor" : null)),
+                slots.IsProcessorHdmiComplete,
+                slots.ProcessorHdmiConnected,
+                slots.IsProcessorHdmiDeferred),
             Panel = new ContextPanel(
-                slots.HasPanelLabelPhoto ? "Panel etiketi alındı" : "Panel etiketi bekleniyor",
-                slots.HasPanelLabelPhoto),
+                slots.HasPanelLabelPhoto ? "Panel etiketi alındı" : (slots.IsPanelPhotoDeferred ? "Bilgi alınamadı" : "Panel etiketi bekleniyor"),
+                slots.HasPanelLabelPhoto,
+                slots.IsPanelPhotoDeferred),
             Config = new ContextConfig(
-                slots.ConfigConfirmed ? "Config bağlantısı tamam" : "Config bağlantısı bekleniyor",
-                slots.ConfigConfirmed),
+                slots.ConfigConfirmed ? "Config bağlantısı tamam" : (slots.IsConfigConnectionDeferred ? "Bilgi alınamadı" : "Config bağlantısı bekleniyor"),
+                slots.ConfigConfirmed,
+                slots.IsConfigConnectionDeferred),
             AnyDesk = new ContextAnyDesk(
-                slots.HasAnyDesk ? "AnyDesk alındı" : "AnyDesk bekleniyor",
-                slots.HasAnyDesk),
+                slots.HasAnyDesk ? "AnyDesk alındı" : (slots.IsAnyDeskDeferred ? "Bilgi alınamadı" : "AnyDesk bekleniyor"),
+                slots.HasAnyDesk,
+                slots.IsAnyDeskDeferred),
             BotMode = conversation.BotMode,
+            CurrentCaseStatus = supportCase.Status,
+            CompletedCasesCount = completedCases.Count,
+            PreviousCasesSummary = previousCasesSummary,
+            AiOperatorSummary = supportCase.AiOperatorSummary,
         };
     }
 
@@ -79,6 +131,16 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
             _ => direction == MessageDirection.Inbound ? "customer" : "bot",
         };
 
+    private static bool IsRelevantBotQuestion(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return false;
+        if (content.Contains('?')) return true;
+        var normalized = content.ToLower(new CultureInfo("tr-TR"));
+        return normalized.Contains("paylaş") || normalized.Contains("gönder") ||
+               normalized.Contains("belirt") || normalized.Contains("kontrol ed") ||
+               normalized.Contains("bağlay") || normalized.Contains("takın");
+    }
+
     private static string TrimContent(Message message)
     {
         if (message.MessageType == MessageType.Image)
@@ -90,7 +152,7 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
         return text.Length <= 400 ? text : text[..400] + "…";
     }
 
-    private static List<string> BuildKnownFacts(WorkflowSlotState slots, TechnicalSupportCase supportCase)
+    private static List<string> BuildKnownFacts(WorkflowSlotState slots, TechnicalSupportCase supportCase, int completedCasesCount)
     {
         var facts = new List<string>();
         if (slots.IsScreenComplete)
@@ -105,7 +167,24 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
 
         if (slots.ReceiverCount is > 0)
         {
-            facts.Add($"Receiver: {BuildReceiverText(supportCase.ReceiverInformation)}");
+            var receiverText = slots.IsReceiverModelKnown
+                ? $"{slots.ReceiverCount} adet {ReceiverModelParser.ToDisplayString(slots.ReceiverModel!.Value)}"
+                : $"{slots.ReceiverCount} adet";
+            facts.Add($"Receiver: {receiverText}");
+        }
+        else if (slots.IsReceiverModelKnown)
+        {
+            facts.Add($"Receiver modeli: {ReceiverModelParser.ToDisplayString(slots.ReceiverModel!.Value)}");
+        }
+
+        if (slots.IsPlayerComplete)
+        {
+            facts.Add($"Oynatıcı türü: {PlayerTypeParser.ToDisplayString(slots.PlayerType!.Value)}");
+        }
+
+        if (slots.PlayerType == PlayerType.Processor && slots.ProcessorHdmiConnected == true)
+        {
+            facts.Add("Processor HDMI bağlantısı yapıldı");
         }
 
         if (slots.ConfigConfirmed)
@@ -121,6 +200,11 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
         if (!string.IsNullOrWhiteSpace(supportCase.IssueSummary))
         {
             facts.Add($"Sorun: {supportCase.IssueSummary}");
+        }
+
+        if (facts.Count == 0 && completedCasesCount > 0)
+        {
+            facts.Add($"Önceki {completedCasesCount} adet teknik destek kaydı başarıyla tamamlandı.");
         }
 
         return facts;
@@ -139,9 +223,24 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
             missing.Add("Panel etiket fotoğrafı");
         }
 
-        if (slots.ReceiverCount is null or <= 0)
+        if (!slots.IsReceiverCountKnown)
         {
-            missing.Add("Receiver adedi/marka");
+            missing.Add("Receiver adedi");
+        }
+
+        if (!slots.IsReceiverModelKnown)
+        {
+            missing.Add("Receiver modeli");
+        }
+
+        if (!slots.IsPlayerComplete)
+        {
+            missing.Add("Oynatıcı türü");
+        }
+
+        if (slots.PlayerType == PlayerType.Processor && !slots.IsProcessorHdmiComplete)
+        {
+            missing.Add("Processor HDMI bağlantısı");
         }
 
         if (!slots.ConfigConfirmed)
@@ -149,7 +248,7 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
             missing.Add("Config bağlantı durumu");
         }
 
-        if (!slots.HasAnyDesk && stage is ConversationStage.AskAnyDesk or ConversationStage.CollectingFinalInfo)
+        if (!slots.HasAnyDesk)
         {
             missing.Add("AnyDesk adresi");
         }
@@ -157,24 +256,119 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
         return missing;
     }
 
-    private static string? BuildReceiverText(ReceiverInformation? receiver)
+    private static List<string> BuildAskableMissingFacts(WorkflowSlotState slots, ConversationStage stage)
     {
-        if (receiver is null || receiver.Count <= 0)
+        var askable = new List<string>();
+        if (!slots.IsScreenComplete && !slots.IsScreenDeferred)
         {
-            return null;
+            askable.Add("Ekran ölçüsü");
         }
 
-        var parts = new List<string> { $"×{receiver.Count}" };
-        if (!string.IsNullOrWhiteSpace(receiver.Manufacturer))
+        if (!slots.HasPanelLabelPhoto && !slots.IsPanelPhotoDeferred)
         {
-            parts.Insert(0, receiver.Manufacturer);
+            askable.Add("Panel etiket fotoğrafı");
         }
 
-        if (!string.IsNullOrWhiteSpace(receiver.Model))
+        if (!slots.IsReceiverCountKnown && !slots.IsReceiverCountDeferred)
         {
-            parts.Add(receiver.Model);
+            askable.Add("Receiver adedi");
         }
 
-        return string.Join(" ", parts);
+        if (!slots.IsReceiverModelKnown && !slots.IsReceiverModelDeferred)
+        {
+            askable.Add("Receiver modeli");
+        }
+
+        if (!slots.IsPlayerComplete && !slots.IsPlayerTypeDeferred)
+        {
+            askable.Add("Oynatıcı türü");
+        }
+
+        if (slots.PlayerType == PlayerType.Processor && !slots.IsProcessorHdmiComplete && !slots.IsProcessorHdmiDeferred)
+        {
+            askable.Add("Processor HDMI bağlantısı");
+        }
+
+        if (!slots.ConfigConfirmed && !slots.IsConfigConnectionDeferred)
+        {
+            askable.Add("Config bağlantı durumu");
+        }
+
+        if (!slots.HasAnyDesk && !slots.IsAnyDeskDeferred)
+        {
+            askable.Add("AnyDesk adresi");
+        }
+
+        return askable;
+    }
+
+    private static List<string> BuildDeferredMissingFacts(WorkflowSlotState slots, ConversationStage stage)
+    {
+        var deferred = new List<string>();
+        if (!slots.IsScreenComplete && slots.IsScreenDeferred)
+        {
+            deferred.Add("Ekran ölçüsü (2 kez soruldu, atlandı)");
+        }
+
+        if (!slots.HasPanelLabelPhoto && slots.IsPanelPhotoDeferred)
+        {
+            deferred.Add("Panel etiket fotoğrafı (2 kez soruldu, atlandı)");
+        }
+
+        if (!slots.IsReceiverCountKnown && slots.IsReceiverCountDeferred)
+        {
+            deferred.Add("Receiver adedi (2 kez soruldu, atlandı)");
+        }
+
+        if (!slots.IsReceiverModelKnown && slots.IsReceiverModelDeferred)
+        {
+            deferred.Add("Receiver modeli (2 kez soruldu, atlandı)");
+        }
+
+        if (!slots.IsPlayerComplete && slots.IsPlayerTypeDeferred)
+        {
+            deferred.Add("Oynatıcı türü (2 kez soruldu, atlandı)");
+        }
+
+        if (slots.PlayerType == PlayerType.Processor && !slots.IsProcessorHdmiComplete && slots.IsProcessorHdmiDeferred)
+        {
+            deferred.Add("Processor HDMI bağlantısı (2 kez soruldu, atlandı)");
+        }
+
+        if (!slots.ConfigConfirmed && slots.IsConfigConnectionDeferred)
+        {
+            deferred.Add("Config bağlantı durumu (2 kez soruldu, atlandı)");
+        }
+
+        if (!slots.HasAnyDesk && slots.IsAnyDeskDeferred)
+        {
+            deferred.Add("AnyDesk adresi (2 kez soruldu, atlandı)");
+        }
+
+        return deferred;
+    }
+
+    private static string? BuildReceiverText(ReceiverInformation? receiver, WorkflowSlotState slots)
+    {
+        if (slots.ReceiverCount is null or <= 0)
+        {
+            if (slots.IsReceiverModelKnown)
+            {
+                return ReceiverModelParser.ToDisplayString(slots.ReceiverModel!.Value);
+            }
+            return slots.IsReceiverCountDeferred ? "Bilgi alınamadı" : null;
+        }
+
+        if (slots.IsReceiverModelKnown)
+        {
+            return $"{slots.ReceiverCount} adet {ReceiverModelParser.ToDisplayString(slots.ReceiverModel!.Value)}";
+        }
+
+        if (receiver is not null && !string.IsNullOrWhiteSpace(receiver.Model))
+        {
+            return $"{slots.ReceiverCount} adet {receiver.Model}";
+        }
+
+        return $"{slots.ReceiverCount} adet";
     }
 }

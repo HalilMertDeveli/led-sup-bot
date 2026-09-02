@@ -93,6 +93,14 @@
                         </StackPanel>
                     </Border>
 
+                    <!-- Real-time Live Status Pill -->
+                    <Border Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="10,4" Margin="0,0,8,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse Width="7" Height="7" Fill="{Binding RealtimeConnected, Converter={StaticResource ConnBrush}}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding RealtimeStatusLabel}" Foreground="{StaticResource CardTextBrush}" FontWeight="SemiBold" FontSize="11" />
+                        </StackPanel>
+                    </Border>
+
                     <!-- Test Mode Banner (if active) -->
                     <Border Background="{StaticResource BadgeWarnBgBrush}" BorderBrush="{StaticResource WarnBrush}" BorderThickness="1" CornerRadius="12" Padding="10,4"
                             Visibility="{Binding ShowTestModeBanner, Converter={StaticResource BoolToVis}}">
@@ -456,9 +464,14 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0" Text="TEKNİK DESTEK ÖZETİ" FontWeight="Bold" FontSize="12" Foreground="{StaticResource SectionHeaderBrush}" VerticalAlignment="Center" />
-                            <Button Grid.Column="1" Content="✕" Style="{StaticResource GhostButton}" Command="{Binding ToggleTechnicalPanelCommand}" ToolTip="Paneli Gizle" />
+                            <Border Grid.Column="1" Background="{StaticResource BadgeSuccessBgBrush}" CornerRadius="4" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center"
+                                    Visibility="{Binding HasCompletedCases, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="{Binding CompletedCasesBadgeText}" Foreground="{StaticResource SuccessBrush}" FontSize="10" FontWeight="Bold" />
+                            </Border>
+                            <Button Grid.Column="2" Content="✕" Style="{StaticResource GhostButton}" Command="{Binding ToggleTechnicalPanelCommand}" ToolTip="Paneli Gizle" />
                         </Grid>
                     </Border>
 
@@ -496,6 +509,17 @@
                     <!-- Technical Details Cards -->
                     <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="12">
                         <StackPanel>
+                            <!-- AI Operatör Özeti -->
+                            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,10" Background="#15212E" BorderBrush="{StaticResource InfoBrush}">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                        <Ellipse Width="6" Height="6" Fill="{StaticResource InfoBrush}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                        <TextBlock Text="AI OPERATÖR ÖZETİ" Style="{StaticResource SectionTitle}" Foreground="{StaticResource InfoBrush}" Margin="0" />
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding AiOperatorSummaryText}" Style="{StaticResource IssueBody}" FontSize="12" Foreground="{StaticResource CardTextBrush}" />
+                                </StackPanel>
+                            </Border>
+
                             <!-- Sorun Özeti -->
                             <Border Style="{StaticResource CardBorder}" Margin="0,0,0,10">
                                 <StackPanel>
@@ -543,8 +567,39 @@
                                             <ColumnDefinition Width="80" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="Kart Bilgisi:" Style="{StaticResource CardLabel}" />
-                                        <TextBlock Grid.Column="1" Text="{Binding ReceiverSummaryText}" Style="{StaticResource CardValue}" />
+                                        <TextBlock Grid.Column="0" Text="Model:" Style="{StaticResource CardLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ReceiverModelText}" FontWeight="SemiBold" Style="{StaticResource CardValue}" />
+                                    </Grid>
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Adet:" Style="{StaticResource CardLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ReceiverCountText}" FontWeight="SemiBold" Style="{StaticResource CardValue}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Oynatıcı / Sinyal -->
+                            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="OYNATICI / SİNYAL" Style="{StaticResource SectionTitle}" />
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Oynatıcı:" Style="{StaticResource CardLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding PlayerTypeText}" FontWeight="SemiBold" Style="{StaticResource CardValue}" />
+                                    </Grid>
+                                    <Grid Margin="0,4,0,0" Visibility="{Binding IsProcessorPlayer, Converter={StaticResource BoolToVis}}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="HDMI:" Style="{StaticResource CardLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ProcessorHdmiStatusText}" FontWeight="SemiBold" Style="{StaticResource CardValue}" />
                                     </Grid>
                                 </StackPanel>
                             </Border>

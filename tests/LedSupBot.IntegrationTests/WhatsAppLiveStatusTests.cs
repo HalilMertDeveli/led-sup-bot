@@ -13,7 +13,7 @@ namespace LedSupBot.IntegrationTests;
 public sealed class WhatsAppLiveStatusFixture : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
+        .WithImage("pgvector/pgvector:pg16")
         .WithDatabase("led_sup_bot_status")
         .WithUsername("postgres")
         .WithPassword("postgres")

@@ -10,7 +10,7 @@ internal static class GeminiJsonSchemas
             intent = new
             {
                 type = "STRING",
-                @enum = new[] { "unknown", "greeting", "technical_support", "confirmation", "rejection" },
+                @enum = new[] { "unknown", "greeting", "technical_support", "confirmation", "rejection", "ask_clarification", "ask_technical_question", "correction", "acknowledgement" },
             },
             screen = ScreenSchema(),
             receiver = ReceiverSchema(),
@@ -32,11 +32,20 @@ internal static class GeminiJsonSchemas
         {
             intent = new { type = "STRING" },
             reply = new { type = "STRING" },
-            issueSummary = new { type = "STRING" },
+            customerQuestion = new { type = "STRING", nullable = true },
+            shouldAnswerQuestion = new { type = "BOOLEAN", nullable = true },
+            shouldContinueWorkflowNow = new { type = "BOOLEAN", nullable = true },
+            shouldStartNewCase = new { type = "BOOLEAN", nullable = true },
+            needsClarification = new { type = "BOOLEAN", nullable = true },
+            suggestedClarification = new { type = "STRING", nullable = true },
+            answerConfidence = new { type = "NUMBER", nullable = true },
+            diagnosticHypothesis = new { type = "STRING", nullable = true },
+            issueSummary = new { type = "STRING", nullable = true },
             needsHuman = new { type = "BOOLEAN" },
-            suggestedNextAction = new { type = "STRING" },
+            suggestedNextAction = new { type = "STRING", nullable = true },
+            aiOperatorSummary = new { type = "STRING", nullable = true },
         },
-        required = new[] { "intent", "reply", "issueSummary", "needsHuman", "suggestedNextAction" },
+        required = new[] { "intent", "reply", "needsHuman" },
     };
 
     private static object ScreenSchema() => new
@@ -62,6 +71,8 @@ internal static class GeminiJsonSchemas
         properties = new
         {
             count = new { type = "INTEGER", nullable = true },
+            model = new { type = "STRING", nullable = true },
+            manufacturer = new { type = "STRING", nullable = true },
             confidence = new { type = "NUMBER" },
         },
         required = new[] { "count", "confidence" },
@@ -75,6 +86,7 @@ internal static class GeminiJsonSchemas
         {
             connected = new { type = "BOOLEAN", nullable = true },
             confirmed = new { type = "BOOLEAN", nullable = true },
+            clarificationRequested = new { type = "BOOLEAN", nullable = true },
             confidence = new { type = "NUMBER" },
         },
         required = new[] { "connected", "confirmed", "confidence" },

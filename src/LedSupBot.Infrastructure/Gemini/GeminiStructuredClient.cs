@@ -74,10 +74,12 @@ public sealed class GeminiStructuredClient
 
         if (!response.IsSuccessStatusCode)
         {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogWarning(
-                "Gemini request failed for {Operation}: status={StatusCode}; using deterministic fallback",
+                "Gemini request failed for {Operation}: status={StatusCode} body={Body}; using deterministic fallback",
                 operation,
-                (int)response.StatusCode);
+                (int)response.StatusCode,
+                errorBody);
             return null;
         }
 

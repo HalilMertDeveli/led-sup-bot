@@ -325,6 +325,70 @@ export async function sendText(toAddress, text) {
   };
 }
 
+export async function sendImage(toAddress, imageBuffer, caption) {
+  if (!sock || status !== "CONNECTED") {
+    throw new Error(`Connector not connected (status=${status})`);
+  }
+
+  const jid = resolveOutboundJid(toAddress);
+  if (!jid) {
+    throw new Error("Invalid outbound destination");
+  }
+
+  try {
+    assertNonSelfJid(jid);
+  } catch (error) {
+    logger.warn(
+      {
+        event: "OUTBOUND_IMAGE_SEND_BLOCKED",
+        reason: "self_destination",
+        destinationType: jidDomain(jid),
+      },
+      "outbound blocked: self destination",
+    );
+    throw error;
+  }
+
+  const exactRoutePreserved = String(toAddress || "").includes("@")
+    ? normalizeWhatsAppJid(toAddress) === jid
+    : true;
+
+  const messagePayload = {
+    image: imageBuffer,
+    caption: caption || undefined,
+  };
+
+  const result = await sock.sendMessage(jid, messagePayload);
+  const id = result?.key?.id;
+  if (id) {
+    markBotSent(id);
+  }
+
+  logger.info(
+    {
+      event: "OUTBOUND_IMAGE_SEND_COMPLETED",
+      routeSource: "conversation_live_route",
+      destinationType: jidDomain(jid),
+      exactRoutePreserved,
+      connectorRequestAccepted: true,
+      sockSendMessageCalled: true,
+      baileysMessageIdPresent: Boolean(id),
+      messageId: id || null,
+      resultRemoteJid: redactJid(result?.key?.remoteJid),
+      resultFromMe: Boolean(result?.key?.fromMe),
+    },
+    "outbound image send completed",
+  );
+
+  return {
+    externalMessageId: id || null,
+    remoteJid: jid,
+    resultRemoteJid: result?.key?.remoteJid || null,
+    destinationType: jidDomain(jid),
+    exactRoutePreserved,
+  };
+}
+
 function mapBaileysDeliveryStatus(status) {
   if (status === undefined || status === null) return null;
   switch (Number(status)) {

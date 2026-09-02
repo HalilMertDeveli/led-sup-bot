@@ -187,5 +187,5 @@ public sealed class AdminApiTests
     }
 
     private sealed record AdminListResponse(List<AdminListItem> Items, int Total);
-    private sealed record AdminListItem(Guid Id, string CustomerIdentifier, BotMode BotMode);
+    private sealed record AdminListItem(Guid Id, string CustomerIdentifier, string BotMode);
 }

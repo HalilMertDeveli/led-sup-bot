@@ -33,7 +33,7 @@ public class Conversation : Entity
 
     public ICollection<Message> Messages { get; set; } = new List<Message>();
 
-    public TechnicalSupportCase? TechnicalSupportCase { get; set; }
+    public ICollection<TechnicalSupportCase> TechnicalSupportCases { get; set; } = new List<TechnicalSupportCase>();
 
     public ICollection<AiExtractionResult> AiExtractionResults { get; set; } = new List<AiExtractionResult>();
 }

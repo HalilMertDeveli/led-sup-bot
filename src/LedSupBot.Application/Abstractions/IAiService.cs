@@ -1,3 +1,5 @@
+using LedSupBot.Domain.Enums;
+
 namespace LedSupBot.Application.Abstractions;
 
 /// <summary>
@@ -13,6 +15,23 @@ public sealed record AiExtractionRequest(
     string? LanguageHint,
     IReadOnlyDictionary<string, string?> KnownSlots);
 
+public enum ConversationIntent
+{
+    Unclear = 0,
+    WorkflowInformation = 1,
+    QuestionAboutCurrentStep = 2,
+    LedTechnicalQuestion = 3,
+    LedTroubleshooting = 4,
+    Correction = 5,
+    Acknowledgement = 6,
+    FlowRecovery = 7,
+    ResumeWorkflow = 8,
+    CasualConversation = 9,
+    GeneralKnowledge = 10,
+    NewCase = 11,
+}
+
+// Compatibility boundary for the untouched OpenAI fallback. Production workflow code uses ConversationIntent.
 public enum CustomerMessageIntent
 {
     Unknown = 0,
@@ -20,6 +39,10 @@ public enum CustomerMessageIntent
     TechnicalSupport = 2,
     Confirmation = 3,
     Rejection = 4,
+    AskClarification = 5,
+    AskTechnicalQuestion = 6,
+    Correction = 7,
+    Acknowledgement = 8,
 }
 
 public sealed record ScreenSlotCandidate(
@@ -30,17 +53,72 @@ public sealed record ScreenSlotCandidate(
     double Confidence,
     bool UnitAmbiguous);
 
-public sealed record ReceiverSlotCandidate(int? Count, double Confidence);
+public sealed record ReceiverSlotCandidate(
+    int? Count,
+    double Confidence,
+    string? Model = null,
+    string? Manufacturer = null,
+    ReceiverModel? ReceiverModel = null)
+{
+    public ReceiverSlotCandidate(int? count, string? model, double confidence, string? manufacturer = null, ReceiverModel? receiverModel = null)
+        : this(count, confidence, model, manufacturer, receiverModel) { }
+}
 
-public sealed record ConfigSlotCandidate(bool? Connected, bool? Confirmed, double Confidence);
+public sealed record PlayerSlotCandidate(
+    string? PlayerTypeString,
+    double Confidence,
+    PlayerType? PlayerType = null)
+{
+    public PlayerSlotCandidate(PlayerType? playerType, double confidence)
+        : this(playerType?.ToString(), confidence, playerType) { }
+}
 
-public sealed record AnyDeskSlotCandidate(string? Address, double Confidence);
+public sealed record ProcessorHdmiSlotCandidate(
+    bool? Connected,
+    double Confidence,
+    bool? NeedsClarification = null);
 
-/// <summary>Structured extraction result from OpenAI. Backend validation remains authoritative.</summary>
+public sealed record ConfigSlotCandidate(
+    bool? Connected,
+    bool? Confirmed,
+    double Confidence,
+    bool? ClarificationRequested = null);
+
+public sealed record AnyDeskSlotCandidate(
+    string? Address,
+    double Confidence);
+
+/// <summary>Structured extraction result from AI. Backend validation remains authoritative.</summary>
 public sealed record AiStructuredExtraction(
-    CustomerMessageIntent Intent,
+    ConversationIntent Intent,
     ScreenSlotCandidate? Screen,
     ReceiverSlotCandidate? Receiver,
     ConfigSlotCandidate? Config,
     AnyDeskSlotCandidate? AnyDesk,
-    IReadOnlyList<string> Ambiguities);
+    IReadOnlyList<string> Ambiguities,
+    string? CustomerQuestion = null,
+    PlayerSlotCandidate? Player = null,
+    ProcessorHdmiSlotCandidate? ProcessorHdmi = null)
+{
+    public AiStructuredExtraction(
+        CustomerMessageIntent Intent,
+        ScreenSlotCandidate? Screen,
+        ReceiverSlotCandidate? Receiver,
+        ConfigSlotCandidate? Config,
+        AnyDeskSlotCandidate? AnyDesk,
+        IReadOnlyList<string> Ambiguities,
+        string? CustomerQuestion = null,
+        PlayerSlotCandidate? Player = null,
+        ProcessorHdmiSlotCandidate? ProcessorHdmi = null)
+        : this(Intent switch
+        {
+            CustomerMessageIntent.Greeting => ConversationIntent.CasualConversation,
+            CustomerMessageIntent.TechnicalSupport or CustomerMessageIntent.Confirmation or CustomerMessageIntent.Rejection => ConversationIntent.WorkflowInformation,
+            CustomerMessageIntent.AskClarification => ConversationIntent.QuestionAboutCurrentStep,
+            CustomerMessageIntent.AskTechnicalQuestion => ConversationIntent.LedTechnicalQuestion,
+            CustomerMessageIntent.Correction => ConversationIntent.Correction,
+            CustomerMessageIntent.Acknowledgement => ConversationIntent.Acknowledgement,
+            _ => ConversationIntent.Unclear,
+        }, Screen, Receiver, Config, AnyDesk, Ambiguities, CustomerQuestion, Player, ProcessorHdmi)
+    { }
+}

@@ -1,6 +1,7 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Pgvector.EntityFrameworkCore;
 
 namespace LedSupBot.Infrastructure.Persistence;
 
@@ -9,6 +10,12 @@ public sealed class ApplicationDbContext : DbContext, IApplicationDbContext
     public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
         : base(options)
     {
+    }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.UseNpgsql(npgsql => npgsql.UseVector());
+        base.OnConfiguring(optionsBuilder);
     }
 
     public DbSet<Customer> Customers => Set<Customer>();
@@ -32,6 +39,8 @@ public sealed class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<AiExtractionResult> AiExtractionResults => Set<AiExtractionResult>();
 
     public DbSet<BotModeChangeAudit> BotModeChangeAudits => Set<BotModeChangeAudit>();
+    public DbSet<KnowledgeDocument> KnowledgeDocuments => Set<KnowledgeDocument>();
+    public DbSet<KnowledgeChunk> KnowledgeChunks => Set<KnowledgeChunk>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

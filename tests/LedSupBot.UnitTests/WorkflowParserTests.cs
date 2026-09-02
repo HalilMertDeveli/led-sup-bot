@@ -223,7 +223,7 @@ public sealed class ScreenDimensionUnitPolicyTests
     public void Ai_Validator_Converts_Explicit_Meters_To_Cm()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(null, null, 5, 3, 0.96, false),
             null, null, null, []));
 
@@ -236,7 +236,7 @@ public sealed class ScreenDimensionUnitPolicyTests
     public void Ai_Validator_Rejects_Unitless_5x3()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(null, null, null, null, 0.6, true),
             null, null, null,
             ["unit ambiguous"]));
@@ -248,7 +248,7 @@ public sealed class ScreenDimensionUnitPolicyTests
     public void Ai_Validator_Accepts_Explicit_Cm()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(500, 300, null, null, 0.98, false),
             null, null, null, []));
 

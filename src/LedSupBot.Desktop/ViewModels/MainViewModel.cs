@@ -24,8 +24,17 @@ public sealed class MainViewModel : ViewModelBase
     private string _whatsAppStatus = "Bağlantı Yok";
     private bool _whatsAppConnected;
     private string _dbStatus = "Bağlı";
+    private bool _realtimeConnected;
+    private string _realtimeStatusLabel = "Bağlantı Yok";
     private bool _showTestModeBanner;
     private string _testModeLabel = "";
+
+    // Coalesced Realtime Refresh
+    private readonly object _refreshLock = new();
+    private CancellationTokenSource? _coalesceCts;
+    private bool _isRefreshing;
+    private bool _refreshPending;
+    private readonly System.Threading.Timer _heartbeatTimer;
 
     // Sidebar & Navigation
     private string _searchText = "";
@@ -76,13 +85,58 @@ public sealed class MainViewModel : ViewModelBase
         CopyAnyDeskCommand = new RelayCommand(CopyAnyDeskToClipboard, () => !string.IsNullOrWhiteSpace(AnyDeskAddressText) && AnyDeskAddressText != "—");
         SetFilterCommand = new RelayCommand<string>(mode => FilterMode = mode ?? "all");
 
-        _signalR.ConversationUpdated += OnRealtimeConversationUpdated;
-        _signalR.MessageReceived += OnRealtimeMessageReceived;
+        _signalR.ConnectionStateChanged += (state, label) =>
+        {
+            RunOnUi(() =>
+            {
+                RealtimeConnected = state == Microsoft.AspNetCore.SignalR.Client.HubConnectionState.Connected;
+                RealtimeStatusLabel = label ?? (RealtimeConnected ? "Canlı" : "Bağlantı Yok");
+            });
+        };
+
+        _signalR.Reconnected += () =>
+        {
+            DesktopLog.Info("SignalR", "reconnected -> triggering full recovery refresh");
+            ScheduleCoalescedRefresh(TimeSpan.Zero);
+        };
+
+        _signalR.StateChanged += () =>
+        {
+            ScheduleCoalescedRefresh(TimeSpan.FromMilliseconds(250));
+        };
+
+        _signalR.ConversationUpdated += _ =>
+        {
+            ScheduleCoalescedRefresh(TimeSpan.FromMilliseconds(250));
+        };
+
+        _signalR.MessageReceived += (_, _) =>
+        {
+            ScheduleCoalescedRefresh(TimeSpan.FromMilliseconds(250));
+        };
+
+        _signalR.WhatsAppStatusChanged += status =>
+        {
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                RunOnUi(() => UpdateWhatsAppStatus(status));
+            }
+            ScheduleCoalescedRefresh(TimeSpan.FromMilliseconds(250));
+        };
+
         _signalR.AnyDeskReady += evt =>
         {
             RunOnUi(() => _notifications.ShowAnyDeskAlert("LED Support", evt.IssueSummary ?? "Müşteri AnyDesk aşamasına ulaştı."));
-            _ = RefreshAsync();
+            ScheduleCoalescedRefresh(TimeSpan.Zero);
         };
+
+        _heartbeatTimer = new System.Threading.Timer(_ =>
+        {
+            if (IsAuthenticated && !IsBusy)
+            {
+                ScheduleCoalescedRefresh(TimeSpan.Zero);
+            }
+        }, null, TimeSpan.FromSeconds(45), TimeSpan.FromSeconds(45));
     }
 
     #region Collections
@@ -188,6 +242,18 @@ public sealed class MainViewModel : ViewModelBase
     {
         get => _dbStatus;
         private set => RunOnUi(() => SetProperty(ref _dbStatus, value));
+    }
+
+    public bool RealtimeConnected
+    {
+        get => _realtimeConnected;
+        private set => RunOnUi(() => SetProperty(ref _realtimeConnected, value));
+    }
+
+    public string RealtimeStatusLabel
+    {
+        get => _realtimeStatusLabel;
+        private set => RunOnUi(() => SetProperty(ref _realtimeStatusLabel, value));
     }
 
     public bool ShowTestModeBanner
@@ -502,15 +568,94 @@ public sealed class MainViewModel : ViewModelBase
         }
     }
 
+    public string ReceiverModelText
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(_selectedDetail?.Case?.Receiver?.Model))
+            {
+                return _selectedDetail.Case.Receiver.Model;
+            }
+            if (!string.IsNullOrWhiteSpace(Focus?.ReceiverModel))
+            {
+                return Focus.ReceiverModel;
+            }
+            return "—";
+        }
+    }
+
+    public string ReceiverCountText
+    {
+        get
+        {
+            if (_selectedDetail?.Case?.Receiver is { Count: > 0 } r)
+            {
+                return $"{r.Count} Adet";
+            }
+            if (Focus?.ReceiverCount is > 0)
+            {
+                return $"{Focus.ReceiverCount} Adet";
+            }
+            return "—";
+        }
+    }
+
     public string ReceiverSummaryText
     {
         get
         {
-            if (_selectedDetail?.Case?.Receiver is { } r && r.Count > 0)
+            if (_selectedDetail?.Case?.Receiver is { } r)
             {
-                return $"{r.Count} Adet Receiver";
+                if (r.Count > 0 && !string.IsNullOrWhiteSpace(r.Model))
+                {
+                    return $"{r.Count} Adet {r.Model}";
+                }
+                if (r.Count > 0)
+                {
+                    return $"{r.Count} Adet";
+                }
+                if (!string.IsNullOrWhiteSpace(r.Model))
+                {
+                    return r.Model;
+                }
             }
             return Focus?.ReceiverSummary ?? "—";
+        }
+    }
+
+    public string PlayerTypeText
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(_selectedDetail?.Case?.PlayerType))
+            {
+                return _selectedDetail.Case.PlayerType;
+            }
+            if (!string.IsNullOrWhiteSpace(Focus?.PlayerType))
+            {
+                return Focus.PlayerType;
+            }
+            return "—";
+        }
+    }
+
+    public bool IsProcessorPlayer =>
+        string.Equals(PlayerTypeText, "Processor", StringComparison.OrdinalIgnoreCase);
+
+    public string ProcessorHdmiStatusText
+    {
+        get
+        {
+            if (_selectedDetail?.Case?.PlayerType is { } pt &&
+                string.Equals(pt, "Processor", StringComparison.OrdinalIgnoreCase))
+            {
+                return _selectedDetail.Case.ProcessorHdmiConnected == true ? "✓ Bağlı" : "⏳ Bekleniyor";
+            }
+            if (!string.IsNullOrWhiteSpace(Focus?.ProcessorHdmiStatus))
+            {
+                return Focus.ProcessorHdmiStatus == "Bağlı" ? "✓ Bağlı" : "⏳ Bekleniyor";
+            }
+            return "—";
         }
     }
 
@@ -552,6 +697,26 @@ public sealed class MainViewModel : ViewModelBase
 
     public int PhotoCount => PanelPhotos.Count > 0 ? PanelPhotos.Count : (Focus?.PhotoCount ?? 0);
     public bool HasPanelPhotos => PanelPhotos.Count > 0;
+
+    public string AiOperatorSummaryText
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(_selectedDetail?.Case?.AiOperatorSummary))
+            {
+                return _selectedDetail.Case.AiOperatorSummary;
+            }
+            if (!string.IsNullOrWhiteSpace(Focus?.AiOperatorSummary))
+            {
+                return Focus.AiOperatorSummary;
+            }
+            return "—";
+        }
+    }
+
+    public int CompletedCasesCount => _selectedDetail?.Case?.CompletedCasesCount ?? Focus?.CompletedCasesCount ?? 0;
+    public bool HasCompletedCases => CompletedCasesCount > 0;
+    public string CompletedCasesBadgeText => CompletedCasesCount > 0 ? $"{CompletedCasesCount} Tamamlanan Kayıt" : "";
 
     #endregion
 
@@ -615,7 +780,13 @@ public sealed class MainViewModel : ViewModelBase
         await RefreshAsync();
     }
 
-    public async Task RefreshAsync()
+    public Task RefreshAsync()
+    {
+        ScheduleCoalescedRefresh(TimeSpan.Zero);
+        return Task.CompletedTask;
+    }
+
+    private async Task RefreshInternalAsync()
     {
         if (!IsAuthenticated)
         {
@@ -666,7 +837,7 @@ public sealed class MainViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            DesktopLog.Error("Refresh", ex);
+            DesktopLog.Error("RefreshInternal", ex);
             ErrorMessage = MapApiError(ex);
         }
     }
@@ -806,9 +977,18 @@ public sealed class MainViewModel : ViewModelBase
                 RaisePropertyChanged(nameof(ActiveCustomerPhone));
                 RaisePropertyChanged(nameof(ActiveStageLabel));
                 RaisePropertyChanged(nameof(IssueSummaryText));
+                RaisePropertyChanged(nameof(AiOperatorSummaryText));
+                RaisePropertyChanged(nameof(CompletedCasesCount));
+                RaisePropertyChanged(nameof(HasCompletedCases));
+                RaisePropertyChanged(nameof(CompletedCasesBadgeText));
                 RaisePropertyChanged(nameof(ScreenWidthHeightText));
                 RaisePropertyChanged(nameof(PanelStatusText));
+                RaisePropertyChanged(nameof(ReceiverModelText));
+                RaisePropertyChanged(nameof(ReceiverCountText));
                 RaisePropertyChanged(nameof(ReceiverSummaryText));
+                RaisePropertyChanged(nameof(PlayerTypeText));
+                RaisePropertyChanged(nameof(IsProcessorPlayer));
+                RaisePropertyChanged(nameof(ProcessorHdmiStatusText));
                 RaisePropertyChanged(nameof(ConfigStatusText));
                 RaisePropertyChanged(nameof(AnyDeskAddressText));
                 RaisePropertyChanged(nameof(AnyDeskStatusText));
@@ -1081,22 +1261,80 @@ public sealed class MainViewModel : ViewModelBase
 
     #endregion
 
-    #region Realtime Events
+    #region Realtime Events & Coalescing
 
-    private void OnRealtimeConversationUpdated()
+    public void ScheduleCoalescedRefresh(TimeSpan delay)
     {
-        _ = RefreshAsync();
+        if (!IsAuthenticated)
+        {
+            return;
+        }
+
+        lock (_refreshLock)
+        {
+            if (delay <= TimeSpan.Zero)
+            {
+                _coalesceCts?.Cancel();
+                _coalesceCts?.Dispose();
+                _coalesceCts = null;
+                _ = TriggerRefreshLoopAsync();
+                return;
+            }
+
+            _coalesceCts?.Cancel();
+            _coalesceCts?.Dispose();
+            _coalesceCts = new CancellationTokenSource();
+            var token = _coalesceCts.Token;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(delay, token);
+                    if (!token.IsCancellationRequested)
+                    {
+                        await TriggerRefreshLoopAsync();
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Debounced by a newer event - expected
+                }
+            }, token);
+        }
     }
 
-    private void OnRealtimeMessageReceived()
+    private async Task TriggerRefreshLoopAsync()
     {
-        if (SelectedConversation is not null)
+        lock (_refreshLock)
         {
-            _ = LoadSelectedConversationAsync(SelectedConversation.Id);
+            if (_isRefreshing)
+            {
+                _refreshPending = true;
+                return;
+            }
+            _isRefreshing = true;
         }
-        else
+
+        try
         {
-            _ = RefreshAsync();
+            do
+            {
+                lock (_refreshLock)
+                {
+                    _refreshPending = false;
+                }
+
+                await RefreshInternalAsync();
+
+            } while (_refreshPending);
+        }
+        finally
+        {
+            lock (_refreshLock)
+            {
+                _isRefreshing = false;
+            }
         }
     }
 
@@ -1116,9 +1354,18 @@ public sealed class MainViewModel : ViewModelBase
                 RaisePropertyChanged(nameof(ActiveCustomerTitle));
                 RaisePropertyChanged(nameof(ActiveStageLabel));
                 RaisePropertyChanged(nameof(IssueSummaryText));
+                RaisePropertyChanged(nameof(AiOperatorSummaryText));
+                RaisePropertyChanged(nameof(CompletedCasesCount));
+                RaisePropertyChanged(nameof(HasCompletedCases));
+                RaisePropertyChanged(nameof(CompletedCasesBadgeText));
                 RaisePropertyChanged(nameof(ScreenWidthHeightText));
                 RaisePropertyChanged(nameof(PanelStatusText));
+                RaisePropertyChanged(nameof(ReceiverModelText));
+                RaisePropertyChanged(nameof(ReceiverCountText));
                 RaisePropertyChanged(nameof(ReceiverSummaryText));
+                RaisePropertyChanged(nameof(PlayerTypeText));
+                RaisePropertyChanged(nameof(IsProcessorPlayer));
+                RaisePropertyChanged(nameof(ProcessorHdmiStatusText));
                 RaisePropertyChanged(nameof(ConfigStatusText));
                 RaisePropertyChanged(nameof(AnyDeskAddressText));
                 RaisePropertyChanged(nameof(AnyDeskStatusText));

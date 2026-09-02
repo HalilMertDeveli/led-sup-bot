@@ -14,6 +14,8 @@ internal static class ExtractionJsonSchema
             },
             screen = ScreenSchema(),
             receiver = ReceiverSchema(),
+            player = PlayerSchema(),
+            processorHdmi = ProcessorHdmiSchema(),
             config = ConfigSchema(),
             anyDesk = AnyDeskSchema(),
             ambiguities = new
@@ -22,9 +24,11 @@ internal static class ExtractionJsonSchema
                 items = new { type = "string" },
             },
         },
-        required = new[] { "intent", "screen", "receiver", "config", "anyDesk", "ambiguities" },
+        required = new[] { "intent", "screen", "receiver", "player", "processorHdmi", "config", "anyDesk", "ambiguities" },
         additionalProperties = false,
     };
+
+    public static object Root => Document;
 
     private static object ScreenSchema() => new
     {
@@ -48,9 +52,35 @@ internal static class ExtractionJsonSchema
         properties = new
         {
             count = new { type = new[] { "integer", "null" } },
+            model = new { type = new[] { "string", "null" } },
             confidence = new { type = "number" },
         },
-        required = new[] { "count", "confidence" },
+        required = new[] { "count", "model", "confidence" },
+        additionalProperties = false,
+    };
+
+    private static object PlayerSchema() => new
+    {
+        type = new[] { "object", "null" },
+        properties = new
+        {
+            playerType = new { type = new[] { "string", "null" } },
+            confidence = new { type = "number" },
+        },
+        required = new[] { "playerType", "confidence" },
+        additionalProperties = false,
+    };
+
+    private static object ProcessorHdmiSchema() => new
+    {
+        type = new[] { "object", "null" },
+        properties = new
+        {
+            connected = new { type = new[] { "boolean", "null" } },
+            needsClarification = new { type = new[] { "boolean", "null" } },
+            confidence = new { type = "number" },
+        },
+        required = new[] { "connected", "needsClarification", "confidence" },
         additionalProperties = false,
     };
 
