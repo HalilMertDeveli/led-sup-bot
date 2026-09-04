@@ -43,11 +43,19 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
                 m.CreatedAt))
             .ToList();
 
-        var lastBotQuestion = recent
-            .Where(m => m.Role is "bot" or "technician")
-            .Where(m => IsRelevantBotQuestion(m.Content))
+        // The short conversational window must not hide the last workflow request.
+        // Query bot messages independently so technician chatter and later bot
+        // acknowledgements cannot replace the actual bot question.
+        var botMessages = await _db.Messages
+            .AsNoTracking()
+            .Where(m => m.ConversationId == conversation.Id && m.SentBy == MessageSender.Bot)
+            .OrderByDescending(m => m.CreatedAt)
             .Select(m => m.Content)
-            .LastOrDefault();
+            .ToListAsync(cancellationToken);
+
+        var lastBotQuestion = botMessages
+            .Where(content => IsRelevantBotQuestion(content ?? string.Empty))
+            .FirstOrDefault();
 
         var completedCases = await _db.TechnicalSupportCases
             .AsNoTracking()
@@ -61,7 +69,6 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
             : null;
 
         var known = BuildKnownFacts(slots, supportCase, completedCases.Count);
-        var missing = BuildMissingFacts(slots, effectiveStage);
         var askableMissing = BuildAskableMissingFacts(slots, effectiveStage);
         var deferredMissing = BuildDeferredMissingFacts(slots, effectiveStage);
 

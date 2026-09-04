@@ -3,11 +3,14 @@ using LedSupBot.Application.Admin;
 using LedSupBot.Application.Media;
 using LedSupBot.Application.Knowledge;
 using LedSupBot.Application.Takeover;
+using LedSupBot.Application.Training;
 using LedSupBot.Application.WhatsApp;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Application.Workflow.Ai;
 using LedSupBot.Application.Workflow.Context;
+using LedSupBot.Application.Workflow.Diagnostics;
 using LedSupBot.Infrastructure.Configuration;
+using LedSupBot.Infrastructure.Gemini;
 using LedSupBot.Infrastructure.Media;
 using LedSupBot.Infrastructure.Knowledge;
 using LedSupBot.Infrastructure.OpenAi;
@@ -37,6 +40,7 @@ public static class DependencyInjection
         services.Configure<WhatsAppTestModeOptions>(configuration.GetSection(WhatsAppTestModeOptions.SectionName));
         services.Configure<WhatsAppAutomationOptions>(configuration.GetSection(WhatsAppAutomationOptions.SectionName));
         services.Configure<KnowledgeOptions>(configuration.GetSection(KnowledgeOptions.SectionName));
+        services.Configure<TrainingCollectionOptions>(configuration.GetSection(TrainingCollectionOptions.SectionName));
         services.Configure<EmbeddingOptions>(configuration.GetSection(EmbeddingOptions.SectionName));
         services.AddScoped<IPdfKnowledgeExtractor, PdfKnowledgeExtractor>();
         services.AddHttpClient<IDocumentFallbackExtractor, GeminiDocumentFallbackExtractor>((sp, client) =>
@@ -48,6 +52,11 @@ public static class DependencyInjection
         {
             var value = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<GeminiOptions>>().Value;
             client.BaseAddress = new Uri(value.BaseUrl); client.Timeout = TimeSpan.FromSeconds(value.TimeoutSeconds);
+        });
+        services.AddHttpClient<ITechnicalImageAnalyzer, GeminiTechnicalImageAnalyzer>((sp, client) =>
+        {
+            var value = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<GeminiOptions>>().Value;
+            client.BaseAddress = new Uri(value.BaseUrl); client.Timeout = TimeSpan.FromSeconds(Math.Clamp(value.TimeoutSeconds, 5, 60));
         });
 
         services.AddSingleton<IBackgroundWorkQueue, InMemoryBackgroundWorkQueue>();
@@ -81,8 +90,11 @@ public static class DependencyInjection
             services.AddSingleton<IMediaStorage, LocalMediaStorage>();
             services.AddSingleton<IMediaImageValidator, MediaImageValidator>();
             services.AddScoped<IInboundMediaPipeline, InboundMediaPipeline>();
+            services.AddScoped<TechnicalImageAnalysisService>();
+            services.AddScoped<DiagnosticStateService>();
             services.AddScoped<IAdminConversationService, AdminConversationService>();
             services.AddScoped<IAdminTechnicianOutboundService, AdminTechnicianOutboundService>();
+            services.AddScoped<IAiTrainingService, AiTrainingService>();
         }
 
         var connectorEnabled = configuration.GetSection(WhatsAppConnectorOptions.SectionName).GetValue<bool>("Enabled");

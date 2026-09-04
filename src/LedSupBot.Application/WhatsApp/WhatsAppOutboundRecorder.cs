@@ -1,5 +1,6 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Admin;
+using LedSupBot.Application.Training;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -13,6 +14,7 @@ public interface IWhatsAppOutboundRecorder
     Task<Guid> CreatePendingBotTextAsync(
         Guid conversationId,
         string body,
+        AiReplySnapshotDraft? trainingSnapshot = null,
         CancellationToken cancellationToken = default);
 
     Task FinalizeBotTextAsync(
@@ -43,6 +45,7 @@ public sealed class WhatsAppOutboundRecorder : IWhatsAppOutboundRecorder
     public async Task<Guid> CreatePendingBotTextAsync(
         Guid conversationId,
         string body,
+        AiReplySnapshotDraft? trainingSnapshot = null,
         CancellationToken cancellationToken = default)
     {
         var db = RequireDb();
@@ -57,6 +60,44 @@ public sealed class WhatsAppOutboundRecorder : IWhatsAppOutboundRecorder
         };
 
         db.Messages.Add(message);
+        if (trainingSnapshot is not null)
+        {
+            db.AiReplyContextSnapshots.Add(new AiReplyContextSnapshot
+            {
+                ConversationId = conversationId,
+                TechnicalSupportCaseId = trainingSnapshot.TechnicalSupportCaseId,
+                CustomerMessageId = trainingSnapshot.CustomerMessageId,
+                AiResponseMessageId = message.Id,
+                TrainingSnapshotSchemaVersion = trainingSnapshot.TrainingSnapshotSchemaVersion,
+                OriginalCustomerMessage = trainingSnapshot.OriginalCustomerMessage,
+                OriginalAiResponse = trainingSnapshot.OriginalAiResponse,
+                CurrentIntent = trainingSnapshot.CurrentIntent,
+                ResponseAction = trainingSnapshot.ResponseAction,
+                ReplySource = trainingSnapshot.ReplySource,
+                GeminiModel = trainingSnapshot.GeminiModel,
+                PromptPersonaVersion = trainingSnapshot.PromptVersion,
+                KnownFactsSnapshot = trainingSnapshot.KnownFactsSnapshotJson,
+                MissingFactsSnapshot = trainingSnapshot.MissingFactsSnapshotJson,
+                DeferredMissingFactsSnapshot = trainingSnapshot.DeferredMissingFactsSnapshotJson,
+                PendingWorkflowFactSnapshot = trainingSnapshot.PendingWorkflowFactSnapshot,
+                WorkflowStageSnapshot = trainingSnapshot.WorkflowStageSnapshot,
+                DiagnosticContextSnapshot = trainingSnapshot.DiagnosticContextSnapshot,
+                DetectedModelsSnapshot = trainingSnapshot.DetectedModelsSnapshotJson,
+                ImageContextSummary = trainingSnapshot.ImageContextSummary,
+                RagAttempted = trainingSnapshot.RagAttempted,
+                RagUsed = trainingSnapshot.RagUsed,
+                GroundingLevel = trainingSnapshot.GroundingLevel,
+                GroundingConfidence = trainingSnapshot.GroundingConfidence,
+                GroundingConflictDetected = trainingSnapshot.GroundingConflictDetected,
+                KnowledgeSourceReferences = trainingSnapshot.KnowledgeSourceReferencesJson,
+                VisionUsed = trainingSnapshot.VisionUsed,
+                OcrUsed = trainingSnapshot.OcrUsed,
+                BotModeSnapshot = trainingSnapshot.BotModeSnapshot,
+                SourceDecision = trainingSnapshot.SourceDecision,
+                TechnicalClaimRequiresVerification = trainingSnapshot.TechnicalClaimRequiresVerification,
+                RequiresAnonymization = trainingSnapshot.RequiresAnonymization,
+            });
+        }
         await db.SaveChangesAsync(cancellationToken);
 
         var notifier = _services.GetService<IAdminEventNotifier>();
@@ -117,12 +158,12 @@ public sealed class WhatsAppOutboundRecorder : IWhatsAppOutboundRecorder
         {
             if (string.IsNullOrWhiteSpace(externalMessageId))
             {
-                var pendingId = await CreatePendingBotTextAsync(convId, body, cancellationToken);
+                var pendingId = await CreatePendingBotTextAsync(convId, body, null, cancellationToken);
                 await FinalizeBotTextAsync(pendingId, null, DeliveryStatus.Failed, cancellationToken);
                 return;
             }
 
-            var pending = await CreatePendingBotTextAsync(convId, body, cancellationToken);
+            var pending = await CreatePendingBotTextAsync(convId, body, null, cancellationToken);
             await FinalizeBotTextAsync(pending, externalMessageId, DeliveryStatus.Sent, cancellationToken);
             return;
         }

@@ -300,6 +300,159 @@ public sealed class MessageDto
 
     [JsonPropertyName("mediaUrl")]
     public string? MediaUrl { get; set; }
+
+    [JsonPropertyName("teacherFeedbackEligible")]
+    public bool TeacherFeedbackEligible { get; set; }
+
+    [JsonPropertyName("trainingFeedback")]
+    public TrainingFeedbackSummaryDto? TrainingFeedback { get; set; }
+}
+
+public sealed class TrainingFeedbackSummaryDto
+{
+    [JsonPropertyName("feedbackStatus")]
+    public string FeedbackStatus { get; set; } = "";
+
+    [JsonPropertyName("preferredTechnicianResponse")]
+    public string? PreferredTechnicianResponse { get; set; }
+
+    [JsonPropertyName("reasonTags")]
+    public List<string> ReasonTags { get; set; } = [];
+
+    [JsonPropertyName("trainingEligibility")]
+    public string TrainingEligibility { get; set; } = "";
+
+    [JsonPropertyName("eligibleForSft")]
+    public bool EligibleForSft { get; set; }
+
+    [JsonPropertyName("eligibleForPreference")]
+    public bool EligibleForPreference { get; set; }
+
+    [JsonPropertyName("statusLabel")]
+    public string? StatusLabel { get; set; }
+}
+
+public sealed class SaveTrainingFeedbackRequest
+{
+    [JsonPropertyName("feedbackStatus")]
+    public string FeedbackStatus { get; set; } = "";
+
+    [JsonPropertyName("preferredTechnicianResponse")]
+    public string? PreferredTechnicianResponse { get; set; }
+
+    [JsonPropertyName("reasonTags")]
+    public List<string> ReasonTags { get; set; } = [];
+}
+
+public sealed class TrainingExamplesResponse
+{
+    [JsonPropertyName("counts")]
+    public TrainingExampleCountsDto Counts { get; set; } = new();
+
+    [JsonPropertyName("items")]
+    public List<TrainingExampleDto> Items { get; set; } = [];
+}
+
+public sealed class TrainingExampleCountsDto
+{
+    [JsonPropertyName("total")]
+    public int Total { get; set; }
+
+    [JsonPropertyName("approved")]
+    public int Approved { get; set; }
+
+    [JsonPropertyName("edited")]
+    public int Edited { get; set; }
+
+    [JsonPropertyName("rejected")]
+    public int Rejected { get; set; }
+
+    [JsonPropertyName("needsReview")]
+    public int NeedsReview { get; set; }
+
+    [JsonPropertyName("eligibleForSft")]
+    public int EligibleForSft { get; set; }
+
+    [JsonPropertyName("eligibleForPreference")]
+    public int EligibleForPreference { get; set; }
+
+    [JsonPropertyName("tuningReady")]
+    public int TuningReady { get; set; }
+
+    [JsonPropertyName("firstReviewThreshold")]
+    public int FirstReviewThreshold { get; set; } = 200;
+
+    [JsonPropertyName("firstTuningMin")]
+    public int FirstTuningMin { get; set; } = 300;
+
+    [JsonPropertyName("firstTuningTarget")]
+    public int FirstTuningTarget { get; set; } = 500;
+
+    [JsonPropertyName("collectionStatus")]
+    public string CollectionStatus { get; set; } = "COLLECTING";
+
+    public string ReviewProgressText => $"{TuningReady} / {FirstReviewThreshold}";
+    public string TuningRangeText => $"{FirstTuningMin}–{FirstTuningTarget}";
+}
+
+public sealed class TrainingExampleDto
+{
+    [JsonPropertyName("id")]
+    public Guid Id { get; set; }
+
+    [JsonPropertyName("aiResponseMessageId")]
+    public Guid AiResponseMessageId { get; set; }
+
+    [JsonPropertyName("createdAt")]
+    public DateTimeOffset CreatedAt { get; set; }
+
+    [JsonPropertyName("feedbackStatus")]
+    public string FeedbackStatus { get; set; } = "";
+
+    [JsonPropertyName("trainingEligibility")]
+    public string TrainingEligibility { get; set; } = "";
+
+    [JsonPropertyName("currentIntent")]
+    public string? CurrentIntent { get; set; }
+
+    [JsonPropertyName("sourceDecision")]
+    public string? SourceDecision { get; set; }
+
+    [JsonPropertyName("originalCustomerMessage")]
+    public string? OriginalCustomerMessage { get; set; }
+
+    [JsonPropertyName("originalAiResponse")]
+    public string OriginalAiResponse { get; set; } = "";
+
+    [JsonPropertyName("preferredTechnicianResponse")]
+    public string? PreferredTechnicianResponse { get; set; }
+
+    [JsonPropertyName("reasonTags")]
+    public List<string> ReasonTags { get; set; } = [];
+
+    [JsonPropertyName("ragUsed")]
+    public bool RagUsed { get; set; }
+
+    [JsonPropertyName("groundingLevel")]
+    public string? GroundingLevel { get; set; }
+
+    [JsonPropertyName("diagnosticContextSummary")]
+    public string? DiagnosticContextSummary { get; set; }
+
+    [JsonPropertyName("geminiModel")]
+    public string? GeminiModel { get; set; }
+
+    [JsonIgnore]
+    public string DisplayTitle => $"{FeedbackStatus} · {CurrentIntent ?? "Intent yok"}";
+
+    [JsonIgnore]
+    public string DisplaySubtitle => $"{CreatedAt.ToLocalTime():dd.MM.yyyy HH:mm} · {SourceDecision ?? "Kaynak yok"}";
+
+    [JsonIgnore]
+    public string ReasonTagsText => ReasonTags.Count == 0 ? "—" : string.Join(", ", ReasonTags);
+
+    [JsonIgnore]
+    public string RagUsedText => RagUsed ? "Evet" : "Hayır";
 }
 
 public sealed class SendMessageRequest

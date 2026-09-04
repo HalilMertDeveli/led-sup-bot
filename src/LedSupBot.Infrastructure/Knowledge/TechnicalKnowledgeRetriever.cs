@@ -19,6 +19,8 @@ public sealed class TechnicalKnowledgeRetriever(ApplicationDbContext db, IEmbedd
         if(query.ProductFamily is not null) docs=docs.Where(x=>x.ProductFamily==query.ProductFamily);
         var rows=await db.KnowledgeChunks.Join(docs,c=>c.DocumentId,d=>d.Id,(c,d)=>new{c,d,Distance=c.Embedding.CosineDistance(vector)})
             .OrderBy(x=>x.Distance).Take(Math.Clamp(query.TopK,1,20)).ToListAsync(cancellationToken);
-        return rows.Select(x=>new TechnicalKnowledgeResult(x.c.Content,1d-x.Distance,x.d.OriginalFileName,x.d.Model,x.c.PageStart,x.c.PageEnd,x.c.SectionTitle)).ToList();
+        return rows.Select(x=>new TechnicalKnowledgeResult(
+            x.c.Content,1d-x.Distance,x.d.OriginalFileName,x.d.Model,x.c.PageStart,x.c.PageEnd,x.c.SectionTitle,
+            x.d.DocumentType,x.d.DocumentVersion)).ToList();
     }
 }

@@ -40,7 +40,11 @@ public sealed class HybridResponseComposer
 
         if (input.ResponseAction == ConversationResponseAction.AnswerAndHoldWorkflow)
         {
-            outbound.Add(input.AiPlan?.HasUsableReply == true
+            outbound.Add(input.Context.KnowledgeGrounding?.ConflictDetected == true
+                ? "Bu model için dokümanlarda farklı bilgi görüyorum. Cihazın tam model ve versiyonunu netleştirelim; etiketini paylaşabilir misiniz?"
+                : input.Context.KnowledgeGrounding?.ExactClaimNeedsModel == true
+                ? "Net teknik değer söylemek için cihazın tam model ve versiyon etiketini görmem lazım. Etiketini veya fotoğrafını atabilir misiniz?"
+                : input.AiPlan?.HasUsableReply == true
                 ? input.AiPlan.Reply!
                 : "Bu kısmı netleştirelim. Sorun hangi noktadan sonra başlıyor?");
             return new HybridResponseComposeResult(outbound, null, false);
@@ -48,7 +52,7 @@ public sealed class HybridResponseComposer
 
         if (input.ResponseAction == ConversationResponseAction.ClarifyCurrentStep)
         {
-            outbound.Add(BuildCurrentStepExplanation(input.PendingFact));
+            outbound.Add(ContextualClarificationResolver.Resolve(input));
             if (input.PendingFact == PendingWorkflowFact.ConfigConnection && ShouldAttachConfigImage(input, ""))
             {
                 configExampleMarkedSent = TryAppendConfigExampleStep(input, outbound, ref configImagePath);
@@ -94,7 +98,12 @@ public sealed class HybridResponseComposer
 
         if (input.ResponseAction == ConversationResponseAction.AnswerOnly)
         {
-            outbound.Add(input.Context.CompletedCasesCount > 0
+            var inboundText = input.Inbound.TextContent ?? string.Empty;
+            outbound.Add(ConversationSemantics.IsWaitAcknowledgement(inboundText)
+                ? "Tamam, bekliyorum."
+                : ConversationSemantics.IsPhotoOffer(inboundText)
+                    ? "Evet, fotoğrafları atın."
+                : input.Context.CompletedCasesCount > 0
                 ? "Tabii, sorunuzu yazabilirsiniz."
                 : "Tamam.");
             return new HybridResponseComposeResult(outbound, null, false);
@@ -134,17 +143,38 @@ public sealed class HybridResponseComposer
         return new HybridResponseComposeResult(outbound, configImagePath, configExampleMarkedSent);
     }
 
-    private static string BuildCurrentStepExplanation(PendingWorkflowFact fact) => fact switch
-    {
-        PendingWorkflowFact.ReceiverModel => "Panelin arkasında data kablolarının bağlı olduğu receiver karttan bahsediyorum. Kartın üzerinde E120, E80 veya 5A75E gibi bir model yazabilir.",
-        PendingWorkflowFact.ConfigConnection => "Kutudan çıkan kare uçlu USB-B yazıcı kablosunu cihaza, standart USB ucunu bilgisayara bağlamanız gerekiyor.",
-        PendingWorkflowFact.AnyDesk => "AnyDesk, bilgisayara uzaktan bağlanabilmemiz için gereken program. Açınca görünen adresi paylaşabilirsiniz.",
-        PendingWorkflowFact.ProcessorHdmi => "Bilgisayardan çıkan HDMI kablosunu processor üzerindeki HDMI IN girişine takmanız gerekiyor.",
-        _ => "Sorduğum adımı biraz daha açık anlatayım; hangi kısmın anlaşılmadığını söylerseniz oradan devam edelim.",
-    };
-
     private static string BuildRecoveryReply(HybridResponseComposeInput input)
     {
+        var inbound = input.Inbound.TextContent ?? string.Empty;
+        var normalized = ConversationSemantics.Normalize(inbound);
+        if (normalized.Contains("ne alaka", StringComparison.Ordinal) ||
+            normalized.Contains("onu sormad", StringComparison.Ordinal) ||
+            normalized.Contains("onu kastetmed", StringComparison.Ordinal) ||
+            normalized.Contains("oyle demed", StringComparison.Ordinal))
+        {
+            return "Konuyu tam anlamak için sordum. Siz neyi soruyordunuz?";
+        }
+
+        if (normalized.Contains("yanlis anlad", StringComparison.Ordinal))
+        {
+            return "Tam olarak konuyu özetler misiniz?";
+        }
+
+        if (normalized.Contains("baska bir sey", StringComparison.Ordinal))
+        {
+            return "Tamam, önceki konuya dönelim. Tam olarak neyi soruyordunuz?";
+        }
+
+        if ((normalized.Contains("niye tekrar", StringComparison.Ordinal) ||
+             normalized.Contains("ayni seyi", StringComparison.Ordinal) ||
+             normalized.Contains("kac kere", StringComparison.Ordinal) ||
+             normalized.Contains("kac defa", StringComparison.Ordinal) ||
+             normalized.Contains("beni anlamiyorsun", StringComparison.Ordinal)) &&
+            !input.Slots.IsFactKnown(input.PendingFact))
+        {
+            return "Tam olarak netleşmediği için tekrar sordum.";
+        }
+
         var prefix = input.PendingFact == PendingWorkflowFact.ScreenDimensions && input.Slots.IsScreenComplete == false
             ? "Ekran ölçüsü kayıtlarımızda tamamlanmış görünmüyor. Yanlış yönlendirmeyeyim; "
             : input.Slots.IsScreenComplete

@@ -12,5 +12,14 @@ public interface IEmbeddingService
     Task<IReadOnlyList<float[]>> EmbedAsync(IReadOnlyList<string> texts, CancellationToken cancellationToken);
 }
 public sealed record TechnicalKnowledgeQuery(string Text, string? Manufacturer = null, string? ProductType = null, string? ProductFamily = null, string? Model = null, int TopK = 5);
-public sealed record TechnicalKnowledgeResult(string Content, double Score, string Document, string Model, int PageStart, int PageEnd, string SectionTitle);
+public sealed record TechnicalKnowledgeResult(
+    string Content,
+    double Score,
+    string Document,
+    string Model,
+    int PageStart,
+    int PageEnd,
+    string SectionTitle,
+    string DocumentType = "",
+    string DocumentVersion = "");
 public interface ITechnicalKnowledgeRetriever { Task<IReadOnlyList<TechnicalKnowledgeResult>> SearchAsync(TechnicalKnowledgeQuery query, CancellationToken cancellationToken); }

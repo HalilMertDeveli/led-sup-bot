@@ -1,4 +1,5 @@
 using LedSupBot.Domain.Enums;
+using LedSupBot.Application.Workflow.Knowledge;
 
 namespace LedSupBot.Application.Workflow.Context;
 
@@ -98,5 +99,9 @@ public sealed class ConversationContext
 
     public string? AiOperatorSummary { get; init; }
 
-    public string? TechnicalKnowledgeContext { get; init; }
+    public string? TechnicalKnowledgeContext { get; set; }
+
+    public KnowledgeGroundingResult? KnowledgeGrounding { get; set; }
+
+    public string? DiagnosticContext { get; set; }
 }

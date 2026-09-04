@@ -55,6 +55,17 @@ public sealed class MainViewModel : ViewModelBase
     // Technical Panel
     private bool _isTechnicalPanelCollapsed;
 
+    // Teacher Mode & Training Data
+    private bool _isTrainingDataViewVisible;
+    private bool _isLoadingTrainingData;
+    private string _trainingStatusFilter = "all";
+    private string _trainingIntentFilter = "";
+    private string _trainingSourceFilter = "";
+    private DateTime? _trainingDateFrom;
+    private DateTime? _trainingDateTo;
+    private TrainingExampleCountsDto _trainingCounts = new();
+    private TrainingExampleDto? _selectedTrainingExample;
+
     public MainViewModel(
         LedSupBotApiClient api,
         AdminSignalRService signalR,
@@ -72,6 +83,11 @@ public sealed class MainViewModel : ViewModelBase
         ActiveMessages = new ObservableCollection<MessageItemViewModel>();
         SupportSteps = new ObservableCollection<SupportStepViewModel>();
         PanelPhotos = new ObservableCollection<PhotoDetailDto>();
+        TrainingExamples = new ObservableCollection<TrainingExampleDto>();
+
+        TrainingStatusOptions = ["all", "Approved", "Edited", "Rejected", "Excluded"];
+        TrainingIntentOptions = ["", "Acknowledgement", "CasualConversation", "Correction", "GeneralKnowledge", "LedTechnicalQuestion", "LedTroubleshooting", "NewCase", "QuestionAboutCurrentStep", "FlowRecovery", "ResumeWorkflow", "WorkflowInformation", "Unclear"];
+        TrainingSourceOptions = ["", "GeneralKnowledge", "BackendState", "DiagnosticState", "Rag", "Vision", "VisionAndRag", "BackendAndRag", "DiagnosticAndRag", "Deterministic", "Mixed"];
 
         InitializeSupportSteps();
 
@@ -84,6 +100,23 @@ public sealed class MainViewModel : ViewModelBase
         ToggleTechnicalPanelCommand = new RelayCommand(() => IsTechnicalPanelCollapsed = !IsTechnicalPanelCollapsed);
         CopyAnyDeskCommand = new RelayCommand(CopyAnyDeskToClipboard, () => !string.IsNullOrWhiteSpace(AnyDeskAddressText) && AnyDeskAddressText != "—");
         SetFilterCommand = new RelayCommand<string>(mode => FilterMode = mode ?? "all");
+        ApproveTrainingFeedbackCommand = new AsyncRelayCommand<MessageItemViewModel>(
+            message => SaveTrainingFeedbackAsync(message, "Approved"),
+            CanProvideTrainingFeedback);
+        OpenEditedTrainingFeedbackCommand = new RelayCommand<MessageItemViewModel>(
+            message => message?.OpenFeedbackEditor("Edited"),
+            message => message?.ShowTeacherControls == true && !message.IsSavingFeedback);
+        OpenRejectedTrainingFeedbackCommand = new RelayCommand<MessageItemViewModel>(
+            message => message?.OpenFeedbackEditor("Rejected"),
+            message => message?.ShowTeacherControls == true && !message.IsSavingFeedback);
+        SaveTrainingFeedbackCommand = new AsyncRelayCommand<MessageItemViewModel>(
+            message => SaveTrainingFeedbackAsync(message, message?.DraftFeedbackStatus ?? ""),
+            CanSaveTrainingFeedback);
+        CancelTrainingFeedbackCommand = new RelayCommand<MessageItemViewModel>(
+            message => message?.CancelFeedbackEditor(),
+            message => message?.IsFeedbackEditorOpen == true && !message.IsSavingFeedback);
+        ToggleTrainingDataViewCommand = new RelayCommand(ToggleTrainingDataView);
+        RefreshTrainingDataCommand = new AsyncRelayCommand(LoadTrainingExamplesAsync, () => !IsLoadingTrainingData);
 
         _signalR.ConnectionStateChanged += (state, label) =>
         {
@@ -145,6 +178,11 @@ public sealed class MainViewModel : ViewModelBase
     public ObservableCollection<MessageItemViewModel> ActiveMessages { get; }
     public ObservableCollection<SupportStepViewModel> SupportSteps { get; }
     public ObservableCollection<PhotoDetailDto> PanelPhotos { get; }
+    public ObservableCollection<TrainingExampleDto> TrainingExamples { get; }
+
+    public IReadOnlyList<string> TrainingStatusOptions { get; }
+    public IReadOnlyList<string> TrainingIntentOptions { get; }
+    public IReadOnlyList<string> TrainingSourceOptions { get; }
 
     #endregion
 
@@ -159,6 +197,13 @@ public sealed class MainViewModel : ViewModelBase
     public ICommand ToggleTechnicalPanelCommand { get; }
     public ICommand CopyAnyDeskCommand { get; }
     public ICommand SetFilterCommand { get; }
+    public ICommand ApproveTrainingFeedbackCommand { get; }
+    public ICommand OpenEditedTrainingFeedbackCommand { get; }
+    public ICommand OpenRejectedTrainingFeedbackCommand { get; }
+    public ICommand SaveTrainingFeedbackCommand { get; }
+    public ICommand CancelTrainingFeedbackCommand { get; }
+    public ICommand ToggleTrainingDataViewCommand { get; }
+    public ICommand RefreshTrainingDataCommand { get; }
 
     #endregion
 
@@ -519,6 +564,82 @@ public sealed class MainViewModel : ViewModelBase
 
     #endregion
 
+    #region Teacher Mode & Training Data Properties
+
+    public bool IsTrainingDataViewVisible
+    {
+        get => _isTrainingDataViewVisible;
+        private set
+        {
+            if (SetProperty(ref _isTrainingDataViewVisible, value))
+            {
+                RaisePropertyChanged(nameof(TrainingDataToggleText));
+            }
+        }
+    }
+
+    public string TrainingDataToggleText => IsTrainingDataViewVisible
+        ? "💬 Konuşmalara Dön"
+        : "🧠 Eğitim Verileri";
+
+    public bool IsLoadingTrainingData
+    {
+        get => _isLoadingTrainingData;
+        private set
+        {
+            if (SetProperty(ref _isLoadingTrainingData, value))
+            {
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    public string TrainingStatusFilter
+    {
+        get => _trainingStatusFilter;
+        set => SetProperty(ref _trainingStatusFilter, value ?? "all");
+    }
+
+    public string TrainingIntentFilter
+    {
+        get => _trainingIntentFilter;
+        set => SetProperty(ref _trainingIntentFilter, value ?? "");
+    }
+
+    public string TrainingSourceFilter
+    {
+        get => _trainingSourceFilter;
+        set => SetProperty(ref _trainingSourceFilter, value ?? "");
+    }
+
+    public DateTime? TrainingDateFrom
+    {
+        get => _trainingDateFrom;
+        set => SetProperty(ref _trainingDateFrom, value);
+    }
+
+    public DateTime? TrainingDateTo
+    {
+        get => _trainingDateTo;
+        set => SetProperty(ref _trainingDateTo, value);
+    }
+
+    public TrainingExampleCountsDto TrainingCounts
+    {
+        get => _trainingCounts;
+        private set => SetProperty(ref _trainingCounts, value);
+    }
+
+    public TrainingExampleDto? SelectedTrainingExample
+    {
+        get => _selectedTrainingExample;
+        set => SetProperty(ref _selectedTrainingExample, value);
+    }
+
+    public bool HasTrainingExamples => TrainingExamples.Count > 0;
+
+    #endregion
+
     #region Technical Support Panel Properties
 
     public bool IsTechnicalPanelCollapsed
@@ -834,6 +955,11 @@ public sealed class MainViewModel : ViewModelBase
                     SelectedConversation = matchingItem;
                 }
             }
+
+            if (IsTrainingDataViewVisible)
+            {
+                await LoadTrainingExamplesAsync();
+            }
         }
         catch (Exception ex)
         {
@@ -964,6 +1090,8 @@ public sealed class MainViewModel : ViewModelBase
                             DeliveryStatus = msg.DeliveryStatus,
                             MessageType = msg.MessageType,
                             MediaUrl = msg.MediaUrl,
+                            TeacherFeedbackEligible = msg.TeacherFeedbackEligible,
+                            TrainingFeedback = msg.TrainingFeedback,
                         });
                     }
                 }
@@ -1261,6 +1389,143 @@ public sealed class MainViewModel : ViewModelBase
 
     #endregion
 
+    #region Teacher Mode & Training Data
+
+    private static bool CanProvideTrainingFeedback(MessageItemViewModel? message) =>
+        message is { ShowTeacherControls: true, IsSavingFeedback: false };
+
+    private static bool CanSaveTrainingFeedback(MessageItemViewModel? message)
+    {
+        if (message is not { ShowTeacherControls: true, IsSavingFeedback: false, IsFeedbackEditorOpen: true })
+        {
+            return false;
+        }
+
+        return !string.Equals(message.DraftFeedbackStatus, "Edited", StringComparison.OrdinalIgnoreCase) ||
+               !string.IsNullOrWhiteSpace(message.DraftPreferredTechnicianResponse);
+    }
+
+    private async Task SaveTrainingFeedbackAsync(MessageItemViewModel? message, string feedbackStatus)
+    {
+        if (message is null || !message.ShowTeacherControls || message.Id == Guid.Empty)
+        {
+            return;
+        }
+
+        if (feedbackStatus is not ("Approved" or "Edited" or "Rejected"))
+        {
+            message.FeedbackValidationMessage = "Geçerli bir geri bildirim türü seçin.";
+            return;
+        }
+
+        var preferredResponse = string.Equals(feedbackStatus, "Approved", StringComparison.Ordinal)
+            ? null
+            : NullIfWhiteSpace(message.DraftPreferredTechnicianResponse);
+        if (string.Equals(feedbackStatus, "Edited", StringComparison.Ordinal) && preferredResponse is null)
+        {
+            message.FeedbackValidationMessage = "Düzeltilmiş ideal yanıt boş bırakılamaz.";
+            return;
+        }
+
+        var reasonTags = string.Equals(feedbackStatus, "Approved", StringComparison.Ordinal)
+            ? []
+            : message.FeedbackReasonOptions.Where(x => x.IsSelected).Select(x => x.Value).ToList();
+
+        message.IsSavingFeedback = true;
+        message.FeedbackValidationMessage = null;
+        ErrorMessage = null;
+        try
+        {
+            await _api.SaveTrainingFeedbackAsync(
+                message.Id,
+                new SaveTrainingFeedbackRequest
+                {
+                    FeedbackStatus = feedbackStatus,
+                    PreferredTechnicianResponse = preferredResponse,
+                    ReasonTags = reasonTags,
+                });
+
+            message.ApplySavedFeedback(feedbackStatus, preferredResponse, reasonTags);
+
+            if (IsTrainingDataViewVisible)
+            {
+                await LoadTrainingExamplesAsync();
+            }
+
+            // The existing SignalR path will also refresh other operator windows.
+            // This local refresh keeps the clicked row in sync even if the hub is reconnecting.
+            ScheduleCoalescedRefresh(TimeSpan.Zero);
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("SaveTrainingFeedback", ex);
+            message.FeedbackValidationMessage = MapApiError(ex);
+            ErrorMessage = MapApiError(ex);
+        }
+        finally
+        {
+            message.IsSavingFeedback = false;
+        }
+    }
+
+    private void ToggleTrainingDataView()
+    {
+        IsTrainingDataViewVisible = !IsTrainingDataViewVisible;
+        if (IsTrainingDataViewVisible)
+        {
+            _ = LoadTrainingExamplesAsync();
+        }
+    }
+
+    private async Task LoadTrainingExamplesAsync()
+    {
+        if (!IsAuthenticated || IsLoadingTrainingData)
+        {
+            return;
+        }
+
+        IsLoadingTrainingData = true;
+        try
+        {
+            var response = await _api.GetTrainingExamplesAsync(
+                TrainingStatusFilter,
+                TrainingIntentFilter,
+                TrainingSourceFilter,
+                TrainingDateFrom,
+                TrainingDateTo);
+
+            RunOnUi(() =>
+            {
+                var selectedId = SelectedTrainingExample?.Id;
+                TrainingCounts = response.Counts ?? new TrainingExampleCountsDto();
+                TrainingExamples.Clear();
+                foreach (var example in response.Items ?? [])
+                {
+                    TrainingExamples.Add(example);
+                }
+
+                SelectedTrainingExample = selectedId is { } id
+                    ? TrainingExamples.FirstOrDefault(x => x.Id == id) ?? TrainingExamples.FirstOrDefault()
+                    : TrainingExamples.FirstOrDefault();
+                RaisePropertyChanged(nameof(HasTrainingExamples));
+            });
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("LoadTrainingExamples", ex);
+            ErrorMessage = MapApiError(ex);
+        }
+        finally
+        {
+            IsLoadingTrainingData = false;
+        }
+    }
+
+    private static string? NullIfWhiteSpace(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    #endregion
+
     #region Realtime Events & Coalescing
 
     public void ScheduleCoalescedRefresh(TimeSpan delay)
@@ -1526,6 +1791,39 @@ public sealed class ConversationItemViewModel : ViewModelBase
 
 public sealed class MessageItemViewModel : ViewModelBase
 {
+    private static readonly string[] FeedbackReasonValues =
+    [
+        "Tone",
+        "TooLong",
+        "TooShort",
+        "RepeatedQuestion",
+        "WrongWorkflow",
+        "WrongContext",
+        "WrongTechnicalInformation",
+        "WrongSource",
+        "Hallucination",
+        "ShouldUseRag",
+        "ShouldNotUseRag",
+        "WrongDiagnosticStep",
+        "DidNotUnderstandCustomer",
+        "TooRobotic",
+        "Other",
+    ];
+
+    private bool _teacherFeedbackEligible;
+    private TrainingFeedbackSummaryDto? _trainingFeedback;
+    private bool _isFeedbackEditorOpen;
+    private bool _isSavingFeedback;
+    private string _draftFeedbackStatus = "";
+    private string _draftPreferredTechnicianResponse = "";
+    private string? _feedbackValidationMessage;
+
+    public MessageItemViewModel()
+    {
+        FeedbackReasonOptions = new ObservableCollection<FeedbackReasonOptionViewModel>(
+            FeedbackReasonValues.Select(value => new FeedbackReasonOptionViewModel(value)));
+    }
+
     public Guid Id { get; set; }
     public string Direction { get; set; } = "";
     public string SentBy { get; set; } = "";
@@ -1536,6 +1834,119 @@ public sealed class MessageItemViewModel : ViewModelBase
     public string DeliveryStatus { get; set; } = "";
     public string MessageType { get; set; } = "";
     public string? MediaUrl { get; set; }
+
+    public bool TeacherFeedbackEligible
+    {
+        get => _teacherFeedbackEligible;
+        set
+        {
+            if (SetProperty(ref _teacherFeedbackEligible, value))
+            {
+                RaisePropertyChanged(nameof(ShowTeacherControls));
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    public bool ShowTeacherControls => TeacherFeedbackEligible;
+
+    public TrainingFeedbackSummaryDto? TrainingFeedback
+    {
+        get => _trainingFeedback;
+        set
+        {
+            if (SetProperty(ref _trainingFeedback, value))
+            {
+                SynchronizeFeedbackDisplay();
+            }
+        }
+    }
+
+    public bool HasTrainingFeedback => TrainingFeedback is not null &&
+                                       !string.IsNullOrWhiteSpace(TrainingFeedback.FeedbackStatus);
+
+    public string TrainingFeedbackStatusLabel => TrainingFeedback?.StatusLabel
+        ?? TrainingFeedback?.FeedbackStatus switch
+        {
+            "Approved" => "✓ Eğitim verisine eklendi",
+            "Edited" => "✎ Düzeltilmiş",
+            "Rejected" => "✕ Eğitim için reddedildi",
+            _ => "",
+        };
+
+    public string TrainingEligibilityLabel => string.IsNullOrWhiteSpace(TrainingFeedback?.TrainingEligibility)
+        ? ""
+        : TrainingFeedback.TrainingEligibility;
+
+    public ObservableCollection<FeedbackReasonOptionViewModel> FeedbackReasonOptions { get; }
+
+    public bool IsFeedbackEditorOpen
+    {
+        get => _isFeedbackEditorOpen;
+        private set
+        {
+            if (SetProperty(ref _isFeedbackEditorOpen, value))
+            {
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    public bool IsSavingFeedback
+    {
+        get => _isSavingFeedback;
+        set
+        {
+            if (SetProperty(ref _isSavingFeedback, value))
+            {
+                RaisePropertyChanged(nameof(FeedbackSaveButtonText));
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    public string DraftFeedbackStatus
+    {
+        get => _draftFeedbackStatus;
+        private set
+        {
+            if (SetProperty(ref _draftFeedbackStatus, value))
+            {
+                RaisePropertyChanged(nameof(FeedbackEditorTitle));
+                RaisePropertyChanged(nameof(FeedbackEditorHint));
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    public string DraftPreferredTechnicianResponse
+    {
+        get => _draftPreferredTechnicianResponse;
+        set
+        {
+            if (SetProperty(ref _draftPreferredTechnicianResponse, value))
+            {
+                FeedbackValidationMessage = null;
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    public string FeedbackEditorTitle => DraftFeedbackStatus == "Rejected"
+        ? "Yanlış olarak işaretle"
+        : "İdeal yanıtı düzelt";
+
+    public string FeedbackEditorHint => DraftFeedbackStatus == "Rejected"
+        ? "Doğru yanıt isteğe bağlıdır; eklerseniz gelecekte tercih verisi olabilir."
+        : "AI yanıtı başlangıç olarak eklendi. Tercih ettiğiniz yanıtı düzenleyin.";
+
+    public string FeedbackSaveButtonText => IsSavingFeedback ? "KAYDEDİLİYOR…" : "KAYDET";
+
+    public string? FeedbackValidationMessage
+    {
+        get => _feedbackValidationMessage;
+        set => SetProperty(ref _feedbackValidationMessage, value);
+    }
 
     public bool HasMedia => !string.IsNullOrWhiteSpace(MediaUrl) || string.Equals(MessageType, "Image", StringComparison.OrdinalIgnoreCase);
 
@@ -1550,6 +1961,72 @@ public sealed class MessageItemViewModel : ViewModelBase
         "failed" or "4" => "⚠",
         _ => "",
     };
+
+    public void OpenFeedbackEditor(string status)
+    {
+        if (!ShowTeacherControls || status is not ("Edited" or "Rejected"))
+        {
+            return;
+        }
+
+        DraftFeedbackStatus = status;
+        DraftPreferredTechnicianResponse = status == "Edited"
+            ? TrainingFeedback?.PreferredTechnicianResponse ?? Content
+            : TrainingFeedback?.PreferredTechnicianResponse ?? "";
+        var selectedTags = TrainingFeedback?.ReasonTags ?? [];
+        foreach (var option in FeedbackReasonOptions)
+        {
+            option.IsSelected = selectedTags.Contains(option.Value, StringComparer.OrdinalIgnoreCase);
+        }
+
+        FeedbackValidationMessage = null;
+        IsFeedbackEditorOpen = true;
+    }
+
+    public void CancelFeedbackEditor()
+    {
+        IsFeedbackEditorOpen = false;
+        FeedbackValidationMessage = null;
+    }
+
+    public void ApplySavedFeedback(string status, string? preferredResponse, IReadOnlyList<string> reasonTags)
+    {
+        TrainingFeedback = new TrainingFeedbackSummaryDto
+        {
+            FeedbackStatus = status,
+            PreferredTechnicianResponse = preferredResponse,
+            ReasonTags = reasonTags.ToList(),
+            // Eligibility remains backend-owned; the scheduled refresh replaces these
+            // temporary display values with the persisted authoritative result.
+            TrainingEligibility = "",
+            EligibleForSft = false,
+            EligibleForPreference = false,
+        };
+        IsFeedbackEditorOpen = false;
+        FeedbackValidationMessage = null;
+    }
+
+    private void SynchronizeFeedbackDisplay()
+    {
+        RaisePropertyChanged(nameof(HasTrainingFeedback));
+        RaisePropertyChanged(nameof(TrainingFeedbackStatusLabel));
+        RaisePropertyChanged(nameof(TrainingEligibilityLabel));
+    }
+}
+
+public sealed class FeedbackReasonOptionViewModel : ViewModelBase
+{
+    private bool _isSelected;
+
+    public FeedbackReasonOptionViewModel(string value) => Value = value;
+
+    public string Value { get; }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => SetProperty(ref _isSelected, value);
+    }
 }
 
 public sealed class SupportStepViewModel : ViewModelBase
@@ -1675,6 +2152,52 @@ internal sealed class AsyncRelayCommand : ICommand
         try
         {
             await _execute();
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("Command", ex);
+        }
+        finally
+        {
+            _running = false;
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
+}
+
+internal sealed class AsyncRelayCommand<T> : ICommand
+{
+    private readonly Func<T?, Task> _execute;
+    private readonly Predicate<T?>? _canExecute;
+    private bool _running;
+
+    public AsyncRelayCommand(Func<T?, Task> execute, Predicate<T?>? canExecute = null)
+    {
+        _execute = execute;
+        _canExecute = canExecute;
+    }
+
+    public event EventHandler? CanExecuteChanged
+    {
+        add => CommandManager.RequerySuggested += value;
+        remove => CommandManager.RequerySuggested -= value;
+    }
+
+    public bool CanExecute(object? parameter) =>
+        !_running && (_canExecute?.Invoke((T?)parameter) ?? true);
+
+    public async void Execute(object? parameter)
+    {
+        if (!CanExecute(parameter))
+        {
+            return;
+        }
+
+        _running = true;
+        CommandManager.InvalidateRequerySuggested();
+        try
+        {
+            await _execute((T?)parameter);
         }
         catch (Exception ex)
         {

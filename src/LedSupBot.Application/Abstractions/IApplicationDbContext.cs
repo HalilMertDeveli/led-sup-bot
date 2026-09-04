@@ -30,5 +30,11 @@ public interface IApplicationDbContext
 
     DbSet<BotModeChangeAudit> BotModeChangeAudits { get; }
 
+    DbSet<KnowledgeDocument> KnowledgeDocuments { get; }
+
+    DbSet<AiReplyContextSnapshot> AiReplyContextSnapshots { get; }
+
+    DbSet<AiTrainingExample> AiTrainingExamples { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

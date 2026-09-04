@@ -1,6 +1,7 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Admin;
 using LedSupBot.Application.Takeover;
+using LedSupBot.Application.Training;
 using LedSupBot.Application.WhatsApp;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Domain.Enums;
@@ -32,6 +33,9 @@ public static class AdminEndpointExtensions
         group.MapGet("/compact/focus", CompactFocusAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapPost("/conversations/{conversationId:guid}/dismiss-anydesk-alert", DismissAnyDeskAlertAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapGet("/media/{*storageKey}", ServeMediaAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPut("/training-feedback/{messageId:guid}", UpsertTrainingFeedbackAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapGet("/training-examples", ListTrainingExamplesAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapGet("/training-examples/{id:guid}", GetTrainingExampleAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
 
         return group;
     }
@@ -249,6 +253,54 @@ public static class AdminEndpointExtensions
         var stream = await storage.OpenReadAsync(storageKey, cancellationToken);
         var contentType = GuessContentType(storageKey);
         return Results.File(stream, contentType);
+    }
+
+    private static async Task<IResult> UpsertTrainingFeedbackAsync(
+        Guid messageId,
+        [FromBody] AiTrainingFeedbackRequest request,
+        [FromServices] IAiTrainingService training,
+        CancellationToken cancellationToken)
+    {
+        var result = await training.UpsertFeedbackAsync(messageId, request, cancellationToken);
+        if (result.Success)
+        {
+            return Results.Ok(result.Example);
+        }
+
+        return result.Error == "message_not_training_eligible"
+            ? Results.Conflict(new { error = result.Error })
+            : Results.BadRequest(new { error = result.Error });
+    }
+
+    private static async Task<IResult> ListTrainingExamplesAsync(
+        [FromQuery] AiTrainingFeedbackStatus? status,
+        [FromQuery] string? intent,
+        [FromQuery] DateTimeOffset? dateFrom,
+        [FromQuery] DateTimeOffset? dateTo,
+        [FromQuery] AiTrainingSourceDecision? sourceDecision,
+        [FromQuery] int? limit,
+        [FromServices] IAiTrainingService training,
+        CancellationToken cancellationToken)
+    {
+        var query = new AiTrainingListQuery(
+            status,
+            intent,
+            dateFrom,
+            dateTo,
+            sourceDecision,
+            limit is null or <= 0 ? 200 : limit.Value);
+        return Results.Ok(await training.ListAsync(query, cancellationToken));
+    }
+
+    private static async Task<IResult> GetTrainingExampleAsync(
+        Guid id,
+        [FromServices] IAiTrainingService training,
+        CancellationToken cancellationToken)
+    {
+        var result = await training.GetDetailAsync(id, cancellationToken);
+        return result is null
+            ? Results.NotFound(new { error = "training_example_not_found" })
+            : Results.Ok(result);
     }
 
     private static string GuessContentType(string storageKey)

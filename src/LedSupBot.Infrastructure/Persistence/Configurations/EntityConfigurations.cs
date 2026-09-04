@@ -147,6 +147,7 @@ public sealed class TechnicalSupportCaseConfiguration : IEntityTypeConfiguration
         builder.Property(x => x.PlayerType).HasConversion<string>().HasMaxLength(32);
         builder.Property(x => x.ProcessorHdmiConnected);
         builder.Property(x => x.QuestionAttemptsJson).HasMaxLength(2000);
+        builder.Property(x => x.DiagnosticStateJson).HasColumnType("jsonb");
 
         builder.HasIndex(x => x.ConversationId)
             .HasDatabaseName("ix_technical_support_cases_conversation_id");

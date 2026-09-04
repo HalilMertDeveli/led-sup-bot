@@ -126,6 +126,78 @@ public sealed class LedSupBotApiClient : IDisposable
         return await GetAsync<MessagesResponse>($"api/admin/conversations/{conversationId:D}/messages", cancellationToken);
     }
 
+    public async Task SaveTrainingFeedbackAsync(
+        Guid messageId,
+        SaveTrainingFeedbackRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (messageId == Guid.Empty)
+        {
+            throw new LedSupBotApiException("Geri bildirim için geçerli bir AI mesajı seçilmedi.");
+        }
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _http.PutAsJsonAsync(
+                $"api/admin/training-feedback/{messageId:D}",
+                request,
+                cancellationToken);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new LedSupBotApiException("API bağlantısı yok.", inner: ex);
+        }
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new LedSupBotApiException("Eğitim geri bildirimi kaydedilirken zaman aşımı oluştu.", inner: ex);
+        }
+
+        using (response)
+        {
+            if (response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            var status = (int)response.StatusCode;
+            var message = status switch
+            {
+                400 => "Eğitim geri bildirimi geçerli değil.",
+                401 or 403 => "Eğitim geri bildirimi için yetkiniz yok.",
+                404 => "Geri bildirim verilecek AI mesajı bulunamadı.",
+                409 => "Bu mesaj eğitim geri bildirimi için uygun değil.",
+                _ => "Eğitim geri bildirimi kaydedilemedi.",
+            };
+            throw new LedSupBotApiException(message, status);
+        }
+    }
+
+    public async Task<TrainingExamplesResponse> GetTrainingExamplesAsync(
+        string? status = null,
+        string? intent = null,
+        string? sourceDecision = null,
+        DateTime? dateFrom = null,
+        DateTime? dateTo = null,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new List<string>();
+        AddQueryValue(query, "status", status);
+        AddQueryValue(query, "intent", intent);
+        AddQueryValue(query, "sourceDecision", sourceDecision);
+        AddQueryValue(query, "dateFrom", dateFrom is { } from ? FormatLocalDateBoundary(from, endOfDay: false) : null);
+        AddQueryValue(query, "dateTo", dateTo is { } to ? FormatLocalDateBoundary(to, endOfDay: true) : null);
+
+        var path = "api/admin/training-examples";
+        if (query.Count > 0)
+        {
+            path += "?" + string.Join("&", query);
+        }
+
+        return await GetAsync<TrainingExamplesResponse>(path, cancellationToken)
+               ?? new TrainingExamplesResponse();
+    }
+
     public async Task<SendMessageResponse> SendTextMessageAsync(
         Guid conversationId,
         string text,
@@ -255,6 +327,24 @@ public sealed class LedSupBotApiClient : IDisposable
         {
             throw new LedSupBotApiException("API yanıtı okunamadı.", (int)response.StatusCode, ex);
         }
+    }
+
+    private static void AddQueryValue(List<string> query, string name, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value) &&
+            !string.Equals(value, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            query.Add($"{name}={Uri.EscapeDataString(value.Trim())}");
+        }
+    }
+
+    private static string FormatLocalDateBoundary(DateTime value, bool endOfDay)
+    {
+        var boundary = endOfDay
+            ? value.Date.AddDays(1).AddTicks(-1)
+            : value.Date;
+        var localBoundary = DateTime.SpecifyKind(boundary, DateTimeKind.Unspecified);
+        return new DateTimeOffset(localBoundary, TimeZoneInfo.Local.GetUtcOffset(localBoundary)).ToString("O");
     }
 
     private static Task EnsureSuccessAsync(HttpResponseMessage response)

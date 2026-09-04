@@ -25,17 +25,23 @@ public static class ConversationSemantics
         if (ContainsAny(text, "devam", "nerede kalmistik", "kuruluma donelim", "receivera donelim", "receiver tarafina donelim"))
             return ConversationIntent.ResumeWorkflow;
 
-        if (ContainsAny(text, "zaten soyledim", "niye tekrar soruyorsun", "ne alaka", "ben onu sormadim",
-                "soruyordun", "yanlis anladin", "geri donelim", "onceki konuya donelim"))
+        if (ContainsAny(text, "zaten soyledim", "zaten verdim", "verdim ya", "olcuyu verdim",
+                "olcuyu az once yazdim", "az once verdim", "daha once soyledim", "zaten gonderdim",
+                "niye tekrar soruyorsun", "ayni seyi niye", "ne alaka", "ben onu sormadim",
+                "soruyordun", "yanlis anladin", "geri donelim", "onceki konuya donelim",
+                "az once baska bir sey", "baska bir sey soruyordum", "oyle demedim", "onu kastetmedim",
+                "kac kere soyle", "kac defa yaz", "ayni seyi tekrar", "yine ayni seyi", "beni anlamiyorsun"))
             return ConversationIntent.FlowRecovery;
 
-        if (ContainsAny(text, "receiver kart hangisi", "receiver hangisi", "config kablosu nedir", "anydesk nedir", "nereye takacagim"))
+        if (ContainsAny(text, "receiver kart hangisi", "receiver hangisi", "config kablosu nedir", "anydesk nedir",
+                "nereye takacagim", "hangi kablo", "nereden bakacagim", "nereye bakmam", "hangi cihazdan bak",
+                "neyi baglayacagim", "kablodan bahsediyor", "anlamadim"))
             return ConversationIntent.QuestionAboutCurrentStep;
 
         if (ContainsAny(text, "pardon", "degil", "yanlis yazdim"))
             return ConversationIntent.Correction;
 
-        if (ContainsAny(text, "tesekkur", "sagol", "sag ol"))
+        if (IsWaitAcknowledgement(message) || IsPhotoOffer(message) || IsShortAcknowledgement(message))
             return ConversationIntent.Acknowledgement;
 
         if (ContainsAny(text, "bir sey daha soracagim", "bir soru soracagim"))
@@ -60,9 +66,41 @@ public static class ConversationSemantics
     public static ConversationIntent PreferBackendRecognized(ConversationIntent local, ConversationIntent ai) =>
         local == ConversationIntent.Unclear ? ai : local;
 
+    public static bool IsWaitAcknowledgement(string? message)
+    {
+        var text = Normalize(message);
+        return ContainsAny(text, "bekle", "bir saniye", "bakiyorum", "dur bak", "dur kontrol", "simdi bakiyorum");
+    }
+
+    public static bool IsPhotoOffer(string? message)
+    {
+        var text = Normalize(message);
+        return (ContainsAny(text, "foto", "fotograf", "resim") &&
+                ContainsAny(text, "atsam", "gondersem", "atayim", "olur mu", "bakabilir"));
+    }
+
+    public static bool IsShortAcknowledgement(string? message)
+    {
+        var text = Normalize(message).Trim();
+        return text is "tamam" or "tamamdir" or "ok" or "peki" or "eyvallah" or "sagol" or "sag ol" or "tesekkurler" ||
+               text.Length <= 40 && ContainsAny(text, "tesekkur", "sagol", "sag ol", "eyvallah");
+    }
+
+    public static bool IsCableClarification(string? message)
+    {
+        var text = Normalize(message);
+        return ContainsAny(text, "hangi kablo", "kablodan bahsediyor", "neyi baglayacagim", "nereye takacagim");
+    }
+
+    public static bool IsLocationClarification(string? message)
+    {
+        var text = Normalize(message);
+        return ContainsAny(text, "nereden bak", "nereye bak", "hangi cihazdan bak");
+    }
+
     private static bool ContainsAny(string value, params string[] candidates) => candidates.Any(value.Contains);
 
-    private static string Normalize(string? value)
+    internal static string Normalize(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
         var decomposed = value.ToLower(new CultureInfo("tr-TR")).Normalize(NormalizationForm.FormD);

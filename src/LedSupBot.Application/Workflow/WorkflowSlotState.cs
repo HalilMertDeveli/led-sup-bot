@@ -79,7 +79,8 @@ public sealed class WorkflowSlotState
             ProcessorHdmiConnected = supportCase.ProcessorHdmiConnected,
             ConfigConfirmed = supportCase.ConfigConnection?.Status == ConfigConnectionStatus.Confirmed,
             ConfigExampleSent = supportCase.ConfigConnection?.ExampleImageSent == true,
-            HasAnyDesk = supportCase.AnyDeskInformation is not null,
+            HasAnyDesk = supportCase.AnyDeskInformation is { AnyDeskAddress: var anyDeskAddress }
+                && AnyDeskParser.TryParse(anyDeskAddress, out _),
             SummaryCompleted = conversation.CurrentStage is ConversationStage.HumanHandoff or ConversationStage.Completed
                 || conversation.BotMode == BotMode.Human,
             QuestionAttempts = supportCase.GetAllQuestionAttempts(),

@@ -24,6 +24,46 @@ public sealed class Phase2ConversationRecoveryTests
     public void Recovery_Language_Is_Canonical(string text) =>
         Assert.Equal(ConversationIntent.FlowRecovery, ConversationSemantics.Detect(text));
 
+    [Theory]
+    [InlineData("Verdim ya ölçüyü.", ConversationIntent.FlowRecovery)]
+    [InlineData("Aynı şeyi niye tekrar soruyorsun?", ConversationIntent.FlowRecovery)]
+    [InlineData("Bir dakika, az önce başka bir şey soruyordum.", ConversationIntent.FlowRecovery)]
+    [InlineData("Hangi kablo?", ConversationIntent.QuestionAboutCurrentStep)]
+    [InlineData("Nereden bakacağım?", ConversationIntent.QuestionAboutCurrentStep)]
+    [InlineData("Anlamadım.", ConversationIntent.QuestionAboutCurrentStep)]
+    [InlineData("Bekle bi bakıyorum.", ConversationIntent.Acknowledgement)]
+    [InlineData("Foto atsam anlar mısın?", ConversationIntent.Acknowledgement)]
+    public void Golden_Language_Maps_To_Canonical_Intent(string text, ConversationIntent expected) =>
+        Assert.Equal(expected, ConversationSemantics.Detect(text));
+
+    [Theory]
+    [InlineData("Ne alaka, ben onu sormadım.", "Siz neyi soruyordunuz?")]
+    [InlineData("Yanlış anladın.", "Tam olarak konuyu özetler misiniz?")]
+    [InlineData("Bir dakika, az önce başka bir şey soruyordum.", "önceki konuya dönelim")]
+    public void Golden_Recovery_Returns_Control_Without_Workflow_Prompt(string text, string expected)
+    {
+        var input = Input(PendingWorkflowFact.ReceiverCount, ConversationResponseAction.RecoveryResponse, null) with
+        {
+            Inbound = new WorkflowInboundMessage(Guid.NewGuid(), "905551234567", Guid.NewGuid(), "golden", MessageType.Text, text)
+        };
+        var reply = Assert.Single(new HybridResponseComposer(NullLogger<HybridResponseComposer>.Instance).Compose(input).OutboundTexts);
+        Assert.Contains(expected, reply, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Kaç tane receiver", reply, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("Bekle bi bakıyorum.", "Tamam, bekliyorum.")]
+    [InlineData("Foto atsam anlar mısın?", "Evet, fotoğrafları atın.")]
+    public void Golden_Acknowledgements_Hold_Without_Extra_Question(string text, string expected)
+    {
+        var input = Input(PendingWorkflowFact.ReceiverCount, ConversationResponseAction.AnswerOnly, null) with
+        {
+            Inbound = new WorkflowInboundMessage(Guid.NewGuid(), "905551234567", Guid.NewGuid(), "golden-ack", MessageType.Text, text),
+            CanonicalIntent = ConversationIntent.Acknowledgement
+        };
+        Assert.Equal(expected, Assert.Single(new HybridResponseComposer(NullLogger<HybridResponseComposer>.Instance).Compose(input).OutboundTexts));
+    }
+
     [Fact]
     public void Technical_Interruption_Answers_And_Holds_Pending_ReceiverCount()
     {

@@ -32,6 +32,9 @@ public class TechnicalSupportCase : Entity
     /// <summary>JSON dictionary of question attempt counts per fact (e.g. {"ScreenDimensions":1,"ReceiverCount":2}).</summary>
     public string? QuestionAttemptsJson { get; set; }
 
+    /// <summary>Backend-authoritative durable multi-issue diagnostic state.</summary>
+    public string? DiagnosticStateJson { get; set; }
+
     public ScreenInformation? ScreenInformation { get; set; }
 
     public ReceiverInformation? ReceiverInformation { get; set; }

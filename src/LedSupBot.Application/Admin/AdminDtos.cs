@@ -79,7 +79,18 @@ public sealed record MessageDto(
     DeliveryStatus DeliveryStatus,
     DateTimeOffset CreatedAt,
     string? StorageKey,
-    string? MediaUrl);
+    string? MediaUrl,
+    bool TeacherFeedbackEligible = false,
+    AiTrainingMessageFeedbackDto? TrainingFeedback = null);
+
+public sealed record AiTrainingMessageFeedbackDto(
+    AiTrainingFeedbackStatus FeedbackStatus,
+    string? PreferredTechnicianResponse,
+    IReadOnlyList<AiTrainingFeedbackReason> ReasonTags,
+    AiTrainingEligibility TrainingEligibility,
+    bool EligibleForSft,
+    bool EligibleForPreference,
+    string StatusLabel);
 
 public sealed record MessagesResponse(IReadOnlyList<MessageDto> Messages);
 

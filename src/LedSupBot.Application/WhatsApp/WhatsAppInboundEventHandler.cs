@@ -303,6 +303,11 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
                 .OrderByDescending(c => c.CreatedAt)
                 .FirstOrDefaultAsync(cancellationToken);
 
+            supportCase ??= await db.TechnicalSupportCases
+                .Where(c => c.ConversationId == conversationId && c.Status == SupportCaseStatus.Completed)
+                .OrderByDescending(c => c.CompletedAt)
+                .FirstOrDefaultAsync(cancellationToken);
+
             if (supportCase is null)
             {
                 supportCase = new TechnicalSupportCase

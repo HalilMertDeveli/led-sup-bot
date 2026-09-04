@@ -41,6 +41,8 @@ public sealed class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<BotModeChangeAudit> BotModeChangeAudits => Set<BotModeChangeAudit>();
     public DbSet<KnowledgeDocument> KnowledgeDocuments => Set<KnowledgeDocument>();
     public DbSet<KnowledgeChunk> KnowledgeChunks => Set<KnowledgeChunk>();
+    public DbSet<AiReplyContextSnapshot> AiReplyContextSnapshots => Set<AiReplyContextSnapshot>();
+    public DbSet<AiTrainingExample> AiTrainingExamples => Set<AiTrainingExample>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

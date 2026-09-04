@@ -1,4 +1,5 @@
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.Training;
 using LedSupBot.Application.WhatsApp;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
@@ -16,6 +17,7 @@ public interface IWorkflowOutboundDispatcher
         string customerIdentity,
         string? whatsAppDeliveryRoute,
         IReadOnlyList<string> texts,
+        IReadOnlyList<AiReplySnapshotDraft?>? trainingSnapshots = null,
         CancellationToken cancellationToken = default);
 
     Task TrySendConfigExampleImageAsync(
@@ -43,6 +45,7 @@ public sealed class WorkflowOutboundDispatcher : IWorkflowOutboundDispatcher
         string customerIdentity,
         string? whatsAppDeliveryRoute,
         IReadOnlyList<string> texts,
+        IReadOnlyList<AiReplySnapshotDraft?>? trainingSnapshots = null,
         CancellationToken cancellationToken = default)
     {
         if (texts.Count == 0)
@@ -138,8 +141,9 @@ public sealed class WorkflowOutboundDispatcher : IWorkflowOutboundDispatcher
             destination.DestinationType,
             destination.ExactRoutePreserved);
 
-        foreach (var text in texts)
+        for (var index = 0; index < texts.Count; index++)
         {
+            var text = texts[index];
             linkedToken.ThrowIfCancellationRequested();
 
             if (!await CanStillAutoReplyAsync(db, conversationId, linkedToken))
@@ -170,7 +174,14 @@ public sealed class WorkflowOutboundDispatcher : IWorkflowOutboundDispatcher
                 return;
             }
 
-            var pendingId = await recorder.CreatePendingBotTextAsync(conversationId, text, linkedToken);
+            var snapshotForMessage = trainingSnapshots is not null && index < trainingSnapshots.Count
+                ? trainingSnapshots[index]
+                : null;
+            var pendingId = await recorder.CreatePendingBotTextAsync(
+                conversationId,
+                text,
+                snapshotForMessage,
+                linkedToken);
             try
             {
                 var externalId = await client.SendTextMessageAsync(destination.Address, text, linkedToken);

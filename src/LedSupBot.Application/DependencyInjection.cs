@@ -14,6 +14,7 @@ public static class DependencyInjection
         services.AddSingleton<IWhatsAppSelfIdentityStore, WhatsAppSelfIdentityStore>();
         services.AddSingleton<IWhatsAppTestAllowlist, WhatsAppTestAllowlist>();
         services.AddSingleton<ITechnicalKnowledgeProvider, DefaultTechnicalKnowledgeProvider>();
+        services.AddScoped<TechnicalKnowledgeGroundingService>();
         services.AddScoped<IWhatsAppInboundEventHandler, WhatsAppInboundEventHandler>();
         services.AddScoped<IWhatsAppOutboundRecorder, WhatsAppOutboundRecorder>();
         services.AddSingleton<IAdminEventNotifier, NullAdminEventNotifier>();

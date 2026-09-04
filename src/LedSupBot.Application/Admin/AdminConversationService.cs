@@ -4,6 +4,7 @@ using LedSupBot.Application.Workflow.Parsing;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace LedSupBot.Application.Admin;
 
@@ -177,7 +178,45 @@ public sealed class AdminConversationService : IAdminConversationService
             .AsNoTracking()
             .Where(m => m.ConversationId == conversationId)
             .OrderBy(m => m.CreatedAt)
-            .Select(m => new MessageDto(
+            .ToListAsync(cancellationToken);
+
+        var messageIds = messages.Select(x => x.Id).ToList();
+        var eligibleIds = messageIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await _db.AiReplyContextSnapshots
+                .AsNoTracking()
+                .Where(x => messageIds.Contains(x.AiResponseMessageId))
+                .Select(x => x.AiResponseMessageId)
+                .ToListAsync(cancellationToken))
+                .ToHashSet();
+        var feedbackByMessageId = messageIds.Count == 0
+            ? new Dictionary<Guid, AiTrainingExample>()
+            : (await _db.AiTrainingExamples
+                .AsNoTracking()
+                .Where(x => messageIds.Contains(x.AiResponseMessageId))
+                .ToListAsync(cancellationToken))
+                .ToDictionary(x => x.AiResponseMessageId);
+
+        var result = messages.Select(m =>
+        {
+            var teacherEligible =
+                m.Direction == MessageDirection.Outbound &&
+                m.SentBy == MessageSender.Bot &&
+                m.MessageType == MessageType.Text &&
+                m.DeliveryStatus is DeliveryStatus.Sent or DeliveryStatus.Delivered or DeliveryStatus.Read &&
+                eligibleIds.Contains(m.Id);
+            var trainingFeedback = feedbackByMessageId.TryGetValue(m.Id, out var feedback)
+                ? new AiTrainingMessageFeedbackDto(
+                    feedback.FeedbackStatus,
+                    feedback.PreferredTechnicianResponse,
+                    ParseFeedbackReasonTags(feedback.FeedbackReasonTags),
+                    feedback.TrainingEligibility,
+                    feedback.EligibleForSft,
+                    feedback.EligibleForPreference,
+                    FeedbackStateLabel(feedback.FeedbackStatus) ?? string.Empty)
+                : null;
+
+            return new MessageDto(
                 m.Id,
                 m.Direction,
                 m.MessageType,
@@ -186,10 +225,40 @@ public sealed class AdminConversationService : IAdminConversationService
                 m.DeliveryStatus,
                 m.CreatedAt,
                 m.StorageKey,
-                m.StorageKey != null ? $"/api/admin/media/{Uri.EscapeDataString(m.StorageKey)}" : null))
-            .ToListAsync(cancellationToken);
+                m.StorageKey != null ? $"/api/admin/media/{Uri.EscapeDataString(m.StorageKey)}" : null,
+                teacherEligible,
+                trainingFeedback);
+        }).ToList();
 
-        return new MessagesResponse(messages);
+        return new MessagesResponse(result);
+    }
+
+    private static string? FeedbackStateLabel(AiTrainingFeedbackStatus? status) => status switch
+    {
+        AiTrainingFeedbackStatus.Approved => "✓ Eğitim verisine eklendi",
+        AiTrainingFeedbackStatus.Edited => "✎ Düzeltilmiş",
+        AiTrainingFeedbackStatus.Rejected => "✕ Eğitim için reddedildi",
+        AiTrainingFeedbackStatus.Excluded => "Eğitim dışı",
+        _ => null,
+    };
+
+    private static IReadOnlyList<AiTrainingFeedbackReason> ParseFeedbackReasonTags(string json)
+    {
+        try
+        {
+            var values = JsonSerializer.Deserialize<string[]>(json) ?? [];
+            return values
+                .Select(value => Enum.TryParse<AiTrainingFeedbackReason>(value, true, out var parsed)
+                    ? (AiTrainingFeedbackReason?)parsed
+                    : null)
+                .Where(value => value.HasValue)
+                .Select(value => value!.Value)
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 
     private static ConversationListItemDto MapListItem(
