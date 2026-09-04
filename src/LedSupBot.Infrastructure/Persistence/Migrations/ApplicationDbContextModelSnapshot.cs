@@ -88,6 +88,19 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
+                    b.Property<bool>("CaseMemoryAttempted")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("CaseMemoryCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("CaseMemoryReferences")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<bool>("CaseMemoryUsed")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid>("ConversationId")
                         .HasColumnType("uuid");
 
@@ -201,6 +214,22 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                     b.Property<bool>("VisionUsed")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("WebGrounded")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("WebSearchAttempted")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("WebSearchUsed")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("WebSourceCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("WebSourceReferences")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
                     b.Property<string>("WorkflowStageSnapshot")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
@@ -238,6 +267,19 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                     b.Property<string>("BotModeSnapshot")
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
+
+                    b.Property<bool>("CaseMemoryAttempted")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("CaseMemoryCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("CaseMemoryReferences")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<bool>("CaseMemoryUsed")
+                        .HasColumnType("boolean");
 
                     b.Property<Guid>("ConversationId")
                         .HasColumnType("uuid");
@@ -375,6 +417,22 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
 
                     b.Property<bool>("VisionUsed")
                         .HasColumnType("boolean");
+
+                    b.Property<bool>("WebGrounded")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("WebSearchAttempted")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("WebSearchUsed")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("WebSourceCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("WebSourceReferences")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
 
                     b.Property<string>("WorkflowStageSnapshot")
                         .HasMaxLength(128)
@@ -1045,6 +1103,125 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_technical_support_cases_status");
 
                     b.ToTable("technical_support_cases", (string)null);
+                });
+
+            modelBuilder.Entity("LedSupBot.Domain.Entities.VerifiedSupportCaseMemory", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CompletedChecks")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<double>("Confidence")
+                        .HasColumnType("double precision");
+
+                    b.Property<Guid>("ConversationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DeviceFamily")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("DeviceManufacturer")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("DeviceModel")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("DiagnosticSummary")
+                        .IsRequired()
+                        .HasMaxLength(3000)
+                        .HasColumnType("character varying(3000)");
+
+                    b.Property<Vector>("Embedding")
+                        .HasColumnType("vector(768)");
+
+                    b.Property<string>("FailedChecks")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("FinalResolution")
+                        .IsRequired()
+                        .HasMaxLength(3000)
+                        .HasColumnType("character varying(3000)");
+
+                    b.Property<int>("MemorySchemaVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("NormalizedSymptom")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("PrimarySymptom")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("ProblemCategory")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("RelevantDiagnosticStateSnapshot")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("RelevantWorkflowFacts")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("ResolutionSummary")
+                        .IsRequired()
+                        .HasMaxLength(1500)
+                        .HasColumnType("character varying(1500)");
+
+                    b.Property<string>("RetrievalText")
+                        .IsRequired()
+                        .HasMaxLength(6000)
+                        .HasColumnType("character varying(6000)");
+
+                    b.Property<string>("SourceMessageIds")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("SuccessfulChecks")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("TechnicalSupportCaseId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("VerifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("VerifiedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TechnicalSupportCaseId")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "DeviceModel");
+
+                    b.ToTable("verified_support_case_memories", (string)null);
                 });
 
             modelBuilder.Entity("LedSupBot.Domain.Entities.AiExtractionResult", b =>

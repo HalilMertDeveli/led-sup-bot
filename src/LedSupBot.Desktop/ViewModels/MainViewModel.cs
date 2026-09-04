@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Input;
 using LedSupBot.Desktop.Models;
 using LedSupBot.Desktop.Services;
+using LedSupBot.Desktop.Views;
 
 namespace LedSupBot.Desktop.ViewModels;
 
@@ -97,6 +98,7 @@ public sealed class MainViewModel : ViewModelBase
         PrimaryActionCommand = new AsyncRelayCommand(PrimaryActionAsync, () => CanPrimaryAction && !IsBusy && !IsModeChanging);
         TakeOverCommand = new AsyncRelayCommand(TakeOverAsync, () => CanTakeOver && !IsBusy && !IsModeChanging);
         DismissAnyDeskCommand = new AsyncRelayCommand(DismissAnyDeskAsync, () => HasActiveConversation && !IsBusy && !IsModeChanging);
+        AddCaseMemoryCommand = new AsyncRelayCommand(AddCaseMemoryAsync, () => _selectedDetail?.Case is not null && !IsBusy);
         ToggleTechnicalPanelCommand = new RelayCommand(() => IsTechnicalPanelCollapsed = !IsTechnicalPanelCollapsed);
         CopyAnyDeskCommand = new RelayCommand(CopyAnyDeskToClipboard, () => !string.IsNullOrWhiteSpace(AnyDeskAddressText) && AnyDeskAddressText != "—");
         SetFilterCommand = new RelayCommand<string>(mode => FilterMode = mode ?? "all");
@@ -204,6 +206,7 @@ public sealed class MainViewModel : ViewModelBase
     public ICommand CancelTrainingFeedbackCommand { get; }
     public ICommand ToggleTrainingDataViewCommand { get; }
     public ICommand RefreshTrainingDataCommand { get; }
+    public ICommand AddCaseMemoryCommand { get; }
 
     #endregion
 
@@ -1132,6 +1135,33 @@ public sealed class MainViewModel : ViewModelBase
         finally
         {
             IsLoadingMessages = false;
+        }
+    }
+
+    private async Task AddCaseMemoryAsync()
+    {
+        if (_selectedDetail?.Case is not { } supportCase) return;
+        try
+        {
+            var draft = await _api.CreateMemoryDraftAsync(supportCase.Id);
+            if (draft is null) return;
+            var dialog = new CaseMemoryReviewWindow(draft) { Owner = System.Windows.Application.Current.MainWindow };
+            var approved = dialog.ShowDialog();
+            if (dialog.Rejected)
+            {
+                await _api.RejectMemoryAsync(draft.Id);
+                System.Windows.MessageBox.Show("Vaka hafızası taslağı reddedildi.", "Vaka Hafızası");
+                return;
+            }
+            if (approved != true) return;
+            await _api.UpdateMemoryDraftAsync(draft.Id, dialog.Edit);
+            await _api.VerifyMemoryAsync(draft.Id);
+            System.Windows.MessageBox.Show("Çözüm doğrulanmış vaka hafızasına eklendi.", "Vaka Hafızası");
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("AddCaseMemory", ex);
+            System.Windows.MessageBox.Show(ex.Message, "Vaka Hafızası", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 

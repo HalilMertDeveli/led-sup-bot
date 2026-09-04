@@ -263,6 +263,9 @@ public sealed class GeminiConversationPlannerService : IAiConversationPlanner
             exactModelMatch: {context.KnowledgeGrounding?.ExactModelMatch.ToString() ?? "none"}
             conflictDetected: {context.KnowledgeGrounding?.ConflictDetected.ToString() ?? "none"}
             diagnosticState: {context.DiagnosticContext ?? "none"}
+            verifiedPriorCases:
+            {context.CaseMemoryContext ?? "none"}
+            caseMemoryRule: Prior cases are historical troubleshooting evidence only. Never use them as universal product specifications, never override official RAG, and never repeat a check already completed in diagnosticState.
             technicalKnowledge:
             {context.TechnicalKnowledgeContext ?? "none"}
             recentMessages:

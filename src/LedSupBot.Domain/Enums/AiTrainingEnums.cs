@@ -28,6 +28,13 @@ public enum AiTrainingSourceDecision
     DiagnosticAndRag = 7,
     Deterministic = 8,
     Mixed = 9,
+    WebSearch = 10,
+    RagAndWeb = 11,
+    VisionRagAndWeb = 12,
+    CaseMemory = 13,
+    CaseMemoryAndRag = 14,
+    CaseMemoryAndWeb = 15,
+    CaseMemoryRagAndWeb = 16,
 }
 
 public enum AiTrainingFeedbackReason

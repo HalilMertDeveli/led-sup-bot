@@ -114,6 +114,24 @@ public sealed class LedSupBotApiClient : IDisposable
         return await GetAsync<ConversationDetailDto>($"api/admin/conversations/{conversationId:D}", cancellationToken);
     }
 
+    public Task<CaseMemoryDto?> CreateMemoryDraftAsync(Guid caseId, CancellationToken ct = default) =>
+        SendMemoryAsync(HttpMethod.Post, $"api/admin/support-cases/{caseId:D}/memory-draft", null, ct);
+    public Task<CaseMemoryDto?> UpdateMemoryDraftAsync(Guid id, CaseMemoryEditRequest edit, CancellationToken ct = default) =>
+        SendMemoryAsync(HttpMethod.Put, $"api/admin/case-memories/{id:D}", edit, ct);
+    public Task<CaseMemoryDto?> VerifyMemoryAsync(Guid id, CancellationToken ct = default) =>
+        SendMemoryAsync(HttpMethod.Post, $"api/admin/case-memories/{id:D}/verify", null, ct);
+    public Task<CaseMemoryDto?> RejectMemoryAsync(Guid id, CancellationToken ct = default) =>
+        SendMemoryAsync(HttpMethod.Post, $"api/admin/case-memories/{id:D}/reject", null, ct);
+
+    private async Task<CaseMemoryDto?> SendMemoryAsync(HttpMethod method, string path, object? body, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(method, path);
+        if (body is not null) request.Content = JsonContent.Create(body);
+        using var response = await _http.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode) throw new LedSupBotApiException("Vaka hafızası işlemi tamamlanamadı.", (int)response.StatusCode);
+        return await response.Content.ReadFromJsonAsync<CaseMemoryDto>(JsonOptions, ct);
+    }
+
     public async Task<MessagesResponse?> GetMessagesAsync(
         Guid conversationId,
         CancellationToken cancellationToken = default)

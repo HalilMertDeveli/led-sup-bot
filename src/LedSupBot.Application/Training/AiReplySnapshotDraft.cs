@@ -4,6 +4,7 @@ using LedSupBot.Application.Media;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Application.Workflow.Context;
 using LedSupBot.Application.Workflow.Knowledge;
+using LedSupBot.Application.Workflow.Web;
 using LedSupBot.Domain.Enums;
 
 namespace LedSupBot.Application.Training;
@@ -43,7 +44,16 @@ public sealed record AiReplySnapshotDraft(
     bool TechnicalClaimRequiresVerification,
     bool RequiresAnonymization,
     bool ContainsRedactions,
-    int TrainingSnapshotSchemaVersion = 1);
+    int TrainingSnapshotSchemaVersion = 3,
+    bool WebSearchAttempted = false,
+    bool WebSearchUsed = false,
+    bool WebGrounded = false,
+    int WebSourceCount = 0,
+    string WebSourceReferencesJson = "[]",
+    bool CaseMemoryAttempted = false,
+    bool CaseMemoryUsed = false,
+    int CaseMemoryCount = 0,
+    string CaseMemoryReferencesJson = "[]");
 
 public sealed record AiKnowledgeSourceSnapshot(
     string Document,
@@ -57,7 +67,7 @@ public sealed record AiKnowledgeSourceSnapshot(
 
 public static partial class AiReplySnapshotFactory
 {
-    public const int SchemaVersion = 1;
+    public const int SchemaVersion = 3;
     public const string ResponsePromptVersion = "conversation-planner-v1";
     private const int MaxFactCount = 24;
     private const int MaxFactLength = 300;
@@ -87,7 +97,8 @@ public static partial class AiReplySnapshotFactory
         string? diagnosticContext,
         string? geminiModel,
         AiTrainingSourceDecision? sourceDecisionOverride = null,
-        string? replySourceOverride = null)
+        string? replySourceOverride = null,
+        WebGroundingResult? web = null)
     {
         var safeCustomer = Sanitize(customerMessage, MaxCustomerMessageLength, out var customerRedacted);
         var safeResponse = Sanitize(aiResponse, MaxAiResponseLength, out var responseRedacted);
@@ -141,7 +152,27 @@ public static partial class AiReplySnapshotFactory
             RequiresTechnicalVerification(safeResponse, intent, grounding),
             RequiresAnonymization: true,
             ContainsRedactions: customerRedacted || responseRedacted || diagnosticRedacted,
-            SchemaVersion);
+            SchemaVersion,
+            web?.Attempted == true,
+            web?.Used == true,
+            web?.Grounded == true,
+            Math.Min(web?.Sources.Count ?? 0, 6),
+            JsonSerializer.Serialize((web?.Sources ?? []).Take(6).Select(x => new
+            {
+                title = Sanitize(x.Title, 160, out _),
+                uri = SafeWebReference(x.Uri),
+            }), JsonOptions),
+            context.CaseMemory?.Attempted == true,
+            context.CaseMemory?.Used == true,
+            Math.Min(context.CaseMemory?.Memories.Count ?? 0, 3),
+            JsonSerializer.Serialize((context.CaseMemory?.Memories ?? []).Take(3).Select(x => new
+            {
+                id = x.Id,
+                model = Sanitize(x.DeviceModel, 100, out _),
+                category = Sanitize(x.ProblemCategory, 100, out _),
+                confidence = Math.Round(x.Confidence, 3),
+                relevance = Math.Round(x.Relevance, 3),
+            }), JsonOptions));
     }
 
     public static AiTrainingSourceDecision DeriveSourceDecision(
@@ -350,6 +381,13 @@ public static partial class AiReplySnapshotFactory
         var text = value?.Trim() ?? string.Empty;
         var fileName = Path.GetFileName(text);
         return Bounded(string.IsNullOrWhiteSpace(fileName) ? text : fileName, 300);
+    }
+
+    private static string SafeWebReference(string? value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)) return string.Empty;
+        return Bounded(uri.GetLeftPart(UriPartial.Path), 500);
     }
 
     [GeneratedRegex(@"(?<!\d)(?:\+?\d[\s().-]?){7,15}(?!\d)")]

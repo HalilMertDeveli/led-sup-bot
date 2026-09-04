@@ -1,5 +1,6 @@
 using LedSupBot.Domain.Enums;
 using LedSupBot.Application.Workflow.Knowledge;
+using LedSupBot.Application.CaseMemory;
 
 namespace LedSupBot.Application.Workflow.Context;
 
@@ -104,4 +105,6 @@ public sealed class ConversationContext
     public KnowledgeGroundingResult? KnowledgeGrounding { get; set; }
 
     public string? DiagnosticContext { get; set; }
+    public CaseMemorySearchResult? CaseMemory { get; set; }
+    public string? CaseMemoryContext { get; set; }
 }

@@ -155,6 +155,36 @@ public sealed class TechnicalSupportCaseConfiguration : IEntityTypeConfiguration
     }
 }
 
+public sealed class VerifiedSupportCaseMemoryConfiguration : IEntityTypeConfiguration<VerifiedSupportCaseMemory>
+{
+    public void Configure(EntityTypeBuilder<VerifiedSupportCaseMemory> builder)
+    {
+        builder.ToTable("verified_support_case_memories");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.VerifiedBy).HasMaxLength(128);
+        builder.Property(x => x.PrimarySymptom).HasMaxLength(1000);
+        builder.Property(x => x.NormalizedSymptom).HasMaxLength(1000);
+        builder.Property(x => x.DeviceManufacturer).HasMaxLength(128);
+        builder.Property(x => x.DeviceModel).HasMaxLength(128);
+        builder.Property(x => x.DeviceFamily).HasMaxLength(128);
+        builder.Property(x => x.ProblemCategory).HasMaxLength(128);
+        builder.Property(x => x.DiagnosticSummary).HasMaxLength(3000);
+        builder.Property(x => x.FinalResolution).HasMaxLength(3000);
+        builder.Property(x => x.ResolutionSummary).HasMaxLength(1500);
+        builder.Property(x => x.CompletedChecks).HasColumnType("jsonb");
+        builder.Property(x => x.FailedChecks).HasColumnType("jsonb");
+        builder.Property(x => x.SuccessfulChecks).HasColumnType("jsonb");
+        builder.Property(x => x.RelevantWorkflowFacts).HasColumnType("jsonb");
+        builder.Property(x => x.RelevantDiagnosticStateSnapshot).HasColumnType("jsonb");
+        builder.Property(x => x.SourceMessageIds).HasColumnType("jsonb");
+        builder.Property(x => x.RetrievalText).HasMaxLength(6000);
+        builder.Property(x => x.Embedding).HasColumnType("vector(768)");
+        builder.HasIndex(x => x.TechnicalSupportCaseId).IsUnique();
+        builder.HasIndex(x => new { x.Status, x.DeviceModel });
+    }
+}
+
 public sealed class ScreenInformationConfiguration : IEntityTypeConfiguration<ScreenInformation>
 {
     public void Configure(EntityTypeBuilder<ScreenInformation> builder)

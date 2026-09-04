@@ -69,6 +69,16 @@ public sealed class AiTrainingExample : Entity
 
     public bool OcrUsed { get; set; }
 
+    public bool WebSearchAttempted { get; set; }
+    public bool WebSearchUsed { get; set; }
+    public bool WebGrounded { get; set; }
+    public int WebSourceCount { get; set; }
+    public string WebSourceReferences { get; set; } = "[]";
+    public bool CaseMemoryAttempted { get; set; }
+    public bool CaseMemoryUsed { get; set; }
+    public int CaseMemoryCount { get; set; }
+    public string CaseMemoryReferences { get; set; } = "[]";
+
     public string? BotModeSnapshot { get; set; }
 
     public AiTrainingSourceDecision SourceDecision { get; set; }

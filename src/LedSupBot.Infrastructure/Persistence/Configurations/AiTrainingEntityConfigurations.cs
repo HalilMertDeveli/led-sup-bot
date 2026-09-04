@@ -28,6 +28,8 @@ public sealed class AiReplyContextSnapshotConfiguration : IEntityTypeConfigurati
         builder.Property(x => x.ImageContextSummary).HasMaxLength(4000);
         builder.Property(x => x.GroundingLevel).HasMaxLength(64);
         builder.Property(x => x.KnowledgeSourceReferences).HasColumnType("jsonb").IsRequired();
+        builder.Property(x => x.WebSourceReferences).HasColumnType("jsonb").IsRequired();
+        builder.Property(x => x.CaseMemoryReferences).HasColumnType("jsonb").IsRequired();
         builder.Property(x => x.BotModeSnapshot).HasMaxLength(32);
         builder.Property(x => x.SourceDecision).HasConversion<string>().HasMaxLength(64);
 
@@ -91,6 +93,8 @@ public sealed class AiTrainingExampleConfiguration : IEntityTypeConfiguration<Ai
         builder.Property(x => x.ImageContextSummary).HasMaxLength(4000);
         builder.Property(x => x.GroundingLevel).HasMaxLength(64);
         builder.Property(x => x.KnowledgeSourceReferences).HasColumnType("jsonb").IsRequired();
+        builder.Property(x => x.WebSourceReferences).HasColumnType("jsonb").IsRequired();
+        builder.Property(x => x.CaseMemoryReferences).HasColumnType("jsonb").IsRequired();
         builder.Property(x => x.BotModeSnapshot).HasMaxLength(32);
 
         builder.HasIndex(x => x.AiResponseMessageId)

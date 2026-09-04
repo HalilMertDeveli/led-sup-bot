@@ -312,6 +312,10 @@
 
                             <!-- Right: Bot Controls (Pause, Resume, Takeover) -->
                             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="ÇÖZÜMÜ HAFIZAYA EKLE"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Command="{Binding AddCaseMemoryCommand}"
+                                        Margin="0,0,8,0" />
                                 <!-- TakeOver Button -->
                                 <Button Content="MANUEL DEVRAL"
                                         Style="{StaticResource SecondaryButton}"

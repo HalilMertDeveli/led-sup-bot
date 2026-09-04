@@ -2,6 +2,7 @@ namespace LedSupBot.Infrastructure;
 
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Workflow.Ai;
+using LedSupBot.Application.Workflow.Web;
 using LedSupBot.Infrastructure.Configuration;
 using LedSupBot.Infrastructure.Gemini;
 using LedSupBot.Infrastructure.OpenAi;
@@ -50,6 +51,7 @@ internal static class AiServiceRegistration
 
         services.AddScoped<IAiService, GeminiExtractionService>();
         services.AddScoped<IAiConversationPlanner, GeminiConversationPlannerService>();
+        services.AddScoped<IWebGroundingService, GeminiWebGroundingService>();
     }
 
     private static void RegisterOpenAi(IServiceCollection services, IConfiguration configuration)
@@ -74,11 +76,13 @@ internal static class AiServiceRegistration
             client.BaseAddress = new Uri(openAiOptions.BaseUrl);
             client.Timeout = TimeSpan.FromSeconds(openAiOptions.TimeoutSeconds > 0 ? openAiOptions.TimeoutSeconds : 30);
         });
+        services.AddSingleton<IWebGroundingService, UnavailableWebGroundingService>();
     }
 
     private static void RegisterUnavailable(IServiceCollection services)
     {
         services.AddSingleton<IAiService, UnavailableAiService>();
         services.AddSingleton<IAiConversationPlanner, UnavailableAiConversationPlanner>();
+        services.AddSingleton<IWebGroundingService, UnavailableWebGroundingService>();
     }
 }

@@ -6,12 +6,33 @@ using LedSupBot.Application.Training;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Application.Workflow.Context;
 using LedSupBot.Application.Workflow.Knowledge;
+using LedSupBot.Application.Workflow.Web;
+using LedSupBot.Application.CaseMemory;
 using LedSupBot.Domain.Enums;
 
 namespace LedSupBot.UnitTests;
 
 public sealed class AiReplySnapshotFactoryTests
 {
+    [Fact]
+    public void Case_memory_snapshot_records_only_bounded_actual_references()
+    {
+        var memoryId = Guid.NewGuid();
+        var context = Context();
+        context.CaseMemory = new CaseMemorySearchResult(true,
+            [new(memoryId, "yarım ekran", "E120", "display", "bağlantıyı kontrol et", .8, .9)]);
+        var snapshot = AiReplySnapshotFactory.Create(Guid.NewGuid(), Guid.NewGuid(), "yarısı gelmiyor",
+            "Benzer bir vakada bağlantı kontrolü işe yaramıştı.", context, ConversationStage.Start,
+            PendingWorkflowFact.None, ConversationResponseAction.AnswerOnly, ConversationIntent.LedTroubleshooting,
+            new KnowledgeGroundingResult(false, false, false, [], [], null, false), null, "active", "gemini-3.6-flash",
+            AiTrainingSourceDecision.CaseMemory, "CaseMemory");
+        Assert.True(snapshot.CaseMemoryAttempted);
+        Assert.True(snapshot.CaseMemoryUsed);
+        Assert.Equal(1, snapshot.CaseMemoryCount);
+        Assert.Contains(memoryId.ToString(), snapshot.CaseMemoryReferencesJson);
+        Assert.DoesNotContain("bağlantıyı kontrol et", snapshot.CaseMemoryReferencesJson);
+    }
+
     [Fact]
     public void GeneralKnowledge_DoesNotFabricateRagUsage_AndRedactsSensitiveValues()
     {
@@ -47,7 +68,27 @@ public sealed class AiReplySnapshotFactoryTests
         Assert.True(snapshot.ContainsRedactions);
         Assert.DoesNotContain("123 456 789", snapshot.OriginalCustomerMessage);
         Assert.DoesNotContain("super-secret", snapshot.OriginalCustomerMessage);
-        Assert.Equal(1, snapshot.TrainingSnapshotSchemaVersion);
+        Assert.Equal(3, snapshot.TrainingSnapshotSchemaVersion);
+    }
+
+    [Fact]
+    public void Web_grounding_metadata_is_bounded_and_records_actual_execution()
+    {
+        var snapshot = AiReplySnapshotFactory.Create(
+            Guid.NewGuid(), Guid.NewGuid(), "Bugün dolar kaç?", "Güncel kur yanıtı.", Context(),
+            ConversationStage.AskReceiverCount, PendingWorkflowFact.ReceiverCount,
+            ConversationResponseAction.AnswerOnly, ConversationIntent.GeneralKnowledge,
+            new KnowledgeGroundingResult(false, false, false, [], [], null, false), null, "none",
+            "gemini-3.6-flash", AiTrainingSourceDecision.WebSearch, "WebSearch",
+            new WebGroundingResult(true, true, true, "Güncel kur yanıtı.",
+                [new WebSourceReference("Kaynak", "https://example.com/rates?private=ignored")]));
+
+        Assert.True(snapshot.WebSearchAttempted);
+        Assert.True(snapshot.WebSearchUsed);
+        Assert.True(snapshot.WebGrounded);
+        Assert.Equal(1, snapshot.WebSourceCount);
+        Assert.Contains("example.com/rates", snapshot.WebSourceReferencesJson);
+        Assert.DoesNotContain("private=ignored", snapshot.WebSourceReferencesJson);
     }
 
     [Fact]

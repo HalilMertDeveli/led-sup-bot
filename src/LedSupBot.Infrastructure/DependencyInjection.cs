@@ -9,6 +9,8 @@ using LedSupBot.Application.Workflow;
 using LedSupBot.Application.Workflow.Ai;
 using LedSupBot.Application.Workflow.Context;
 using LedSupBot.Application.Workflow.Diagnostics;
+using LedSupBot.Application.Workflow.Web;
+using LedSupBot.Application.CaseMemory;
 using LedSupBot.Infrastructure.Configuration;
 using LedSupBot.Infrastructure.Gemini;
 using LedSupBot.Infrastructure.Media;
@@ -41,6 +43,7 @@ public static class DependencyInjection
         services.Configure<WhatsAppAutomationOptions>(configuration.GetSection(WhatsAppAutomationOptions.SectionName));
         services.Configure<KnowledgeOptions>(configuration.GetSection(KnowledgeOptions.SectionName));
         services.Configure<TrainingCollectionOptions>(configuration.GetSection(TrainingCollectionOptions.SectionName));
+        services.Configure<WebGroundingOptions>(configuration.GetSection(WebGroundingOptions.SectionName));
         services.Configure<EmbeddingOptions>(configuration.GetSection(EmbeddingOptions.SectionName));
         services.AddScoped<IPdfKnowledgeExtractor, PdfKnowledgeExtractor>();
         services.AddHttpClient<IDocumentFallbackExtractor, GeminiDocumentFallbackExtractor>((sp, client) =>
@@ -77,6 +80,7 @@ public static class DependencyInjection
             services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<ApplicationDbContext>());
             services.AddScoped<KnowledgeImporter>();
             services.AddScoped<ITechnicalKnowledgeRetriever, TechnicalKnowledgeRetriever>();
+            services.AddScoped<IVerifiedCaseMemoryService, VerifiedCaseMemoryService>();
             services.AddScoped<IConversationTakeoverService, ConversationTakeoverService>();
             services.AddScoped<IConversationWorkflowService, ConversationWorkflowService>();
             services.AddScoped<IWorkflowOutboundDispatcher, WorkflowOutboundDispatcher>();

@@ -35,6 +35,7 @@ public interface IApplicationDbContext
     DbSet<AiReplyContextSnapshot> AiReplyContextSnapshots { get; }
 
     DbSet<AiTrainingExample> AiTrainingExamples { get; }
+    DbSet<VerifiedSupportCaseMemory> VerifiedSupportCaseMemories { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

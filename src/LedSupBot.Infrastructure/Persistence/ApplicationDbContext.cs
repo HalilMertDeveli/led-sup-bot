@@ -43,6 +43,7 @@ public sealed class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<KnowledgeChunk> KnowledgeChunks => Set<KnowledgeChunk>();
     public DbSet<AiReplyContextSnapshot> AiReplyContextSnapshots => Set<AiReplyContextSnapshot>();
     public DbSet<AiTrainingExample> AiTrainingExamples => Set<AiTrainingExample>();
+    public DbSet<VerifiedSupportCaseMemory> VerifiedSupportCaseMemories => Set<VerifiedSupportCaseMemory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

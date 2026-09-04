@@ -4,6 +4,8 @@ using LedSupBot.Application.Takeover;
 using LedSupBot.Application.Training;
 using LedSupBot.Application.WhatsApp;
 using LedSupBot.Application.Workflow;
+using LedSupBot.Application.CaseMemory;
+using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -36,6 +38,12 @@ public static class AdminEndpointExtensions
         group.MapPut("/training-feedback/{messageId:guid}", UpsertTrainingFeedbackAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapGet("/training-examples", ListTrainingExamplesAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapGet("/training-examples/{id:guid}", GetTrainingExampleAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPost("/support-cases/{caseId:guid}/memory-draft", CreateMemoryDraftAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPut("/case-memories/{id:guid}", UpdateMemoryDraftAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPost("/case-memories/{id:guid}/verify", VerifyMemoryAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPost("/case-memories/{id:guid}/reject", RejectMemoryAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPost("/case-memories/{id:guid}/archive", ArchiveMemoryAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapGet("/case-memories", ListMemoriesAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
 
         return group;
     }
@@ -302,6 +310,27 @@ public static class AdminEndpointExtensions
             ? Results.NotFound(new { error = "training_example_not_found" })
             : Results.Ok(result);
     }
+
+    private static async Task<IResult> CreateMemoryDraftAsync(Guid caseId, [FromBody] CaseMemoryEdit? edit,
+        [FromServices] IVerifiedCaseMemoryService service, CancellationToken ct) =>
+        await service.CreateDraftAsync(caseId, edit, ct) is { } memory ? Results.Ok(memory) : Results.NotFound();
+
+    private static async Task<IResult> UpdateMemoryDraftAsync(Guid id, [FromBody] CaseMemoryEdit edit,
+        [FromServices] IVerifiedCaseMemoryService service, CancellationToken ct) =>
+        await service.UpdateDraftAsync(id, edit, ct) is { } memory ? Results.Ok(memory) : Results.NotFound();
+
+    private static async Task<IResult> VerifyMemoryAsync(Guid id, [FromServices] IVerifiedCaseMemoryService service, CancellationToken ct) =>
+        await service.VerifyAsync(id, "desktop-operator", ct) is { } memory ? Results.Ok(memory) : Results.BadRequest();
+
+    private static async Task<IResult> RejectMemoryAsync(Guid id, [FromServices] IVerifiedCaseMemoryService service, CancellationToken ct) =>
+        await service.SetStatusAsync(id, VerifiedCaseMemoryStatus.Rejected, ct) is { } memory ? Results.Ok(memory) : Results.NotFound();
+
+    private static async Task<IResult> ArchiveMemoryAsync(Guid id, [FromServices] IVerifiedCaseMemoryService service, CancellationToken ct) =>
+        await service.SetStatusAsync(id, VerifiedCaseMemoryStatus.Archived, ct) is { } memory ? Results.Ok(memory) : Results.NotFound();
+
+    private static async Task<IResult> ListMemoriesAsync([FromQuery] VerifiedCaseMemoryStatus? status, [FromQuery] string? model,
+        [FromQuery] string? category, [FromServices] IVerifiedCaseMemoryService service, CancellationToken ct) =>
+        Results.Ok(await service.ListAsync(status, model, category, ct));
 
     private static string GuessContentType(string storageKey)
     {

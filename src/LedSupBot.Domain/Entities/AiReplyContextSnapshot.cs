@@ -9,7 +9,7 @@ namespace LedSupBot.Domain.Entities;
 /// </summary>
 public sealed class AiReplyContextSnapshot : Entity
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 3;
 
     public Guid ConversationId { get; set; }
 
@@ -71,6 +71,16 @@ public sealed class AiReplyContextSnapshot : Entity
     public bool VisionUsed { get; set; }
 
     public bool OcrUsed { get; set; }
+
+    public bool WebSearchAttempted { get; set; }
+    public bool WebSearchUsed { get; set; }
+    public bool WebGrounded { get; set; }
+    public int WebSourceCount { get; set; }
+    public string WebSourceReferences { get; set; } = "[]";
+    public bool CaseMemoryAttempted { get; set; }
+    public bool CaseMemoryUsed { get; set; }
+    public int CaseMemoryCount { get; set; }
+    public string CaseMemoryReferences { get; set; } = "[]";
 
     public string? BotModeSnapshot { get; set; }
 

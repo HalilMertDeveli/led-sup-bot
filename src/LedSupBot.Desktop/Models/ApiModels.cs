@@ -185,6 +185,34 @@ public sealed class CaseDetailDto
     public List<PhotoDetailDto> Photos { get; set; } = [];
 }
 
+public sealed class CaseMemoryDto
+{
+    [JsonPropertyName("id")] public Guid Id { get; set; }
+    [JsonPropertyName("status")] public string Status { get; set; } = "Draft";
+    [JsonPropertyName("primarySymptom")] public string PrimarySymptom { get; set; } = "";
+    [JsonPropertyName("deviceManufacturer")] public string? DeviceManufacturer { get; set; }
+    [JsonPropertyName("deviceModel")] public string? DeviceModel { get; set; }
+    [JsonPropertyName("deviceFamily")] public string? DeviceFamily { get; set; }
+    [JsonPropertyName("problemCategory")] public string? ProblemCategory { get; set; }
+    [JsonPropertyName("diagnosticSummary")] public string DiagnosticSummary { get; set; } = "";
+    [JsonPropertyName("finalResolution")] public string FinalResolution { get; set; } = "";
+    [JsonPropertyName("resolutionSummary")] public string ResolutionSummary { get; set; } = "";
+    [JsonPropertyName("confidence")] public double Confidence { get; set; } = .7;
+}
+
+public sealed class CaseMemoryEditRequest
+{
+    public string PrimarySymptom { get; set; } = "";
+    public string? DeviceManufacturer { get; set; }
+    public string? DeviceModel { get; set; }
+    public string? DeviceFamily { get; set; }
+    public string? ProblemCategory { get; set; }
+    public string DiagnosticSummary { get; set; } = "";
+    public string FinalResolution { get; set; } = "";
+    public string ResolutionSummary { get; set; } = "";
+    public double Confidence { get; set; } = .7;
+}
+
 public sealed class ScreenDetailDto
 {
     [JsonPropertyName("widthCm")]

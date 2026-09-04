@@ -7,6 +7,8 @@ using LedSupBot.Application.Workflow.Knowledge;
 using LedSupBot.Application.Media;
 using LedSupBot.Application.Training;
 using LedSupBot.Application.Workflow.Diagnostics;
+using LedSupBot.Application.Workflow.Web;
+using LedSupBot.Application.CaseMemory;
 using LedSupBot.Application.WhatsApp;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
@@ -27,10 +29,13 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
     private readonly TechnicalKnowledgeGroundingService _knowledgeGrounding;
     private readonly TechnicalImageAnalysisService _imageAnalysis;
     private readonly DiagnosticStateService _diagnostics;
+    private readonly IWebGroundingService _webGrounding;
+    private readonly IVerifiedCaseMemoryService _caseMemory;
     private readonly IAdminEventNotifier _notifier;
     private readonly AiExtractionAuditWriter _aiAudit;
     private readonly WorkflowOptions _options;
     private readonly AiExtractionOptions _aiOptions;
+    private readonly WebGroundingOptions _webOptions;
     private readonly ILogger<ConversationWorkflowService> _logger;
 
     public ConversationWorkflowService(
@@ -43,10 +48,13 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         TechnicalKnowledgeGroundingService knowledgeGrounding,
         TechnicalImageAnalysisService imageAnalysis,
         DiagnosticStateService diagnostics,
+        IWebGroundingService webGrounding,
+        IVerifiedCaseMemoryService caseMemory,
         IAdminEventNotifier notifier,
         AiExtractionAuditWriter aiAudit,
         IOptions<WorkflowOptions> options,
         IOptions<AiExtractionOptions> aiOptions,
+        IOptions<WebGroundingOptions> webOptions,
         ILogger<ConversationWorkflowService> logger)
     {
         _db = db;
@@ -58,10 +66,13 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         _knowledgeGrounding = knowledgeGrounding;
         _imageAnalysis = imageAnalysis;
         _diagnostics = diagnostics;
+        _webGrounding = webGrounding;
+        _caseMemory = caseMemory;
         _notifier = notifier;
         _aiAudit = aiAudit;
         _options = options.Value;
         _aiOptions = aiOptions.Value;
+        _webOptions = webOptions.Value;
         _logger = logger;
     }
 
@@ -138,6 +149,27 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         var grounding = await _knowledgeGrounding.TryGroundAsync(effectiveTechnicalText, slots, context, cancellationToken);
         context.TechnicalKnowledgeContext = grounding.Context;
         context.KnowledgeGrounding = grounding;
+
+        var activeDiagnostic = diagnosticTurn.State.Issues.FirstOrDefault(x =>
+            x.Id == diagnosticTurn.State.ActiveIssueId && x.Status != DiagnosticIssueStatus.Resolved);
+        if (activeDiagnostic is not null)
+        {
+            var model = slots.ReceiverModel is not null
+                ? ReceiverModelParser.ToDisplayString(slots.ReceiverModel.Value)
+                : supportCase.ReceiverInformation?.Model ?? grounding.DetectedModels.FirstOrDefault();
+            var completedChecks = activeDiagnostic.Steps.Select(x => x.RequestedAction).ToArray();
+            context.CaseMemory = await _caseMemory.SearchAsync(activeDiagnostic.PrimarySymptom, model, completedChecks, cancellationToken);
+            if (context.CaseMemory.Used)
+            {
+                context.CaseMemoryContext = string.Join("\n", context.CaseMemory.Memories.Select(x =>
+                    $"VERIFIED PRIOR CASE: Similar symptom={x.Symptom}; Device={x.DeviceModel ?? "generic"}; " +
+                    $"Previous verified experience={x.Resolution}; Confidence={x.Confidence:0.00}. " +
+                    "Treat as historical experience, not proof of the current root cause."));
+            }
+            _logger.LogInformation("CaseMemoryAttempted=1 CaseMemoryUsed={Used} CandidateCount={Count} SelectedMemoryIds={Ids} DeviceModel={Model}",
+                context.CaseMemory.Used ? 1 : 0, context.CaseMemory.Memories.Count,
+                string.Join(',', context.CaseMemory.Memories.Select(x => x.Id)), model);
+        }
 
         ValidatedAiResponsePlan? aiPlan = null;
         var aiReplyWasProviderGenerated = false;
@@ -220,6 +252,33 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         }
         var responseAction = ConversationSemantics.ResolveAction(effectiveIntent);
 
+        var webRoute = InformationSourceRoutingPolicy.Decide(inbound.TextContent, effectiveIntent, grounding, _webOptions);
+        var webResult = WebGroundingResult.NotAttempted;
+        if (webRoute != InformationSourceRoute.NoSearch)
+        {
+            var publicQuery = InformationSourceRoutingPolicy.BuildPublicQuery(inbound.TextContent ?? string.Empty);
+            _logger.LogInformation("WebSearchRequests=1 route={Route} conversationId={ConversationId}", webRoute, conversation.Id);
+            webResult = string.IsNullOrWhiteSpace(publicQuery)
+                ? WebGroundingResult.Failed
+                : await _webGrounding.SearchAsync(publicQuery, cancellationToken);
+            _logger.LogInformation("WebSearchUsed={WebSearchUsed} sourceCount={SourceCount} conversationId={ConversationId}",
+                webResult.Used ? 1 : 0, webResult.Sources.Count, conversation.Id);
+
+            var webReply = webResult.Used && !string.IsNullOrWhiteSpace(webResult.Reply)
+                ? webResult.Reply
+                : "Şu an güncel bilgiyi web üzerinden doğrulayamıyorum.";
+            aiPlan = (aiPlan ?? new ValidatedAiResponsePlan(
+                effectiveIntent, null, null, false, null)) with
+            {
+                Intent = effectiveIntent,
+                Reply = webReply,
+                ShouldAnswerQuestion = true,
+                ShouldContinueWorkflowNow = false,
+            };
+            aiReplyWasProviderGenerated = webResult.Used;
+            responseAction = ConversationResponseAction.AnswerOnly;
+        }
+
         var duplicateDiagnosticCheck = await _diagnostics.ApplyPlannerProposalAsync(supportCase.Id, inbound.MessageId, aiPlan,
             grounding.DetectedModels.FirstOrDefault(), cancellationToken);
         if (duplicateDiagnosticCheck && aiPlan is not null)
@@ -254,6 +313,13 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             aiReplyWasProviderGenerated = false;
         }
         configExampleImagePath = composed.ConfigExampleImagePath ?? configExampleImagePath;
+
+        if (WorkflowInterruptionPolicy.ShouldResume(context, effectiveIntent, responseAction, diagnosticTurn.State, inbound.TextContent) &&
+            outboundTexts.Count > 0)
+        {
+            var resume = WorkflowInterruptionPolicy.BuildReturn(WorkflowStageResolver.ResolvePendingFact(effectiveStage));
+            if (!string.IsNullOrWhiteSpace(resume)) outboundTexts[0] = $"{outboundTexts[0]}\n\n{resume}";
+        }
 
         if (composed.ConfigExampleMarkedSent && !exampleCompleted)
         {
@@ -369,6 +435,18 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                             diagnosticTurn.DeterministicReply,
                             grounding,
                             imageAnalysis);
+                        var webSource = webResult.Attempted
+                            ? webResult.Used
+                                ? imageAnalysis is not null && grounding.Used ? AiTrainingSourceDecision.VisionRagAndWeb
+                                    : grounding.Used ? AiTrainingSourceDecision.RagAndWeb
+                                    : AiTrainingSourceDecision.WebSearch
+                                : AiTrainingSourceDecision.WebSearch
+                            : (AiTrainingSourceDecision?)null;
+                        var caseMemorySource = context.CaseMemory?.Used == true
+                            ? webResult.Used
+                                ? grounding.Used ? AiTrainingSourceDecision.CaseMemoryRagAndWeb : AiTrainingSourceDecision.CaseMemoryAndWeb
+                                : grounding.Used ? AiTrainingSourceDecision.CaseMemoryAndRag : AiTrainingSourceDecision.CaseMemory
+                            : (AiTrainingSourceDecision?)null;
 
                         return (AiReplySnapshotDraft?)AiReplySnapshotFactory.Create(
                         supportCase.Id,
@@ -384,8 +462,10 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                         imageAnalysis,
                         context.DiagnosticContext,
                         providerGenerated ? _aiOptions.ModelName : null,
-                        providerGenerated ? null : deterministicSource,
-                        providerGenerated ? null : deterministicSource.ToString());
+                        caseMemorySource ?? webSource ?? (providerGenerated ? null : deterministicSource),
+                        webResult.Attempted ? (webResult.Used ? webRoute.ToString() : "WebSearchFailed")
+                            : providerGenerated ? null : deterministicSource.ToString(),
+                        webResult);
                     })
                     .ToList();
 
@@ -639,6 +719,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         if (visionUsed) return AiTrainingSourceDecision.Vision;
         return AiTrainingSourceDecision.Deterministic;
     }
+
 
     private async Task ApplyValidatedImageFactsAsync(Guid caseId, ConversationStage stage, ValidatedImageAnalysis? result, CancellationToken ct)
     {
