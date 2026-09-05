@@ -38,8 +38,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
     private readonly AiExtractionOptions _aiOptions;
     private readonly WebGroundingOptions _webOptions;
     private readonly ILogger<ConversationWorkflowService> _logger;
-    private readonly PanelIdentityWorkflowService _panelIdentityWorkflow;
-    private readonly PanelIdentityPhotoWorkflowService _panelIdentityPhotoWorkflow;
+    private readonly IPanelIdentityCoordinator _panelIdentityCoordinator;
 
     public ConversationWorkflowService(
         IApplicationDbContext db,
@@ -58,8 +57,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         IOptions<WorkflowOptions> options,
         IOptions<AiExtractionOptions> aiOptions,
         IOptions<WebGroundingOptions> webOptions,
-        PanelIdentityWorkflowService panelIdentityWorkflow,
-        PanelIdentityPhotoWorkflowService panelIdentityPhotoWorkflow,
+        IPanelIdentityCoordinator panelIdentityCoordinator,
         ILogger<ConversationWorkflowService> logger)
     {
         _db = db;
@@ -78,8 +76,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         _options = options.Value;
         _aiOptions = aiOptions.Value;
         _webOptions = webOptions.Value;
-        _panelIdentityWorkflow = panelIdentityWorkflow;
-        _panelIdentityPhotoWorkflow = panelIdentityPhotoWorkflow;
+        _panelIdentityCoordinator = panelIdentityCoordinator;
         _logger = logger;
     }
 
@@ -110,7 +107,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
         var supportCase = await LoadOrCreateCaseAsync(conversation.Id, inbound.MessageType == MessageType.Image, cancellationToken);
         var panelIdentityTurn = inbound.MessageType == MessageType.Text
-            ? await _panelIdentityWorkflow.ApplyAsync(supportCase, inbound.TextContent, cancellationToken)
+            ? await _panelIdentityCoordinator.ApplyTextAsync(supportCase, inbound.TextContent, inbound.MessageId, cancellationToken)
             : new PanelIdentityTurnResult(false);
         var clarificationTexts = new List<string>();
         var handoffPending = false;
@@ -121,7 +118,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         {
             var ids = inbound.CoalescedMessageIds is { Count: > 0 } ? inbound.CoalescedMessageIds : [inbound.MessageId];
             imageAnalysis = await _imageAnalysis.AnalyzeAsync(ids, inbound.TextContent, cancellationToken);
-            panelIdentityTurn = await _panelIdentityPhotoWorkflow.ApplyAsync(supportCase, imageAnalysis, inbound.MessageId, cancellationToken);
+            panelIdentityTurn = await _panelIdentityCoordinator.ApplyPhotoAsync(supportCase, imageAnalysis, inbound.MessageId, cancellationToken);
             await ApplyValidatedImageFactsAsync(supportCase.Id, conversation.CurrentStage, imageAnalysis, cancellationToken);
             if (imageAnalysis?.ValidatedModels.Count == 0 && !string.IsNullOrWhiteSpace(imageAnalysis?.CustomerClarification))
                 clarificationTexts.Add(imageAnalysis.CustomerClarification);

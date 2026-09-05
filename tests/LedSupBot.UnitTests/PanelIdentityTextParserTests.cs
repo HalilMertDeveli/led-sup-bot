@@ -6,6 +6,14 @@ public sealed class PanelIdentityTextParserTests
 {
     private readonly PanelIdentityTextParser _parser = new(new PanelIdentityNormalizer());
 
+    [Fact]
+    public void Multiple_distinct_text_identities_are_ambiguous()
+    {
+        var result = _parser.Parse("P2.5+1065S+2012 ve P3.91+AB12+2013");
+        Assert.Equal(PanelIdentityTextStatus.AmbiguousIdentity, result.Status);
+        Assert.Null(result.Identity);
+    }
+
     [Theory]
     [InlineData("P2.5+1065S+2012")]
     [InlineData("p2.5+1065s+2012")]

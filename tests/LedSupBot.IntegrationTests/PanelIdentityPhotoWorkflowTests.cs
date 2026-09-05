@@ -72,7 +72,11 @@ public sealed class PanelIdentityPhotoWorkflowTests(WorkflowFixture fixture)
         fixture.WhatsApp.SentTexts.Clear();
         Configure(Observation("P2.5", code, "2013", PanelLabelRecognitionStatus.CompleteHighConfidence, true, false));
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf4-conflict-{Guid.NewGuid():N}", MessageType.Image, null);
-        Assert.Equal(before, (await fixture.LoadCaseAsync(conversation.Id))!.PanelIdentityStateJson);
+        var conflicted = (await fixture.LoadCaseAsync(conversation.Id))!.PanelIdentityStateJson;
+        Assert.NotEqual(before, conflicted);
+        Assert.Contains("IdentityConflict", conflicted);
+        Assert.Contains("SecondaryCode", conflicted);
+        Assert.DoesNotContain("ExactPackageMatch", conflicted);
         Assert.Contains("2012", Assert.Single(fixture.WhatsApp.SentTexts));
         Assert.Contains("2013", fixture.WhatsApp.SentTexts.Single());
     }
@@ -116,7 +120,10 @@ public sealed class PanelIdentityPhotoWorkflowTests(WorkflowFixture fixture)
         Assert.False(string.IsNullOrWhiteSpace((await fixture.LoadCaseAsync(conversation.Id))!.PanelIdentityStateJson));
         fixture.WhatsApp.SentTexts.Clear();
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf4-retract-{Guid.NewGuid():N}", MessageType.Text, "Yanlış panelin fotoğrafını attım.");
-        Assert.Null((await fixture.LoadCaseAsync(conversation.Id))!.PanelIdentityStateJson);
+        var retracted = (await fixture.LoadCaseAsync(conversation.Id))!.PanelIdentityStateJson;
+        Assert.NotNull(retracted);
+        Assert.Contains("MissingInformation", retracted);
+        Assert.DoesNotContain("ExactPackageMatch", retracted);
         Assert.Contains("geçersiz", Assert.Single(fixture.WhatsApp.SentTexts), StringComparison.OrdinalIgnoreCase);
     }
 
