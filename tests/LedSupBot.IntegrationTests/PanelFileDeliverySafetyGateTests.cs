@@ -217,6 +217,45 @@ public sealed class PanelFileDeliverySafetyGateTests(WorkflowFixture fixture)
         Assert.Equal(first.ConfirmedAt, second.ConfirmedAt);
     }
 
+    [Fact]
+    public async Task PF9_Confirmation_delivers_exact_documents_once_and_explicit_resend_creates_history()
+    {
+        var code = Code(); await ReadyPackage(code, "2012");
+        var (conversation, customer) = await fixture.SeedConversationAsync();
+        fixture.WhatsApp.SentDocuments.Clear();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, $"P2.5+{code}+2012");
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, "Evet");
+        Assert.Collection(fixture.WhatsApp.SentDocuments,
+            x => Assert.EndsWith(".hex", x.FileName, StringComparison.OrdinalIgnoreCase),
+            x => Assert.EndsWith(".rcvbp", x.FileName, StringComparison.OrdinalIgnoreCase));
+
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, "Evet");
+        Assert.Equal(2, fixture.WhatsApp.SentDocuments.Count);
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, "Dosyaları tekrar gönder");
+        Assert.Equal(4, fixture.WhatsApp.SentDocuments.Count);
+        var support = await fixture.LoadCaseAsync(conversation.Id);
+        Assert.Contains("completedAt", support!.PanelFileDeliveryHistoryJson, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PF9_Partial_delivery_reports_only_the_real_failure_state()
+    {
+        var code = Code(); await ReadyPackage(code, "2012");
+        var (conversation, customer) = await fixture.SeedConversationAsync();
+        fixture.WhatsApp.SentDocuments.Clear(); fixture.WhatsApp.SentTexts.Clear();
+        fixture.WhatsApp.FailDocumentCall = 2;
+        try
+        {
+            await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, $"P2.5+{code}+2012");
+            fixture.WhatsApp.SentTexts.Clear();
+            await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, "Evet");
+            Assert.Single(fixture.WhatsApp.SentDocuments);
+            Assert.Contains(fixture.WhatsApp.SentTexts, x => x.Contains("diğer dosyada gönderim hatası", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(fixture.WhatsApp.SentTexts, x => x.Contains("dosyalar gönderildi", StringComparison.OrdinalIgnoreCase));
+        }
+        finally { fixture.WhatsApp.FailDocumentCall = null; }
+    }
+
     private async Task<Guid> ReadyPackage(string code, string secondary)
     {
         await using var scope = fixture.Services.CreateAsyncScope();

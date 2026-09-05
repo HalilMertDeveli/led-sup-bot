@@ -1605,8 +1605,8 @@ public sealed class WorkflowIntegrationTests
     [InlineData("bekle", "Tamam, bekliyorum.")]
     [InlineData("bir saniye", "Tamam, bekliyorum.")]
     [InlineData("bakıyorum", "Tamam, bekliyorum.")]
-    [InlineData("fotoğraf göndersem bakabilir misin", "Evet, fotoğrafları atın.")]
-    [InlineData("foto atsam olur mu", "Evet, fotoğrafları atın.")]
+    [InlineData("fotoğraf göndersem bakabilir misin", "Evet, etiketi net görecek şekilde gönderin.")]
+    [InlineData("foto atsam olur mu", "Evet, etiketi net görecek şekilde gönderin.")]
     public async Task PARA_Wait_And_Photo_Paraphrases_Hold_Without_Ai_Or_Rag(string message, string expected)
     {
         var (conversation, customer) = await SeedPendingReceiverAsync();
@@ -2288,6 +2288,8 @@ public sealed class PanelIdentityTextWorkflowIntegrationTests(WorkflowFixture fi
 public sealed class RecordingWhatsAppClient : IWhatsAppClient
 {
     public List<string> SentTexts { get; } = [];
+    public List<(string FileName, string ContentType, byte[] Content)> SentDocuments { get; } = [];
+    public int? FailDocumentCall { get; set; }
     private readonly Dictionary<string, (string Mime, byte[] Content)> _downloads = new(StringComparer.Ordinal);
 
     /// <summary>When true, send/download throw as if the connector is offline.</summary>
@@ -2321,6 +2323,16 @@ public sealed class RecordingWhatsAppClient : IWhatsAppClient
         string? caption = null,
         CancellationToken cancellationToken = default) =>
         Task.FromResult<string?>($"fake-img-{Guid.NewGuid():N}");
+
+    public async Task<string?> SendDocumentMessageAsync(string toPhoneE164, Stream document, string contentType,
+        string fileName, string? caption = null, CancellationToken cancellationToken = default)
+    {
+        if (FailDocumentCall == SentDocuments.Count + 1) throw new InvalidOperationException("document failure (simulated)");
+        using var memory = new MemoryStream();
+        await document.CopyToAsync(memory, cancellationToken);
+        SentDocuments.Add((fileName, contentType, memory.ToArray()));
+        return $"fake-doc-{Guid.NewGuid():N}";
+    }
 
     public Task SendComposingAsync(string toPhoneE164, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;

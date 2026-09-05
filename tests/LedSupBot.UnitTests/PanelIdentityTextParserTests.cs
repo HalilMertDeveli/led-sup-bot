@@ -86,6 +86,18 @@ public sealed class PanelIdentityTextParserTests
         Assert.Equal("2013", result.Identity!.SecondaryCode);
     }
 
+    [Theory]
+    [InlineData("Hayır, sonu 2013", PanelIdentityField.SecondaryCode, "2013")]
+    [InlineData("1065S değil 1065R", PanelIdentityField.PanelCode, "1065R")]
+    [InlineData("P2.5 değil P3", PanelIdentityField.PixelPitch, "P3")]
+    public void Natural_field_corrections_only_target_the_intended_field(string text, PanelIdentityField field, string value)
+    {
+        var result = _parser.Parse(text);
+        Assert.Equal(PanelIdentityTextStatus.PartialIdentity, result.Status);
+        Assert.Equal(field, result.CorrectedField);
+        Assert.Contains(value, new[] { result.Identity!.PixelPitch, result.Identity.PanelCode, result.Identity.SecondaryCode });
+    }
+
     [Fact]
     public void Massive_malformed_input_is_safely_bounded() =>
         Assert.Equal(PanelIdentityTextStatus.NoIdentity, _parser.Parse(new string('x', 100_000)).Status);

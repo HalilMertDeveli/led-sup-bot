@@ -18,6 +18,9 @@ public static class ContextualClarificationResolver
         var fallback = RelevantRecentContext(input.Context);
         var evidence = string.IsNullOrWhiteSpace(primary) ? fallback : primary;
 
+        if (input.EffectiveStage == Domain.Enums.ConversationStage.AskPanelLabelPhotos || ContainsAny(evidence, "panel etiket", "etiket fotograf"))
+            return "Panelin arka tarafındaki etiketteki bilgilere bakabilirsiniz. İsterseniz etiketi fotoğraf olarak gönderin, ben bakayım.";
+
         if (ContainsAny(evidence, "hdmi", "processor", "video sinyal") ||
             string.IsNullOrWhiteSpace(evidence) && input.PendingFact == PendingWorkflowFact.ProcessorHdmi)
             return "HDMI kablosundan bahsediyorum. Bilgisayarın HDMI çıkışından processorün HDMI girişine gidecek.";
@@ -65,6 +68,7 @@ public static class ContextualClarificationResolver
 
     private static string BuildStepExplanation(PendingWorkflowFact fact) => fact switch
     {
+        PendingWorkflowFact.PanelLabel => "Panelin arka tarafındaki ürün etiketindeki kodları arıyoruz. Etiketi net şekilde fotoğraf olarak gönderebilirsiniz.",
         PendingWorkflowFact.ReceiverModel => "Panelin arkasında data kablolarının bağlı olduğu receiver karttan bahsediyorum. Kartın üzerinde E120, E80 veya 5A75E gibi bir model yazabilir.",
         PendingWorkflowFact.ConfigConnection => "Kutudan çıkan kare uçlu USB-B yazıcı kablosunu cihaza, standart USB ucunu bilgisayara bağlamanız gerekiyor.",
         PendingWorkflowFact.AnyDesk => "AnyDesk, bilgisayara uzaktan bağlanabilmemiz için gereken program. Açınca görünen adresi paylaşabilirsiniz.",

@@ -34,6 +34,10 @@ public sealed partial class PanelIdentityTextParser(IPanelIdentityNormalizer nor
         if (pitchCorrection.Success)
             return new(PanelIdentityTextStatus.PartialIdentity, new(pitchCorrection.Groups[1].Value, null, null),
                 [nameof(PanelIdentity.PanelCode), nameof(PanelIdentity.SecondaryCode)], PanelIdentitySource.CustomerCorrection, Bound(pitchCorrection.Value), PanelIdentityField.PixelPitch);
+        var panelCodeCorrection = PanelCodeCorrectionRegex().Match(bounded);
+        if (panelCodeCorrection.Success && !LooksLikeReceiverModelCorrection(panelCodeCorrection.Value))
+            return new(PanelIdentityTextStatus.PartialIdentity, new(null, panelCodeCorrection.Groups[1].Value, null),
+                [nameof(PanelIdentity.PixelPitch), nameof(PanelIdentity.SecondaryCode)], PanelIdentitySource.CustomerCorrection, Bound(panelCodeCorrection.Value), PanelIdentityField.PanelCode);
         var secondaryCorrection = SecondaryCorrectionRawRegex().Match(bounded);
         if (secondaryCorrection.Success)
             return new(PanelIdentityTextStatus.PartialIdentity, new(null, null,
@@ -72,12 +76,15 @@ public sealed partial class PanelIdentityTextParser(IPanelIdentityNormalizer nor
     }
 
     private static string Bound(string value) => value.Length <= 160 ? value : value[..160];
+    private static bool LooksLikeReceiverModelCorrection(string value) =>
+        Regex.IsMatch(value, @"(?i)^\s*E\d+\s+(?:değil|degil)\s+E\d+\s*$", RegexOptions.CultureInvariant);
     private const RegexOptions Options = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking;
     [GeneratedRegex(@"\b(P\d+(?:[.,]\d{1,3})?)\s*(?:\+|-|_|/|,|\s)\s*([A-Z0-9]{2,32})\s*(?:\+|-|_|/|,|\s)\s*([A-Z0-9]{2,32})\b", Options)] private static partial Regex CompleteRegex();
     [GeneratedRegex(@"^\s*((?:\d{1,31}[A-Z][A-Z0-9]*|[A-Z][A-Z0-9]{0,30}\d[A-Z0-9]*))\s*(?:\+|/|,)\s*([A-Z0-9]{2,32})\s*[.!?]?\s*$", Options)] private static partial Regex MissingPitchRegex();
     [GeneratedRegex(@"^\s*(P\d+(?:[.,]\d{1,3})?)\s*(?:\+|/|,)\s*((?:\d{1,31}[A-Z][A-Z0-9]*|[A-Z][A-Z0-9]{0,30}\d[A-Z0-9]*))\s*[.!?]?\s*$", Options)] private static partial Regex MissingSecondaryRegex();
     [GeneratedRegex(@"^\s*P\d+(?:[.,]\d{1,3})?\s*(?:\+|/|,)\s*\d{2,32}\s*[.!?]?\s*$", Options)] private static partial Regex AmbiguousRegex();
-    [GeneratedRegex(@"\b(?:hay[ıi]r\s+)?(?:son\s+kod|secondary\s*(?:code|kod))\s*(?:=|:)?\s*([A-Z0-9]{2,32})\b", Options)] private static partial Regex CorrectionRegex();
+    [GeneratedRegex(@"\b(?:hay[ıi]r\s*[,]?\s*)?(?:sonu|son\s+kod|secondary\s*(?:code|kod))\s*(?:=|:)?\s*([A-Z0-9]{2,32})\b", Options)] private static partial Regex CorrectionRegex();
+    [GeneratedRegex(@"\b[A-Z0-9]*[A-Z][A-Z0-9]*\s+(?:değil|degil)\s+([A-Z0-9]*[A-Z][A-Z0-9]*)\b", Options)] private static partial Regex PanelCodeCorrectionRegex();
     [GeneratedRegex(@"\b(?:\d{2,32}\s+(?:değil|degil)\s+)?(\d{2,32})\s+(?:doğru|dogru)\b|\b\d{2,32}\s+(?:değil|degil)\s+(\d{2,32})\b", Options)] private static partial Regex SecondaryCorrectionRawRegex();
     [GeneratedRegex(@"\bP\d+(?:[.,]\d{1,3})?\s+(?:değil|degil)\s+(P\d+(?:[.,]\d{1,3})?)\b", Options)] private static partial Regex PitchCorrectionRegex();
     [GeneratedRegex(@"^\s*(?:hayır|hayir)\s*[,]?\s*(\d{2,32})\s+(?:olacak|doğru|dogru)\s*[.!]?\s*$", Options)] private static partial Regex NegativeSecondaryCorrectionRegex();
@@ -100,4 +107,5 @@ public sealed record PanelIdentityTurnResult(
     bool Attempted,
     string? Reply = null,
     string ContextJson = "{}",
-    bool DeliveryAuthorizedNow = false);
+    bool DeliveryAuthorizedNow = false,
+    bool ForceNewDeliveryAttempt = false);

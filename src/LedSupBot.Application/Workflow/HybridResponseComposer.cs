@@ -102,7 +102,7 @@ public sealed class HybridResponseComposer
             outbound.Add(ConversationSemantics.IsWaitAcknowledgement(inboundText)
                 ? "Tamam, bekliyorum."
                 : ConversationSemantics.IsPhotoOffer(inboundText)
-                    ? "Evet, fotoğrafları atın."
+                    ? "Evet, etiketi net görecek şekilde gönderin."
                 : input.Context.CompletedCasesCount > 0
                 ? "Tabii, sorunuzu yazabilirsiniz."
                 : "Tamam.");
@@ -183,7 +183,7 @@ public sealed class HybridResponseComposer
         return prefix + (input.PendingFact switch
         {
             PendingWorkflowFact.ScreenDimensions => "Ekranın yatay ve dikey ölçüsü kaç cm?",
-            PendingWorkflowFact.PanelLabel => "Sırada panel etiket fotoğrafı var; gönderebilir misiniz?",
+            PendingWorkflowFact.PanelLabel => "Panel arkasındaki etiketi fotoğraf olarak gönderebilir veya P2.5+1065S+2012 şeklinde yazabilirsiniz.",
             PendingWorkflowFact.ReceiverCount => "Receiver tarafında kalmıştık. Kaç tane var?",
             PendingWorkflowFact.ReceiverModel => "Receiver adedi tamam. Kartın modeli nedir?",
             PendingWorkflowFact.PlayerType => "Receiver bilgileri tamam. Oynatıcı Playbox mı, processor mü?",

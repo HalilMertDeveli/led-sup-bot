@@ -53,7 +53,7 @@ public sealed class Phase2ConversationRecoveryTests
 
     [Theory]
     [InlineData("Bekle bi bakıyorum.", "Tamam, bekliyorum.")]
-    [InlineData("Foto atsam anlar mısın?", "Evet, fotoğrafları atın.")]
+    [InlineData("Foto atsam anlar mısın?", "Evet, etiketi net görecek şekilde gönderin.")]
     public void Golden_Acknowledgements_Hold_Without_Extra_Question(string text, string expected)
     {
         var input = Input(PendingWorkflowFact.ReceiverCount, ConversationResponseAction.AnswerOnly, null) with

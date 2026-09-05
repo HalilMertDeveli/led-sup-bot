@@ -33,13 +33,13 @@ public static class WorkflowPrompts
         "Ekran ölçüsünü cm cinsinden yatay ve dikey olarak paylaşabilir misiniz? Örnek: 500x300";
 
     public const string AskPanelLabelPhotos =
-        "Panelin arkasındaki etiketlerin fotoğraflarını bana atabilir misiniz? Panel arkasında bulunan bütün etiketleri göndermeniz önemli.";
+        "Panel arkasındaki etiketi net görecek şekilde fotoğraf atabilir misiniz? Bilgiler elinizdeyse P2.5+1065S+2012 şeklinde de yazabilirsiniz.";
 
     public const string AskPanelLabelPhotosAttempt2 =
-        "Uygunsa panelin arkasındaki ürün/etiket kısmının tek bir fotoğrafı yeterli.";
+        "Etiketi net görecek şekilde tek fotoğraf gönderebilir veya P2.5+1065S+2012 formatında yazabilirsiniz.";
 
     public const string RemindPanelLabelPhotos =
-        "Panel etiketlerinin fotoğraflarını göndermeniz gerekiyor. Lütfen panel arkasındaki etiket fotoğraflarını paylaşın.";
+        "Panel arkasındaki etiketi fotoğraf olarak gönderebilir veya üzerindeki üç kodu P2.5+1065S+2012 şeklinde yazabilirsiniz.";
 
     public const string AskReceiverCount =
         "Kaç adet receiver kullandınız? Panel arkasında bulunan yeşil kartlardan bahsediyorum.";

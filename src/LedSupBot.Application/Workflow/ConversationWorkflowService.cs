@@ -133,6 +133,11 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         var deliveryGateTurn = await _panelFileDeliverySafetyGate.HandleAsync(supportCase, inbound.TextContent,
             inbound.MessageId, panelIdentityTurn.Attempted, cancellationToken);
         if (deliveryGateTurn.Attempted) panelIdentityTurn = deliveryGateTurn;
+        if (!panelIdentityTurn.Attempted && inbound.MessageType == MessageType.Text)
+        {
+            var guidanceTurn = PanelFileConversationGuidance.Handle(supportCase, inbound.TextContent);
+            if (guidanceTurn.Attempted) panelIdentityTurn = guidanceTurn;
+        }
 
         if (!panelIdentityTurn.Attempted)
             await ApplyInboundContentAsync(conversation.Id, supportCase, inbound, clarificationTexts, cancellationToken);
@@ -504,9 +509,19 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                     cancellationToken);
                 if (panelIdentityTurn.DeliveryAuthorizedNow)
                 {
-                    await _panelFileDeliveryService.DeliverAsync(
+                    var deliveryResult = await _panelFileDeliveryService.DeliverAsync(
                         supportCase, conversation.Id, inbound.CustomerPhoneE164,
-                        inbound.WhatsAppDeliveryRoute, cancellationToken);
+                        inbound.WhatsAppDeliveryRoute, panelIdentityTurn.ForceNewDeliveryAttempt, cancellationToken);
+                    var deliveryStatusText = deliveryResult.Outcome switch
+                    {
+                        PanelFileDeliveryOutcome.PartialFailure => "HEX dosyası gitti, diğer dosyada gönderim hatası oluştu.",
+                        PanelFileDeliveryOutcome.Failed => "Dosyaları gönderirken bir hata oluştu.",
+                        PanelFileDeliveryOutcome.Blocked => "Güvenlik kontrolü tamamlanamadığı için dosyaları göndermedim.",
+                        _ => null,
+                    };
+                    if (deliveryStatusText is not null)
+                        await _outbound.SendTextsAsync(conversation.Id, inbound.CustomerPhoneE164,
+                            inbound.WhatsAppDeliveryRoute, [deliveryStatusText], cancellationToken: cancellationToken);
                 }
             }
             catch (Exception ex)

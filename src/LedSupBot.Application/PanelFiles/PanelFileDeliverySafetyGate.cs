@@ -93,7 +93,7 @@ public sealed partial class PanelFileDeliverySafetyGate(
                 CustomerMessageId = customerMessageId, Reason = null, Decision = PanelFileDeliveryDecision.Allowed,
                 BlockedReason = PanelFileDeliveryBlockedReason.None };
             await PersistAsync(supportCase, confirmed, ct);
-            return Turn(identity, confirmed, "Panel kimliği doğrulandı. Dosya teslimatı için güvenlik koşulları sağlandı.", true);
+            return Turn(identity, confirmed, "Tamam, ilgili dosyaları gönderiyorum.", true);
         }
 
         if (identityTurnAttempted && current.Decision == PanelFileDeliveryDecision.Blocked) return new(false);
@@ -126,7 +126,7 @@ public sealed partial class PanelFileDeliverySafetyGate(
         if (!Matches(confirmation, current)) return current with { Decision = PanelFileDeliveryDecision.Blocked, BlockedReason = PanelFileDeliveryBlockedReason.ConfirmationStale };
         return confirmation.Status switch
         {
-            PanelFileConfirmationStatus.Confirmed => current,
+            PanelFileConfirmationStatus.Confirmed => current with { ConfirmationId = confirmation.ConfirmationId },
             PanelFileConfirmationStatus.Rejected => current with { Decision = PanelFileDeliveryDecision.Blocked, BlockedReason = PanelFileDeliveryBlockedReason.ConfirmationRejected },
             PanelFileConfirmationStatus.Invalidated => current with { Decision = PanelFileDeliveryDecision.Blocked, BlockedReason = PanelFileDeliveryBlockedReason.ConfirmationStale },
             _ => current with { Decision = PanelFileDeliveryDecision.Blocked, BlockedReason = PanelFileDeliveryBlockedReason.ConfirmationRequired },

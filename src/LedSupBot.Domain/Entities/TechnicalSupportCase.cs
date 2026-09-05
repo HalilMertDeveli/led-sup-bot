@@ -44,6 +44,9 @@ public class TechnicalSupportCase : Entity
     /// <summary>PF7 immutable asset binding plus per-document delivery/retry audit.</summary>
     public string? PanelFileDeliveryStateJson { get; set; }
 
+    /// <summary>Append-only snapshots of completed/replaced PF7 delivery attempts.</summary>
+    public string? PanelFileDeliveryHistoryJson { get; set; }
+
     public ScreenInformation? ScreenInformation { get; set; }
 
     public ReceiverInformation? ReceiverInformation { get; set; }
