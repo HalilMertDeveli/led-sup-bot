@@ -893,6 +893,146 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                     b.ToTable("messages", (string)null);
                 });
 
+            modelBuilder.Entity("LedSupBot.Domain.Entities.PanelFilePackage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CanonicalKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Manufacturer")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("PanelCode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("PixelPitch")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("SecondaryCode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CanonicalKey")
+                        .IsUnique()
+                        .HasDatabaseName("ux_panel_file_packages_canonical_key");
+
+                    b.HasIndex("Status")
+                        .HasDatabaseName("ix_panel_file_packages_status");
+
+                    b.ToTable("panel_file_packages", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_panel_file_packages_canonical_identity", "\"CanonicalKey\" = \"PixelPitch\" || '-' || \"PanelCode\" || '-' || \"SecondaryCode\"");
+                        });
+                });
+
+            modelBuilder.Entity("LedSupBot.Domain.Entities.PanelFilePackageAsset", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AssetType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("FileSize")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("OriginalFileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<Guid>("PanelFilePackageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Sha256")
+                        .HasDatabaseName("ix_panel_file_package_assets_sha256");
+
+                    b.HasIndex("PanelFilePackageId", "AssetType")
+                        .IsUnique()
+                        .HasDatabaseName("ux_panel_file_package_assets_active_type")
+                        .HasFilter("\"Status\" = 'Active'");
+
+                    b.HasIndex("PanelFilePackageId", "AssetType", "Version")
+                        .IsUnique()
+                        .HasDatabaseName("ux_panel_file_package_assets_version");
+
+                    b.ToTable("panel_file_package_assets", (string)null);
+                });
+
             modelBuilder.Entity("LedSupBot.Domain.Entities.PanelLabelPhoto", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1360,6 +1500,17 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                     b.Navigation("Conversation");
                 });
 
+            modelBuilder.Entity("LedSupBot.Domain.Entities.PanelFilePackageAsset", b =>
+                {
+                    b.HasOne("LedSupBot.Domain.Entities.PanelFilePackage", "Package")
+                        .WithMany("Assets")
+                        .HasForeignKey("PanelFilePackageId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Package");
+                });
+
             modelBuilder.Entity("LedSupBot.Domain.Entities.PanelLabelPhoto", b =>
                 {
                     b.HasOne("LedSupBot.Domain.Entities.TechnicalSupportCase", "TechnicalSupportCase")
@@ -1426,6 +1577,11 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("LedSupBot.Domain.Entities.Message", b =>
                 {
                     b.Navigation("AiExtractionResults");
+                });
+
+            modelBuilder.Entity("LedSupBot.Domain.Entities.PanelFilePackage", b =>
+                {
+                    b.Navigation("Assets");
                 });
 
             modelBuilder.Entity("LedSupBot.Domain.Entities.TechnicalSupportCase", b =>

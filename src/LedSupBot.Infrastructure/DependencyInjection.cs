@@ -17,6 +17,8 @@ using LedSupBot.Infrastructure.Media;
 using LedSupBot.Infrastructure.Knowledge;
 using LedSupBot.Infrastructure.OpenAi;
 using LedSupBot.Infrastructure.Persistence;
+using LedSupBot.Application.PanelFiles;
+using LedSupBot.Infrastructure.PanelFiles;
 using LedSupBot.Infrastructure.Queue;
 using LedSupBot.Infrastructure.WhatsApp;
 using Microsoft.EntityFrameworkCore;
@@ -45,6 +47,7 @@ public static class DependencyInjection
         services.Configure<TrainingCollectionOptions>(configuration.GetSection(TrainingCollectionOptions.SectionName));
         services.Configure<WebGroundingOptions>(configuration.GetSection(WebGroundingOptions.SectionName));
         services.Configure<EmbeddingOptions>(configuration.GetSection(EmbeddingOptions.SectionName));
+        services.Configure<PanelFilePackageOptions>(configuration.GetSection(PanelFilePackageOptions.SectionName));
         services.AddScoped<IPdfKnowledgeExtractor, PdfKnowledgeExtractor>();
         services.AddHttpClient<IDocumentFallbackExtractor, GeminiDocumentFallbackExtractor>((sp, client) =>
         {
@@ -81,6 +84,11 @@ public static class DependencyInjection
             services.AddScoped<KnowledgeImporter>();
             services.AddScoped<ITechnicalKnowledgeRetriever, TechnicalKnowledgeRetriever>();
             services.AddScoped<IVerifiedCaseMemoryService, VerifiedCaseMemoryService>();
+            services.AddSingleton<IPanelIdentityNormalizer, PanelIdentityNormalizer>();
+            services.AddScoped<IPanelFilePackageResolver, PanelFilePackageResolver>();
+            services.AddScoped<IPanelFileAssetRegistry, PanelFileAssetRegistry>();
+            services.AddScoped<IPanelFilePackageRegistry, PanelFilePackageRegistry>();
+            services.AddScoped<IPanelFilePackageAdminQuery, PanelFilePackageAdminQuery>();
             services.AddScoped<IConversationTakeoverService, ConversationTakeoverService>();
             services.AddScoped<IConversationWorkflowService, ConversationWorkflowService>();
             services.AddScoped<IWorkflowOutboundDispatcher, WorkflowOutboundDispatcher>();

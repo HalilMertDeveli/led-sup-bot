@@ -36,6 +36,8 @@ public interface IApplicationDbContext
 
     DbSet<AiTrainingExample> AiTrainingExamples { get; }
     DbSet<VerifiedSupportCaseMemory> VerifiedSupportCaseMemories { get; }
+    DbSet<PanelFilePackage> PanelFilePackages { get; }
+    DbSet<PanelFilePackageAsset> PanelFilePackageAssets { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -44,6 +44,8 @@ public sealed class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<AiReplyContextSnapshot> AiReplyContextSnapshots => Set<AiReplyContextSnapshot>();
     public DbSet<AiTrainingExample> AiTrainingExamples => Set<AiTrainingExample>();
     public DbSet<VerifiedSupportCaseMemory> VerifiedSupportCaseMemories => Set<VerifiedSupportCaseMemory>();
+    public DbSet<PanelFilePackage> PanelFilePackages => Set<PanelFilePackage>();
+    public DbSet<PanelFilePackageAsset> PanelFilePackageAssets => Set<PanelFilePackageAsset>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

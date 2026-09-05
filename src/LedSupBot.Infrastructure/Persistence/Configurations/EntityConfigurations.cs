@@ -58,6 +58,48 @@ public sealed class KnowledgeDocumentConfiguration : IEntityTypeConfiguration<Kn
     }
 }
 
+public sealed class PanelFilePackageConfiguration : IEntityTypeConfiguration<PanelFilePackage>
+{
+    public void Configure(EntityTypeBuilder<PanelFilePackage> builder)
+    {
+        builder.ToTable("panel_file_packages", table => table.HasCheckConstraint(
+            "ck_panel_file_packages_canonical_identity",
+            "\"CanonicalKey\" = \"PixelPitch\" || '-' || \"PanelCode\" || '-' || \"SecondaryCode\""));
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.PixelPitch).HasMaxLength(32).IsRequired();
+        builder.Property(x => x.PanelCode).HasMaxLength(32).IsRequired();
+        builder.Property(x => x.SecondaryCode).HasMaxLength(32).IsRequired();
+        builder.Property(x => x.CanonicalKey).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.DisplayName).HasMaxLength(256).IsRequired();
+        builder.Property(x => x.Manufacturer).HasMaxLength(128);
+        builder.Property(x => x.Description).HasMaxLength(2000);
+        builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.Notes).HasMaxLength(2000);
+        builder.HasIndex(x => x.CanonicalKey).IsUnique().HasDatabaseName("ux_panel_file_packages_canonical_key");
+        builder.HasIndex(x => x.Status).HasDatabaseName("ix_panel_file_packages_status");
+    }
+}
+
+public sealed class PanelFilePackageAssetConfiguration : IEntityTypeConfiguration<PanelFilePackageAsset>
+{
+    public void Configure(EntityTypeBuilder<PanelFilePackageAsset> builder)
+    {
+        builder.ToTable("panel_file_package_assets"); builder.HasKey(x => x.Id);
+        builder.Property(x => x.AssetType).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.OriginalFileName).HasMaxLength(255).IsRequired();
+        builder.Property(x => x.StorageKey).HasMaxLength(512).IsRequired();
+        builder.Property(x => x.MimeType).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.Sha256).HasMaxLength(64).IsRequired();
+        builder.HasOne(x => x.Package).WithMany(x => x.Assets).HasForeignKey(x => x.PanelFilePackageId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasIndex(x => new { x.PanelFilePackageId, x.AssetType, x.Version }).IsUnique()
+            .HasDatabaseName("ux_panel_file_package_assets_version");
+        builder.HasIndex(x => new { x.PanelFilePackageId, x.AssetType }).IsUnique()
+            .HasFilter("\"Status\" = 'Active'").HasDatabaseName("ux_panel_file_package_assets_active_type");
+        builder.HasIndex(x => x.Sha256).HasDatabaseName("ix_panel_file_package_assets_sha256");
+    }
+}
+
 public sealed class KnowledgeChunkConfiguration : IEntityTypeConfiguration<KnowledgeChunk>
 {
     public void Configure(EntityTypeBuilder<KnowledgeChunk> builder)

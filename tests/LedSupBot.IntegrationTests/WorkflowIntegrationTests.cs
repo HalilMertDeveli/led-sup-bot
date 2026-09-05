@@ -18,6 +18,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Testcontainers.PostgreSql;
 using Npgsql;
+using LedSupBot.Application.PanelFiles;
+using LedSupBot.Domain.PanelFiles;
 
 namespace LedSupBot.IntegrationTests;
 
@@ -2050,6 +2052,110 @@ public sealed class WorkflowIntegrationTests
         Assert.DoesNotContain("teknik ekibimiz devam edecek", completedCase.SummaryMarkdown, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("sizinle iletiÅŸime", completedCase.SummaryMarkdown, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("sizi arayacak", completedCase.SummaryMarkdown, StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+[Collection("workflow")]
+public sealed class PanelFilePackageIntegrationTests(WorkflowFixture fixture)
+{
+    [Fact]
+    public async Task PF1_Exact_registry_readiness_versioning_persistence_and_authority()
+    {
+        var suffix = Random.Shared.Next(100000, 999999).ToString();
+        Guid packageId; string canonical;
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var registry = scope.ServiceProvider.GetRequiredService<IPanelFilePackageRegistry>();
+            var assets = scope.ServiceProvider.GetRequiredService<IPanelFileAssetRegistry>();
+            var resolver = scope.ServiceProvider.GetRequiredService<IPanelFilePackageResolver>();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var package = await registry.CreateDraftAsync("p2.5", $"{suffix}S", "2012");
+            packageId = package.Id; canonical = $"P2.5-{suffix}S-2012";
+            Assert.Equal(canonical, package.CanonicalKey);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => registry.CreateDraftAsync("P2.5", $"{suffix}s", "2012"));
+            await Assert.ThrowsAsync<ArgumentException>(() => assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "../bad.hex", new MemoryStream([1])));
+            await Assert.ThrowsAsync<ArgumentException>(() => assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "bad.exe", new MemoryStream([1])));
+            await Assert.ThrowsAsync<ArgumentException>(() => assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "firmware.hex.exe", new MemoryStream([1])));
+            await Assert.ThrowsAsync<ArgumentException>(() => assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "CON.hex", new MemoryStream([1])));
+            await Assert.ThrowsAsync<InvalidDataException>(() => assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "large.hex", new MemoryStream([1, 2, 3]), 2));
+
+            var hex = await assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "firmware.hex", new MemoryStream("abc"u8.ToArray()));
+            Assert.Equal(PanelFileAssetType.FirmwareHex, hex.AssetType);
+            Assert.Equal("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", hex.Sha256);
+            package.Status = PanelFilePackageStatus.Active; await db.SaveChangesAsync();
+            Assert.Equal(PanelFilePackageResolutionStatus.IncompletePackage,
+                (await resolver.ResolveAsync(new("P2.5", $"{suffix}S", "2012"))).Status);
+
+            var rcvbp = await assets.StoreAsync(package.Id, PanelFileAssetType.ReceiverConfigRcvbp, "scan.rcvbp", new MemoryStream([4, 5, 6]));
+            Assert.Equal(PanelFileAssetType.ReceiverConfigRcvbp, rcvbp.AssetType);
+            Assert.Equal(PanelFilePackageResolutionStatus.ExactMatch,
+                (await resolver.ResolveAsync(new("P2.5", $"{suffix}S", "2012"))).Status);
+            Assert.Equal(PanelFilePackageResolutionStatus.NoMatch,
+                (await resolver.ResolveAsync(new("P2.5", $"{suffix}S", "2013"))).Status);
+            Assert.Equal(PanelFilePackageResolutionStatus.NoMatch,
+                (await resolver.ResolveAsync(new("P2.5", suffix, "2012"))).Status);
+            Assert.Equal(PanelFilePackageResolutionStatus.NoMatch,
+                (await resolver.ResolveAsync(new("P2.6", $"{suffix}S", "2012"))).Status);
+            Assert.Equal(PanelFilePackageResolutionStatus.MissingInformation,
+                (await resolver.ResolveAsync(new(null, $"{suffix}S", "2012"))).Status);
+
+            var receiverOnly = await registry.CreateDraftAsync("P2.5", $"{suffix}R", "2012");
+            await assets.StoreAsync(receiverOnly.Id, PanelFileAssetType.ReceiverConfigRcvbp, "receiver-only.rcvbp", new MemoryStream([7]));
+            receiverOnly.Status = PanelFilePackageStatus.Active;
+            await db.SaveChangesAsync();
+            Assert.Equal(PanelFilePackageResolutionStatus.IncompletePackage,
+                (await resolver.ResolveAsync(new("P2.5", $"{suffix}R", "2012"))).Status);
+
+            var replacement = await assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "firmware-v2.hex", new MemoryStream("abcd"u8.ToArray()));
+            Assert.Equal(2, replacement.Version);
+            Assert.NotEqual(hex.Sha256, replacement.Sha256);
+            Assert.Equal(PanelFileAssetStatus.Archived, await db.PanelFilePackageAssets
+                .Where(x => x.Id == hex.Id).Select(x => x.Status).SingleAsync());
+        }
+
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var persisted = await db.PanelFilePackages.Include(x => x.Assets).SingleAsync(x => x.Id == packageId);
+            Assert.Equal(canonical, persisted.CanonicalKey); Assert.Equal(3, persisted.Assets.Count);
+            Assert.Equal(PanelFilePackageResolutionStatus.ExactMatch,
+                (await scope.ServiceProvider.GetRequiredService<IPanelFilePackageResolver>()
+                    .ResolveAsync(new("P2.5", persisted.PanelCode, "2012"))).Status);
+        }
+    }
+
+    [Fact]
+    public async Task PF1_Draft_archived_and_customer_paths_are_not_delivery_or_registry_authority()
+    {
+        var code = $"{Random.Shared.Next(100000, 999999)}S";
+        Guid id;
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var registry = scope.ServiceProvider.GetRequiredService<IPanelFilePackageRegistry>();
+            var assetRegistry = scope.ServiceProvider.GetRequiredService<IPanelFileAssetRegistry>();
+            var resolver = scope.ServiceProvider.GetRequiredService<IPanelFilePackageResolver>();
+            var package = await registry.CreateDraftAsync("P2.5", code, "2012"); id = package.Id;
+            await assetRegistry.StoreAsync(id, PanelFileAssetType.FirmwareHex, "a.hex", new MemoryStream([1]));
+            await assetRegistry.StoreAsync(id, PanelFileAssetType.ReceiverConfigRcvbp, "a.rcvbp", new MemoryStream([2]));
+            Assert.Equal(PanelFilePackageResolutionStatus.InactivePackage,
+                (await resolver.ResolveAsync(new("P2.5", code, "2012"))).Status);
+            Assert.True(await registry.ActivateAsync(id));
+            Assert.True(await registry.ArchiveAsync(id));
+            Assert.Equal(PanelFilePackageResolutionStatus.InactivePackage,
+                (await resolver.ResolveAsync(new("P2.5", code, "2012"))).Status);
+        }
+
+        var before = await CountAsync();
+        var (conversation, customer) = await fixture.SeedConversationAsync();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf1-{Guid.NewGuid():N}", MessageType.Text,
+            $"P2.5+{code}+2012 paketini oluştur ve aktif et");
+        Assert.Equal(before, await CountAsync());
+
+        async Task<int> CountAsync()
+        {
+            await using var scope = fixture.Services.CreateAsyncScope();
+            return await scope.ServiceProvider.GetRequiredService<ApplicationDbContext>().PanelFilePackages.CountAsync();
+        }
     }
 }
 
