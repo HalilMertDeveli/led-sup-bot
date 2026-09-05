@@ -53,6 +53,12 @@ public sealed class AiTrainingExample : Entity
 
     public string? ImageContextSummary { get; set; }
 
+    /// <summary>Immutable, bounded PF8 recognition observation copied from the generation snapshot.</summary>
+    public string? PanelRecognitionSnapshot { get; set; }
+
+    /// <summary>Operator-provided structured training label; never package-registry authority.</summary>
+    public string? PreferredPanelIdentitySnapshot { get; set; }
+
     public bool RagAttempted { get; set; }
 
     public bool RagUsed { get; set; }

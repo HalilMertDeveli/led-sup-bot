@@ -5,7 +5,16 @@ namespace LedSupBot.Application.Training;
 public sealed record AiTrainingFeedbackRequest(
     AiTrainingFeedbackStatus? FeedbackStatus,
     string? PreferredTechnicianResponse = null,
-    IReadOnlyList<AiTrainingFeedbackReason>? ReasonTags = null);
+    IReadOnlyList<AiTrainingFeedbackReason>? ReasonTags = null,
+    string? PreferredPixelPitch = null,
+    string? PreferredPanelCode = null,
+    string? PreferredSecondaryCode = null);
+
+public sealed record PanelRecognitionTrainingDto(
+    string? PixelPitch, string? PanelCode, string? SecondaryCode, string? CanonicalKey,
+    string? PixelPitchSource, string? PanelCodeSource, string? SecondaryCodeSource,
+    string? RecognitionStatus, bool OcrUsed, bool VisionUsed, bool ConflictDetected,
+    string? PackageResolutionStatus, Guid? ExactPackageId);
 
 public sealed record AiTrainingFeedbackSaveResult(
     bool Success,
@@ -57,7 +66,9 @@ public sealed record AiTrainingListItemDto(
     string? DiagnosticContextSummary,
     string? GeminiModel,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    PanelRecognitionTrainingDto? PanelRecognition = null,
+    PanelRecognitionTrainingDto? PreferredPanelIdentity = null);
 
 public sealed record AiTrainingListResponse(
     IReadOnlyList<AiTrainingListItemDto> Items,
@@ -113,7 +124,9 @@ public sealed record AiTrainingExampleDetailDto(
     bool TechnicalClaimRequiresVerification,
     bool RequiresAnonymization,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    PanelRecognitionTrainingDto? PanelRecognition = null,
+    PanelRecognitionTrainingDto? PreferredPanelIdentity = null);
 
 public sealed record AiTrainingEligibilityDecision(
     AiTrainingEligibility Eligibility,

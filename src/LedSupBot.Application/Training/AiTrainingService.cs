@@ -1,6 +1,7 @@
 using System.Text.Json;
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Admin;
+using LedSupBot.Application.PanelFiles;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -35,15 +36,18 @@ public sealed class AiTrainingService : IAiTrainingService
     private readonly IApplicationDbContext _db;
     private readonly IAdminEventNotifier _notifier;
     private readonly TrainingCollectionOptions _collectionOptions;
+    private readonly IPanelIdentityNormalizer _panelIdentityNormalizer;
 
     public AiTrainingService(
         IApplicationDbContext db,
         IAdminEventNotifier notifier,
-        IOptions<TrainingCollectionOptions> collectionOptions)
+        IOptions<TrainingCollectionOptions> collectionOptions,
+        IPanelIdentityNormalizer panelIdentityNormalizer)
     {
         _db = db;
         _notifier = notifier;
         _collectionOptions = collectionOptions.Value;
+        _panelIdentityNormalizer = panelIdentityNormalizer;
     }
 
     public async Task<AiTrainingFeedbackSaveResult> UpsertFeedbackAsync(
@@ -62,6 +66,19 @@ public sealed class AiTrainingService : IAiTrainingService
         }
 
         var preferred = NormalizeOptional(request.PreferredTechnicianResponse);
+        var hasStructuredCorrection = !string.IsNullOrWhiteSpace(request.PreferredPixelPitch) ||
+            !string.IsNullOrWhiteSpace(request.PreferredPanelCode) || !string.IsNullOrWhiteSpace(request.PreferredSecondaryCode);
+        PanelRecognitionTrainingDto? preferredPanelIdentity = null;
+        if (hasStructuredCorrection)
+        {
+            var normalized = _panelIdentityNormalizer.Normalize(
+                request.PreferredPixelPitch, request.PreferredPanelCode, request.PreferredSecondaryCode);
+            if (normalized.Identity is null) return AiTrainingFeedbackSaveResult.Failed(normalized.Error ?? "panel_identity_is_invalid");
+            preferredPanelIdentity = new(normalized.Identity.PixelPitch, normalized.Identity.PanelCode,
+                normalized.Identity.SecondaryCode, normalized.Identity.CanonicalKey,
+                "OperatorCorrection", "OperatorCorrection", "OperatorCorrection", "Corrected",
+                false, false, false, null, null);
+        }
         if (preferred?.Length > MaxResponseLength)
         {
             return AiTrainingFeedbackSaveResult.Failed("preferred_response_too_long");
@@ -72,7 +89,7 @@ public sealed class AiTrainingService : IAiTrainingService
             preferred = AiReplySnapshotFactory.SanitizePreferredResponse(preferred, out _);
         }
 
-        if (feedbackStatus == AiTrainingFeedbackStatus.Edited && string.IsNullOrWhiteSpace(preferred))
+        if (feedbackStatus == AiTrainingFeedbackStatus.Edited && string.IsNullOrWhiteSpace(preferred) && preferredPanelIdentity is null)
         {
             return AiTrainingFeedbackSaveResult.Failed("preferred_response_required");
         }
@@ -117,16 +134,23 @@ public sealed class AiTrainingService : IAiTrainingService
         if (feedbackStatus is AiTrainingFeedbackStatus.Approved or AiTrainingFeedbackStatus.Excluded)
         {
             preferred = null;
+            preferredPanelIdentity = null;
         }
+
+        var originalPanelIdentity = ParsePanelRecognition(snapshot.PanelIdentityContextSnapshot);
+        if (preferredPanelIdentity is not null && originalPanelIdentity is null)
+            return AiTrainingFeedbackSaveResult.Failed("message_not_panel_recognition_eligible");
 
         var technicalClaimRequiresVerification =
             snapshot.TechnicalClaimRequiresVerification ||
             (preferred is not null && AiReplySnapshotFactory.ContainsPotentialTechnicalClaim(preferred));
+        var eligibilityOriginal = originalPanelIdentity?.CanonicalKey ?? snapshot.OriginalAiResponse;
+        var eligibilityPreferred = preferredPanelIdentity?.CanonicalKey ?? preferred;
         var decision = AiTrainingEligibilityPolicy.Evaluate(
             feedbackStatus,
-            snapshot.OriginalAiResponse,
-            preferred,
-            technicalClaimRequiresVerification);
+            eligibilityOriginal,
+            eligibilityPreferred,
+            originalPanelIdentity is null && technicalClaimRequiresVerification);
 
         var example = await _db.AiTrainingExamples
             .SingleOrDefaultAsync(x => x.AiResponseMessageId == aiResponseMessageId, cancellationToken);
@@ -140,7 +164,7 @@ public sealed class AiTrainingService : IAiTrainingService
         }
 
         // Revisions only update the human label. The generation-time snapshot remains immutable.
-        ApplyHumanFeedback(example, feedbackStatus, preferred, tags, decision,
+        ApplyHumanFeedback(example, feedbackStatus, preferred, preferredPanelIdentity, tags, decision,
             technicalClaimRequiresVerification);
 
         try
@@ -159,7 +183,7 @@ public sealed class AiTrainingService : IAiTrainingService
                 throw;
             }
 
-            ApplyHumanFeedback(concurrent, feedbackStatus, preferred, tags, decision,
+            ApplyHumanFeedback(concurrent, feedbackStatus, preferred, preferredPanelIdentity, tags, decision,
                 technicalClaimRequiresVerification);
             await _db.SaveChangesAsync(cancellationToken);
             example = concurrent;
@@ -268,6 +292,7 @@ public sealed class AiTrainingService : IAiTrainingService
         DiagnosticContextSnapshot = snapshot.DiagnosticContextSnapshot,
         DetectedModelsSnapshot = snapshot.DetectedModelsSnapshot,
         ImageContextSummary = snapshot.ImageContextSummary,
+        PanelRecognitionSnapshot = snapshot.PanelIdentityContextSnapshot,
         RagAttempted = snapshot.RagAttempted,
         RagUsed = snapshot.RagUsed,
         GroundingLevel = snapshot.GroundingLevel,
@@ -295,12 +320,14 @@ public sealed class AiTrainingService : IAiTrainingService
         AiTrainingExample example,
         AiTrainingFeedbackStatus status,
         string? preferred,
+        PanelRecognitionTrainingDto? preferredPanelIdentity,
         IReadOnlyList<AiTrainingFeedbackReason> tags,
         AiTrainingEligibilityDecision decision,
         bool technicalClaimRequiresVerification)
     {
         example.FeedbackStatus = status;
         example.PreferredTechnicianResponse = preferred;
+        example.PreferredPanelIdentitySnapshot = preferredPanelIdentity is null ? null : JsonSerializer.Serialize(preferredPanelIdentity, JsonOptions);
         example.FeedbackReasonTags = JsonSerializer.Serialize(tags.Select(x => x.ToString()), JsonOptions);
         example.TrainingEligibility = decision.Eligibility;
         example.EligibleForSft = decision.EligibleForSft;
@@ -328,7 +355,9 @@ public sealed class AiTrainingService : IAiTrainingService
         example.DiagnosticContextSnapshot,
         example.GeminiModel,
         example.CreatedAt,
-        example.UpdatedAt);
+        example.UpdatedAt,
+        ParsePanelRecognition(example.PanelRecognitionSnapshot),
+        ParsePanelRecognition(example.PreferredPanelIdentitySnapshot));
 
     private static AiTrainingExampleDetailDto ToDetail(AiTrainingExample example) => new(
         example.Id,
@@ -371,7 +400,9 @@ public sealed class AiTrainingService : IAiTrainingService
         example.TechnicalClaimRequiresVerification,
         example.RequiresAnonymization,
         example.CreatedAt,
-        example.UpdatedAt);
+        example.UpdatedAt,
+        ParsePanelRecognition(example.PanelRecognitionSnapshot),
+        ParsePanelRecognition(example.PreferredPanelIdentitySnapshot));
 
     private static IReadOnlyList<string> ParseStrings(string json)
     {
@@ -407,6 +438,27 @@ public sealed class AiTrainingService : IAiTrainingService
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    internal static PanelRecognitionTrainingDto? ParsePanelRecognition(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            string? Text(string name) => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+            bool Flag(string name) => root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False && value.GetBoolean();
+            Guid? Id(string name) => Guid.TryParse(Text(name), out var value) ? value : null;
+            var pitch = Text("pixelPitch"); var code = Text("panelCode"); var secondary = Text("secondaryCode");
+            var canonical = Text("canonicalPanelKey") ?? Text("panelIdentityCanonicalKey");
+            if (pitch is null && code is null && secondary is null && canonical is null) return null;
+            return new(pitch, code, secondary, canonical, Text("pixelPitchSource"), Text("panelCodeSource"),
+                Text("secondaryCodeSource"), Text("recognitionStatus") ?? Text("panelIdentityResolutionStatus"),
+                Flag("ocrUsed"), Flag("visionUsed"), Flag("conflictDetected"),
+                Text("packageResolutionResult") ?? Text("packageResolutionStatus"), Id("exactPackageId") ?? Id("packageId"));
+        }
+        catch (JsonException) { return null; }
+    }
 
     private static int GetCount(
         IReadOnlyDictionary<AiTrainingFeedbackStatus, int> counts,

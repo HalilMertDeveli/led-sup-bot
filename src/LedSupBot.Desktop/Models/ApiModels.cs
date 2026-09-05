@@ -380,6 +380,24 @@ public sealed class MessageDto
 
     [JsonPropertyName("trainingFeedback")]
     public TrainingFeedbackSummaryDto? TrainingFeedback { get; set; }
+
+    [JsonPropertyName("panelRecognition")]
+    public PanelRecognitionDto? PanelRecognition { get; set; }
+}
+
+public sealed class PanelRecognitionDto
+{
+    [JsonPropertyName("pixelPitch")] public string? PixelPitch { get; set; }
+    [JsonPropertyName("panelCode")] public string? PanelCode { get; set; }
+    [JsonPropertyName("secondaryCode")] public string? SecondaryCode { get; set; }
+    [JsonPropertyName("canonicalKey")] public string? CanonicalKey { get; set; }
+    [JsonPropertyName("pixelPitchSource")] public string? PixelPitchSource { get; set; }
+    [JsonPropertyName("panelCodeSource")] public string? PanelCodeSource { get; set; }
+    [JsonPropertyName("secondaryCodeSource")] public string? SecondaryCodeSource { get; set; }
+    [JsonPropertyName("recognitionStatus")] public string? RecognitionStatus { get; set; }
+    [JsonPropertyName("ocrUsed")] public bool OcrUsed { get; set; }
+    [JsonPropertyName("visionUsed")] public bool VisionUsed { get; set; }
+    public string SourceSummary => string.Join(" + ", new[] { PixelPitchSource, PanelCodeSource, SecondaryCodeSource }.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct());
 }
 
 public sealed class TrainingFeedbackSummaryDto
@@ -404,6 +422,9 @@ public sealed class TrainingFeedbackSummaryDto
 
     [JsonPropertyName("statusLabel")]
     public string? StatusLabel { get; set; }
+
+    [JsonPropertyName("preferredPanelIdentity")]
+    public PanelRecognitionDto? PreferredPanelIdentity { get; set; }
 }
 
 public sealed class SaveTrainingFeedbackRequest
@@ -416,6 +437,10 @@ public sealed class SaveTrainingFeedbackRequest
 
     [JsonPropertyName("reasonTags")]
     public List<string> ReasonTags { get; set; } = [];
+
+    [JsonPropertyName("preferredPixelPitch")] public string? PreferredPixelPitch { get; set; }
+    [JsonPropertyName("preferredPanelCode")] public string? PreferredPanelCode { get; set; }
+    [JsonPropertyName("preferredSecondaryCode")] public string? PreferredSecondaryCode { get; set; }
 }
 
 public sealed class TrainingExamplesResponse
@@ -512,6 +537,9 @@ public sealed class TrainingExampleDto
 
     [JsonPropertyName("diagnosticContextSummary")]
     public string? DiagnosticContextSummary { get; set; }
+
+    [JsonPropertyName("panelRecognition")] public PanelRecognitionDto? PanelRecognition { get; set; }
+    [JsonPropertyName("preferredPanelIdentity")] public PanelRecognitionDto? PreferredPanelIdentity { get; set; }
 
     [JsonPropertyName("geminiModel")]
     public string? GeminiModel { get; set; }

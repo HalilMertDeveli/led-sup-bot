@@ -673,6 +673,45 @@ public sealed class AiTrainingAdminApiTests
         Assert.DoesNotContain(@"C:\private", stored, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task PF8_Structured_Recognition_Feedback_Preserves_Original_And_Registry()
+    {
+        var seeded = await SeedAiReplyAsync(DeliveryStatus.Delivered);
+        const string original = "{\"panelIdentityAttempted\":true,\"pixelPitch\":\"P2.5\",\"panelCode\":\"1065S\",\"secondaryCode\":\"2012\",\"canonicalPanelKey\":\"P2.5-1065S-2012\",\"pixelPitchSource\":\"CustomerNaturalText\",\"panelCodeSource\":\"PanelLabelOcr\",\"secondaryCodeSource\":\"PanelLabelVision\",\"recognitionStatus\":\"Complete\",\"ocrUsed\":true,\"visionUsed\":true,\"packageResolutionResult\":\"ExactMatch\"}";
+        int packageCount; int assetCount;
+        await using (var db = _fixture.CreateDb())
+        {
+            var snapshot = await db.AiReplyContextSnapshots.SingleAsync(x => x.AiResponseMessageId == seeded.AiMessageId);
+            snapshot.PanelIdentityContextSnapshot = original;
+            packageCount = await db.PanelFilePackages.CountAsync();
+            assetCount = await db.PanelFilePackageAssets.CountAsync();
+            await db.SaveChangesAsync();
+        }
+
+        var client = await CreateAuthenticatedClientAsync();
+        var response = await client.PutAsJsonAsync($"/api/admin/training-feedback/{seeded.AiMessageId:D}", new
+        {
+            feedbackStatus = "Edited", preferredPixelPitch = "p2,5", preferredPanelCode = "1065s",
+            preferredSecondaryCode = "2013", reasonTags = Array.Empty<string>()
+        });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var verify = _fixture.CreateDb();
+        var example = await verify.AiTrainingExamples.AsNoTracking().SingleAsync(x => x.AiResponseMessageId == seeded.AiMessageId);
+        AssertJsonEquivalent(original, example.PanelRecognitionSnapshot!);
+        Assert.Contains("P2.5-1065S-2013", example.PreferredPanelIdentitySnapshot);
+        Assert.Equal(AiTrainingEligibility.EligibleForPreference, example.TrainingEligibility);
+        Assert.Equal(packageCount, await verify.PanelFilePackages.CountAsync());
+        Assert.Equal(assetCount, await verify.PanelFilePackageAssets.CountAsync());
+
+        var rejected = await client.PutAsJsonAsync($"/api/admin/training-feedback/{seeded.AiMessageId:D}", new
+        { feedbackStatus = "Rejected", reasonTags = Array.Empty<string>() });
+        Assert.Equal(HttpStatusCode.OK, rejected.StatusCode);
+        example = await verify.AiTrainingExamples.AsNoTracking().SingleAsync(x => x.AiResponseMessageId == seeded.AiMessageId);
+        Assert.Equal(AiTrainingEligibility.Excluded, example.TrainingEligibility);
+        AssertJsonEquivalent(original, example.PanelRecognitionSnapshot!);
+    }
+
     private async Task<SeededAiReply> SeedAiReplyAsync(
         DeliveryStatus deliveryStatus,
         string currentIntent = "LedTroubleshooting",
@@ -771,11 +810,9 @@ public sealed class AiTrainingAdminApiTests
 
     private static void AssertJsonEquivalent(string expected, string actual)
     {
-        using var expectedDocument = JsonDocument.Parse(expected);
-        using var actualDocument = JsonDocument.Parse(actual);
-        Assert.Equal(
-            JsonSerializer.Serialize(expectedDocument.RootElement),
-            JsonSerializer.Serialize(actualDocument.RootElement));
+        Assert.True(System.Text.Json.Nodes.JsonNode.DeepEquals(
+            System.Text.Json.Nodes.JsonNode.Parse(expected),
+            System.Text.Json.Nodes.JsonNode.Parse(actual)));
     }
 
     private sealed record SnapshotSeed(

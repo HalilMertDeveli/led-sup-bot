@@ -1,6 +1,7 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Application.Workflow.Parsing;
+using LedSupBot.Application.Training;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -181,14 +182,13 @@ public sealed class AdminConversationService : IAdminConversationService
             .ToListAsync(cancellationToken);
 
         var messageIds = messages.Select(x => x.Id).ToList();
-        var eligibleIds = messageIds.Count == 0
-            ? new HashSet<Guid>()
+        var snapshotsByMessageId = messageIds.Count == 0
+            ? new Dictionary<Guid, AiReplyContextSnapshot>()
             : (await _db.AiReplyContextSnapshots
                 .AsNoTracking()
                 .Where(x => messageIds.Contains(x.AiResponseMessageId))
-                .Select(x => x.AiResponseMessageId)
                 .ToListAsync(cancellationToken))
-                .ToHashSet();
+                .ToDictionary(x => x.AiResponseMessageId);
         var feedbackByMessageId = messageIds.Count == 0
             ? new Dictionary<Guid, AiTrainingExample>()
             : (await _db.AiTrainingExamples
@@ -204,7 +204,7 @@ public sealed class AdminConversationService : IAdminConversationService
                 m.SentBy == MessageSender.Bot &&
                 m.MessageType == MessageType.Text &&
                 m.DeliveryStatus is DeliveryStatus.Sent or DeliveryStatus.Delivered or DeliveryStatus.Read &&
-                eligibleIds.Contains(m.Id);
+                snapshotsByMessageId.ContainsKey(m.Id);
             var trainingFeedback = feedbackByMessageId.TryGetValue(m.Id, out var feedback)
                 ? new AiTrainingMessageFeedbackDto(
                     feedback.FeedbackStatus,
@@ -213,7 +213,8 @@ public sealed class AdminConversationService : IAdminConversationService
                     feedback.TrainingEligibility,
                     feedback.EligibleForSft,
                     feedback.EligibleForPreference,
-                    FeedbackStateLabel(feedback.FeedbackStatus) ?? string.Empty)
+                    FeedbackStateLabel(feedback.FeedbackStatus) ?? string.Empty,
+                    AiTrainingService.ParsePanelRecognition(feedback.PreferredPanelIdentitySnapshot))
                 : null;
 
             return new MessageDto(
@@ -227,7 +228,10 @@ public sealed class AdminConversationService : IAdminConversationService
                 m.StorageKey,
                 m.StorageKey != null ? $"/api/admin/media/{Uri.EscapeDataString(m.StorageKey)}" : null,
                 teacherEligible,
-                trainingFeedback);
+                trainingFeedback,
+                snapshotsByMessageId.TryGetValue(m.Id, out var snapshot)
+                    ? AiTrainingService.ParsePanelRecognition(snapshot.PanelIdentityContextSnapshot)
+                    : null);
         }).ToList();
 
         return new MessagesResponse(result);

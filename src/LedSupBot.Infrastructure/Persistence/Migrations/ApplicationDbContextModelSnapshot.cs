@@ -367,9 +367,15 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(8000)
                         .HasColumnType("character varying(8000)");
 
+                    b.Property<string>("PanelRecognitionSnapshot")
+                        .HasColumnType("text");
+
                     b.Property<string>("PendingWorkflowFactSnapshot")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
+
+                    b.Property<string>("PreferredPanelIdentitySnapshot")
+                        .HasColumnType("text");
 
                     b.Property<string>("PreferredTechnicianResponse")
                         .HasMaxLength(8000)

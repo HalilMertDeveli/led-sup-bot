@@ -1136,6 +1136,7 @@ public sealed class MainViewModel : ViewModelBase
                             MediaUrl = msg.MediaUrl,
                             TeacherFeedbackEligible = msg.TeacherFeedbackEligible,
                             TrainingFeedback = msg.TrainingFeedback,
+                            PanelRecognition = msg.PanelRecognition,
                         });
                     }
                 }
@@ -1473,7 +1474,9 @@ public sealed class MainViewModel : ViewModelBase
         }
 
         return !string.Equals(message.DraftFeedbackStatus, "Edited", StringComparison.OrdinalIgnoreCase) ||
-               !string.IsNullOrWhiteSpace(message.DraftPreferredTechnicianResponse);
+               (message.HasPanelRecognition
+                   ? !string.IsNullOrWhiteSpace(message.DraftPixelPitch) && !string.IsNullOrWhiteSpace(message.DraftPanelCode) && !string.IsNullOrWhiteSpace(message.DraftSecondaryCode)
+                   : !string.IsNullOrWhiteSpace(message.DraftPreferredTechnicianResponse));
     }
 
     private async Task SaveTrainingFeedbackAsync(MessageItemViewModel? message, string feedbackStatus)
@@ -1489,10 +1492,10 @@ public sealed class MainViewModel : ViewModelBase
             return;
         }
 
-        var preferredResponse = string.Equals(feedbackStatus, "Approved", StringComparison.Ordinal)
+        var preferredResponse = string.Equals(feedbackStatus, "Approved", StringComparison.Ordinal) || message.HasPanelRecognition
             ? null
             : NullIfWhiteSpace(message.DraftPreferredTechnicianResponse);
-        if (string.Equals(feedbackStatus, "Edited", StringComparison.Ordinal) && preferredResponse is null)
+        if (string.Equals(feedbackStatus, "Edited", StringComparison.Ordinal) && preferredResponse is null && !message.HasPanelRecognition)
         {
             message.FeedbackValidationMessage = "Düzeltilmiş ideal yanıt boş bırakılamaz.";
             return;
@@ -1514,6 +1517,9 @@ public sealed class MainViewModel : ViewModelBase
                     FeedbackStatus = feedbackStatus,
                     PreferredTechnicianResponse = preferredResponse,
                     ReasonTags = reasonTags,
+                    PreferredPixelPitch = message.HasPanelRecognition && feedbackStatus == "Edited" ? message.DraftPixelPitch : null,
+                    PreferredPanelCode = message.HasPanelRecognition && feedbackStatus == "Edited" ? message.DraftPanelCode : null,
+                    PreferredSecondaryCode = message.HasPanelRecognition && feedbackStatus == "Edited" ? message.DraftSecondaryCode : null,
                 });
 
             message.ApplySavedFeedback(feedbackStatus, preferredResponse, reasonTags);
@@ -1955,6 +1961,9 @@ public sealed class MessageItemViewModel : ViewModelBase
     private string _draftFeedbackStatus = "";
     private string _draftPreferredTechnicianResponse = "";
     private string? _feedbackValidationMessage;
+    private string _draftPixelPitch = "";
+    private string _draftPanelCode = "";
+    private string _draftSecondaryCode = "";
 
     public MessageItemViewModel()
     {
@@ -1972,6 +1981,12 @@ public sealed class MessageItemViewModel : ViewModelBase
     public string DeliveryStatus { get; set; } = "";
     public string MessageType { get; set; } = "";
     public string? MediaUrl { get; set; }
+    public PanelRecognitionDto? PanelRecognition { get; set; }
+    public bool HasPanelRecognition => PanelRecognition is not null;
+    public string PanelRecognitionSource => PanelRecognition?.SourceSummary ?? "";
+    public string DraftPixelPitch { get => _draftPixelPitch; set { if (SetProperty(ref _draftPixelPitch, value)) CommandManager.InvalidateRequerySuggested(); } }
+    public string DraftPanelCode { get => _draftPanelCode; set { if (SetProperty(ref _draftPanelCode, value)) CommandManager.InvalidateRequerySuggested(); } }
+    public string DraftSecondaryCode { get => _draftSecondaryCode; set { if (SetProperty(ref _draftSecondaryCode, value)) CommandManager.InvalidateRequerySuggested(); } }
 
     public bool TeacherFeedbackEligible
     {
@@ -2111,6 +2126,9 @@ public sealed class MessageItemViewModel : ViewModelBase
         DraftPreferredTechnicianResponse = status == "Edited"
             ? TrainingFeedback?.PreferredTechnicianResponse ?? Content
             : TrainingFeedback?.PreferredTechnicianResponse ?? "";
+        DraftPixelPitch = TrainingFeedback?.PreferredPanelIdentity?.PixelPitch ?? PanelRecognition?.PixelPitch ?? "";
+        DraftPanelCode = TrainingFeedback?.PreferredPanelIdentity?.PanelCode ?? PanelRecognition?.PanelCode ?? "";
+        DraftSecondaryCode = TrainingFeedback?.PreferredPanelIdentity?.SecondaryCode ?? PanelRecognition?.SecondaryCode ?? "";
         var selectedTags = TrainingFeedback?.ReasonTags ?? [];
         foreach (var option in FeedbackReasonOptions)
         {

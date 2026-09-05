@@ -1,4 +1,5 @@
 using LedSupBot.Domain.Enums;
+using LedSupBot.Application.Training;
 
 namespace LedSupBot.Application.Admin;
 
@@ -81,7 +82,8 @@ public sealed record MessageDto(
     string? StorageKey,
     string? MediaUrl,
     bool TeacherFeedbackEligible = false,
-    AiTrainingMessageFeedbackDto? TrainingFeedback = null);
+    AiTrainingMessageFeedbackDto? TrainingFeedback = null,
+    PanelRecognitionTrainingDto? PanelRecognition = null);
 
 public sealed record AiTrainingMessageFeedbackDto(
     AiTrainingFeedbackStatus FeedbackStatus,
@@ -90,7 +92,8 @@ public sealed record AiTrainingMessageFeedbackDto(
     AiTrainingEligibility TrainingEligibility,
     bool EligibleForSft,
     bool EligibleForPreference,
-    string StatusLabel);
+    string StatusLabel,
+    PanelRecognitionTrainingDto? PreferredPanelIdentity = null);
 
 public sealed record MessagesResponse(IReadOnlyList<MessageDto> Messages);
 
