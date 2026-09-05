@@ -85,7 +85,9 @@ public static class DependencyInjection
             services.AddScoped<ITechnicalKnowledgeRetriever, TechnicalKnowledgeRetriever>();
             services.AddScoped<IVerifiedCaseMemoryService, VerifiedCaseMemoryService>();
             services.AddSingleton<IPanelIdentityNormalizer, PanelIdentityNormalizer>();
+            services.AddSingleton<IPanelIdentityTextParser, PanelIdentityTextParser>();
             services.AddScoped<IPanelFilePackageResolver, PanelFilePackageResolver>();
+            services.AddScoped<PanelIdentityWorkflowService>();
             services.AddScoped<IPanelFileAssetRegistry, PanelFileAssetRegistry>();
             services.AddScoped<IPanelFilePackageRegistry, PanelFilePackageRegistry>();
             services.AddScoped<IPanelFilePackageAdminQuery, PanelFilePackageAdminQuery>();

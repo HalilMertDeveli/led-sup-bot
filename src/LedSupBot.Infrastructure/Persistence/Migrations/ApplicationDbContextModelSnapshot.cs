@@ -169,6 +169,9 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(8000)
                         .HasColumnType("character varying(8000)");
 
+                    b.Property<string>("PanelIdentityContextSnapshot")
+                        .HasColumnType("jsonb");
+
                     b.Property<string>("PendingWorkflowFactSnapshot")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
@@ -1210,6 +1213,9 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                     b.Property<string>("IssueSummary")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("PanelIdentityStateJson")
+                        .HasColumnType("jsonb");
 
                     b.Property<string>("PlayerType")
                         .HasMaxLength(32)

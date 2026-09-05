@@ -68,7 +68,7 @@ public sealed class AiReplySnapshotFactoryTests
         Assert.True(snapshot.ContainsRedactions);
         Assert.DoesNotContain("123 456 789", snapshot.OriginalCustomerMessage);
         Assert.DoesNotContain("super-secret", snapshot.OriginalCustomerMessage);
-        Assert.Equal(3, snapshot.TrainingSnapshotSchemaVersion);
+        Assert.Equal(4, snapshot.TrainingSnapshotSchemaVersion);
     }
 
     [Fact]

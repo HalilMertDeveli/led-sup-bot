@@ -79,8 +79,8 @@ public sealed class AiTrainingEligibilityPolicyTests
     [Fact]
     public void Snapshot_Schema_Starts_At_Version_One()
     {
-        Assert.Equal(3, AiReplyContextSnapshot.CurrentSchemaVersion);
-        Assert.Equal(3, new AiReplyContextSnapshot().TrainingSnapshotSchemaVersion);
+        Assert.Equal(4, AiReplyContextSnapshot.CurrentSchemaVersion);
+        Assert.Equal(4, new AiReplyContextSnapshot().TrainingSnapshotSchemaVersion);
     }
 
     [Theory]

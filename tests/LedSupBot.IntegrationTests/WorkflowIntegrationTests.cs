@@ -18,6 +18,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Testcontainers.PostgreSql;
 using Npgsql;
+using System.Text.Json;
 using LedSupBot.Application.PanelFiles;
 using LedSupBot.Domain.PanelFiles;
 
@@ -2156,6 +2157,131 @@ public sealed class PanelFilePackageIntegrationTests(WorkflowFixture fixture)
             await using var scope = fixture.Services.CreateAsyncScope();
             return await scope.ServiceProvider.GetRequiredService<ApplicationDbContext>().PanelFilePackages.CountAsync();
         }
+    }
+}
+
+[Collection("workflow")]
+public sealed class PanelIdentityTextWorkflowIntegrationTests(WorkflowFixture fixture)
+{
+    [Fact]
+    public async Task PF3_Missing_pitch_asks_only_for_pitch_and_selects_no_package()
+    {
+        var (conversation, customer) = await fixture.SeedConversationAsync();
+        fixture.WhatsApp.SentTexts.Clear();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf3p-{Guid.NewGuid():N}", MessageType.Text, "1065S+2012");
+        var reply = Assert.Single(fixture.WhatsApp.SentTexts);
+        Assert.Contains("Pitch", reply);
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var support = await db.TechnicalSupportCases.AsNoTracking().SingleAsync(x => x.ConversationId == conversation.Id);
+        Assert.Contains("1065S", support.PanelIdentityStateJson);
+        using (var state = JsonDocument.Parse(support.PanelIdentityStateJson!))
+            Assert.Equal(JsonValueKind.Null, state.RootElement.GetProperty("canonicalKey").ValueKind);
+        Assert.False(await db.ReceiverInformations.AnyAsync(x => x.TechnicalSupportCaseId == support.Id));
+    }
+
+    [Fact]
+    public async Task PF3_Exact_text_persists_identity_uses_registry_and_does_not_contaminate_other_facts()
+    {
+        var code = $"{Random.Shared.Next(100000, 999999)}S";
+        Guid packageId;
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var registry = scope.ServiceProvider.GetRequiredService<IPanelFilePackageRegistry>();
+            var assets = scope.ServiceProvider.GetRequiredService<IPanelFileAssetRegistry>();
+            var package = await registry.CreateDraftAsync("P2.5", code, "2012");
+            packageId = package.Id;
+            await assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "pf3.hex", new MemoryStream([1]));
+            await assets.StoreAsync(package.Id, PanelFileAssetType.ReceiverConfigRcvbp, "pf3.rcvbp", new MemoryStream([2]));
+            Assert.True(await registry.ActivateAsync(package.Id));
+        }
+
+        var (conversation, customer) = await fixture.SeedConversationAsync();
+        fixture.WhatsApp.SentTexts.Clear();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf3-{Guid.NewGuid():N}", MessageType.Text,
+            $"Etikette P2.5 + {code.ToLowerInvariant()} + 2012 yazıyor.");
+        var reply = Assert.Single(fixture.WhatsApp.SentTexts);
+        Assert.Contains($"P2.5 + {code} + 2012", reply);
+        Assert.DoesNotContain("gönderildi", reply, StringComparison.OrdinalIgnoreCase);
+
+        await using var reload = fixture.Services.CreateAsyncScope();
+        var db = reload.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var support = await db.TechnicalSupportCases.AsNoTracking().SingleAsync(x => x.ConversationId == conversation.Id);
+        Assert.Contains($"P2.5-{code}-2012", support.PanelIdentityStateJson);
+        Assert.Contains("ExactMatch", support.PanelIdentityStateJson);
+        Assert.Contains(packageId.ToString(), support.PanelIdentityStateJson, StringComparison.OrdinalIgnoreCase);
+        Assert.False(await db.ScreenInformations.AnyAsync(x => x.TechnicalSupportCaseId == support.Id));
+        Assert.False(await db.ReceiverInformations.AnyAsync(x => x.TechnicalSupportCaseId == support.Id));
+        var snapshot = await db.AiReplyContextSnapshots.AsNoTracking().OrderByDescending(x => x.CreatedAt).FirstAsync(x => x.ConversationId == conversation.Id);
+        Assert.Contains("CustomerNaturalText", snapshot.PanelIdentityContextSnapshot);
+        Assert.Contains("ExactMatch", snapshot.PanelIdentityContextSnapshot);
+        Assert.DoesNotContain("StorageKey", snapshot.PanelIdentityContextSnapshot, StringComparison.OrdinalIgnoreCase);
+
+        var (neighborConversation, neighborCustomer) = await fixture.SeedConversationAsync();
+        fixture.WhatsApp.SentTexts.Clear();
+        await fixture.ProcessAsync(neighborConversation.Id, neighborCustomer.PhoneNumber, $"pf3n-{Guid.NewGuid():N}", MessageType.Text,
+            $"P2.6+{code}+2012");
+        Assert.Contains("bulamadım", Assert.Single(fixture.WhatsApp.SentTexts));
+    }
+
+    [Fact]
+    public async Task PF3_Partial_context_completion_and_correction_rerun_exact_resolution_without_nearest_match()
+    {
+        var code = $"{Random.Shared.Next(100000, 999999)}S";
+        var (conversation, customer) = await fixture.SeedConversationAsync();
+        fixture.WhatsApp.SentTexts.Clear();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf3a-{Guid.NewGuid():N}", MessageType.Text, $"P2.5+{code}");
+        Assert.Contains("Son kod", Assert.Single(fixture.WhatsApp.SentTexts));
+
+        fixture.WhatsApp.SentTexts.Clear();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf3b-{Guid.NewGuid():N}", MessageType.Text, $"{code}+2012");
+        var completed = Assert.Single(fixture.WhatsApp.SentTexts);
+        Assert.Contains($"P2.5 + {code} + 2012", completed);
+        Assert.Contains("bulamadım", completed);
+
+        fixture.WhatsApp.SentTexts.Clear();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf3c-{Guid.NewGuid():N}", MessageType.Text, "Hayır son kod 2013.");
+        var corrected = Assert.Single(fixture.WhatsApp.SentTexts);
+        Assert.Contains($"P2.5 + {code} + 2013", corrected);
+        Assert.Contains("bulamadım", corrected);
+
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var support = await db.TechnicalSupportCases.AsNoTracking().SingleAsync(x => x.ConversationId == conversation.Id);
+        Assert.Contains($"P2.5-{code}-2013", support.PanelIdentityStateJson);
+        Assert.DoesNotContain($"P2.5-{code}-2012\"", support.PanelIdentityStateJson);
+        Assert.False(await db.PanelFilePackages.AnyAsync(x => x.CanonicalKey == $"P2.5-{code}-2013"));
+    }
+
+    [Fact]
+    public async Task PF3_Incomplete_and_archived_package_statuses_are_honored()
+    {
+        var incompleteCode = $"{Random.Shared.Next(100000, 999999)}S";
+        var archivedCode = $"{Random.Shared.Next(100000, 999999)}S";
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var registry = scope.ServiceProvider.GetRequiredService<IPanelFilePackageRegistry>();
+            var assets = scope.ServiceProvider.GetRequiredService<IPanelFileAssetRegistry>();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var incomplete = await registry.CreateDraftAsync("P2.5", incompleteCode, "2012");
+            await assets.StoreAsync(incomplete.Id, PanelFileAssetType.FirmwareHex, "only.hex", new MemoryStream([1]));
+            incomplete.Status = PanelFilePackageStatus.Active;
+            var archived = await registry.CreateDraftAsync("P2.5", archivedCode, "2012");
+            await assets.StoreAsync(archived.Id, PanelFileAssetType.FirmwareHex, "archived.hex", new MemoryStream([1]));
+            await assets.StoreAsync(archived.Id, PanelFileAssetType.ReceiverConfigRcvbp, "archived.rcvbp", new MemoryStream([2]));
+            archived.Status = PanelFilePackageStatus.Archived;
+            await db.SaveChangesAsync();
+        }
+
+        var (first, firstCustomer) = await fixture.SeedConversationAsync();
+        fixture.WhatsApp.SentTexts.Clear();
+        await fixture.ProcessAsync(first.Id, firstCustomer.PhoneNumber, $"pf3i-{Guid.NewGuid():N}", MessageType.Text, $"P2.5+{incompleteCode}+2012");
+        Assert.Contains("eksik dosya", Assert.Single(fixture.WhatsApp.SentTexts));
+
+        var (second, secondCustomer) = await fixture.SeedConversationAsync();
+        fixture.WhatsApp.SentTexts.Clear();
+        await fixture.ProcessAsync(second.Id, secondCustomer.PhoneNumber, $"pf3r-{Guid.NewGuid():N}", MessageType.Text, $"P2.5+{archivedCode}+2012");
+        Assert.Contains("teslimata uygun değil", Assert.Single(fixture.WhatsApp.SentTexts));
     }
 }
 

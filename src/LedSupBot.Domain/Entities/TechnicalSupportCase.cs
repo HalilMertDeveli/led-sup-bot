@@ -35,6 +35,9 @@ public class TechnicalSupportCase : Entity
     /// <summary>Backend-authoritative durable multi-issue diagnostic state.</summary>
     public string? DiagnosticStateJson { get; set; }
 
+    /// <summary>Backend-authoritative current panel identity and package-resolution provenance.</summary>
+    public string? PanelIdentityStateJson { get; set; }
+
     public ScreenInformation? ScreenInformation { get; set; }
 
     public ReceiverInformation? ReceiverInformation { get; set; }

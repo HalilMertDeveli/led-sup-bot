@@ -26,6 +26,7 @@ public sealed class AiReplyContextSnapshotConfiguration : IEntityTypeConfigurati
         builder.Property(x => x.DiagnosticContextSnapshot).HasMaxLength(4000);
         builder.Property(x => x.DetectedModelsSnapshot).HasColumnType("jsonb").IsRequired();
         builder.Property(x => x.ImageContextSummary).HasMaxLength(4000);
+        builder.Property(x => x.PanelIdentityContextSnapshot).HasColumnType("jsonb");
         builder.Property(x => x.GroundingLevel).HasMaxLength(64);
         builder.Property(x => x.KnowledgeSourceReferences).HasColumnType("jsonb").IsRequired();
         builder.Property(x => x.WebSourceReferences).HasColumnType("jsonb").IsRequired();

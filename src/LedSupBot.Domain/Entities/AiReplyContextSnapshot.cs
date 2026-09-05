@@ -9,7 +9,7 @@ namespace LedSupBot.Domain.Entities;
 /// </summary>
 public sealed class AiReplyContextSnapshot : Entity
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
 
     public Guid ConversationId { get; set; }
 
@@ -54,6 +54,9 @@ public sealed class AiReplyContextSnapshot : Entity
     public string DetectedModelsSnapshot { get; set; } = "[]";
 
     public string? ImageContextSummary { get; set; }
+
+    /// <summary>Bounded PF3 parser/resolver execution metadata; never contains package assets or paths.</summary>
+    public string? PanelIdentityContextSnapshot { get; set; }
 
     public bool RagAttempted { get; set; }
 

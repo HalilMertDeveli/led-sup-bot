@@ -84,6 +84,7 @@ public sealed class WhatsAppOutboundRecorder : IWhatsAppOutboundRecorder
                 DiagnosticContextSnapshot = trainingSnapshot.DiagnosticContextSnapshot,
                 DetectedModelsSnapshot = trainingSnapshot.DetectedModelsSnapshotJson,
                 ImageContextSummary = trainingSnapshot.ImageContextSummary,
+                PanelIdentityContextSnapshot = trainingSnapshot.PanelIdentityContextJson,
                 RagAttempted = trainingSnapshot.RagAttempted,
                 RagUsed = trainingSnapshot.RagUsed,
                 GroundingLevel = trainingSnapshot.GroundingLevel,

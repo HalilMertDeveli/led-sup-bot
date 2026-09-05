@@ -44,7 +44,7 @@ public sealed record AiReplySnapshotDraft(
     bool TechnicalClaimRequiresVerification,
     bool RequiresAnonymization,
     bool ContainsRedactions,
-    int TrainingSnapshotSchemaVersion = 3,
+    int TrainingSnapshotSchemaVersion = 4,
     bool WebSearchAttempted = false,
     bool WebSearchUsed = false,
     bool WebGrounded = false,
@@ -53,7 +53,8 @@ public sealed record AiReplySnapshotDraft(
     bool CaseMemoryAttempted = false,
     bool CaseMemoryUsed = false,
     int CaseMemoryCount = 0,
-    string CaseMemoryReferencesJson = "[]");
+    string CaseMemoryReferencesJson = "[]",
+    string? PanelIdentityContextJson = null);
 
 public sealed record AiKnowledgeSourceSnapshot(
     string Document,
@@ -67,7 +68,7 @@ public sealed record AiKnowledgeSourceSnapshot(
 
 public static partial class AiReplySnapshotFactory
 {
-    public const int SchemaVersion = 3;
+    public const int SchemaVersion = 4;
     public const string ResponsePromptVersion = "conversation-planner-v1";
     private const int MaxFactCount = 24;
     private const int MaxFactLength = 300;
@@ -98,7 +99,8 @@ public static partial class AiReplySnapshotFactory
         string? geminiModel,
         AiTrainingSourceDecision? sourceDecisionOverride = null,
         string? replySourceOverride = null,
-        WebGroundingResult? web = null)
+        WebGroundingResult? web = null,
+        string? panelIdentityContextJson = null)
     {
         var safeCustomer = Sanitize(customerMessage, MaxCustomerMessageLength, out var customerRedacted);
         var safeResponse = Sanitize(aiResponse, MaxAiResponseLength, out var responseRedacted);
@@ -172,7 +174,8 @@ public static partial class AiReplySnapshotFactory
                 category = Sanitize(x.ProblemCategory, 100, out _),
                 confidence = Math.Round(x.Confidence, 3),
                 relevance = Math.Round(x.Relevance, 3),
-            }), JsonOptions));
+            }), JsonOptions),
+            panelIdentityContextJson);
     }
 
     public static AiTrainingSourceDecision DeriveSourceDecision(

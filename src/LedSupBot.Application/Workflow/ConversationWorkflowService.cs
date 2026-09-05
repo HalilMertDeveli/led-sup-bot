@@ -10,6 +10,7 @@ using LedSupBot.Application.Workflow.Diagnostics;
 using LedSupBot.Application.Workflow.Web;
 using LedSupBot.Application.CaseMemory;
 using LedSupBot.Application.WhatsApp;
+using LedSupBot.Application.PanelFiles;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -37,6 +38,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
     private readonly AiExtractionOptions _aiOptions;
     private readonly WebGroundingOptions _webOptions;
     private readonly ILogger<ConversationWorkflowService> _logger;
+    private readonly PanelIdentityWorkflowService _panelIdentityWorkflow;
 
     public ConversationWorkflowService(
         IApplicationDbContext db,
@@ -55,6 +57,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         IOptions<WorkflowOptions> options,
         IOptions<AiExtractionOptions> aiOptions,
         IOptions<WebGroundingOptions> webOptions,
+        PanelIdentityWorkflowService panelIdentityWorkflow,
         ILogger<ConversationWorkflowService> logger)
     {
         _db = db;
@@ -73,6 +76,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         _options = options.Value;
         _aiOptions = aiOptions.Value;
         _webOptions = webOptions.Value;
+        _panelIdentityWorkflow = panelIdentityWorkflow;
         _logger = logger;
     }
 
@@ -102,6 +106,9 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             conversation.BotMode);
 
         var supportCase = await LoadOrCreateCaseAsync(conversation.Id, inbound.MessageType == MessageType.Image, cancellationToken);
+        var panelIdentityTurn = inbound.MessageType == MessageType.Text
+            ? await _panelIdentityWorkflow.ApplyAsync(supportCase, inbound.TextContent, cancellationToken)
+            : new PanelIdentityTurnResult(false);
         var clarificationTexts = new List<string>();
         var handoffPending = false;
         string? configExampleImagePath = null;
@@ -116,7 +123,8 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                 clarificationTexts.Add(imageAnalysis.CustomerClarification);
         }
 
-        await ApplyInboundContentAsync(conversation.Id, supportCase, inbound, clarificationTexts, cancellationToken);
+        if (!panelIdentityTurn.Attempted)
+            await ApplyInboundContentAsync(conversation.Id, supportCase, inbound, clarificationTexts, cancellationToken);
 
         if (!await IsAutoReplyAllowedAsync(conversation.Id, cancellationToken))
         {
@@ -175,7 +183,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         var aiReplyWasProviderGenerated = false;
         var localIntent = ConversationSemantics.Detect(inbound.TextContent);
         var deterministicAcknowledgement = localIntent == LedSupBot.Application.Abstractions.ConversationIntent.Acknowledgement;
-        if ((inbound.MessageType == MessageType.Text && !string.IsNullOrWhiteSpace(inbound.TextContent) && !deterministicAcknowledgement) || imageAnalysis is not null)
+        if (!panelIdentityTurn.Attempted && ((inbound.MessageType == MessageType.Text && !string.IsNullOrWhiteSpace(inbound.TextContent) && !deterministicAcknowledgement) || imageAnalysis is not null))
         {
             _logger.LogInformation(
                 "AI provider=Gemini geminiAttempted=true conversationId={ConversationId}",
@@ -312,6 +320,11 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             outboundTexts = [diagnosticTurn.DeterministicReply];
             aiReplyWasProviderGenerated = false;
         }
+        if (panelIdentityTurn.Attempted && !string.IsNullOrWhiteSpace(panelIdentityTurn.Reply))
+        {
+            outboundTexts = [panelIdentityTurn.Reply];
+            aiReplyWasProviderGenerated = false;
+        }
         configExampleImagePath = composed.ConfigExampleImagePath ?? configExampleImagePath;
 
         if (WorkflowInterruptionPolicy.ShouldResume(context, effectiveIntent, responseAction, diagnosticTurn.State, inbound.TextContent) &&
@@ -435,6 +448,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                             diagnosticTurn.DeterministicReply,
                             grounding,
                             imageAnalysis);
+                        if (panelIdentityTurn.Attempted) deterministicSource = AiTrainingSourceDecision.BackendState;
                         var webSource = webResult.Attempted
                             ? webResult.Used
                                 ? imageAnalysis is not null && grounding.Used ? AiTrainingSourceDecision.VisionRagAndWeb
@@ -465,7 +479,8 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                         caseMemorySource ?? webSource ?? (providerGenerated ? null : deterministicSource),
                         webResult.Attempted ? (webResult.Used ? webRoute.ToString() : "WebSearchFailed")
                             : providerGenerated ? null : deterministicSource.ToString(),
-                        webResult);
+                        webResult,
+                        panelIdentityTurn.Attempted ? panelIdentityTurn.ContextJson : null);
                     })
                     .ToList();
 
