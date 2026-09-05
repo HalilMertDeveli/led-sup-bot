@@ -40,6 +40,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
     private readonly ILogger<ConversationWorkflowService> _logger;
     private readonly IPanelIdentityCoordinator _panelIdentityCoordinator;
     private readonly IPanelFileDeliverySafetyGate _panelFileDeliverySafetyGate;
+    private readonly IPanelFileDeliveryService _panelFileDeliveryService;
 
     public ConversationWorkflowService(
         IApplicationDbContext db,
@@ -60,6 +61,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         IOptions<WebGroundingOptions> webOptions,
         IPanelIdentityCoordinator panelIdentityCoordinator,
         IPanelFileDeliverySafetyGate panelFileDeliverySafetyGate,
+        IPanelFileDeliveryService panelFileDeliveryService,
         ILogger<ConversationWorkflowService> logger)
     {
         _db = db;
@@ -80,6 +82,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         _webOptions = webOptions.Value;
         _panelIdentityCoordinator = panelIdentityCoordinator;
         _panelFileDeliverySafetyGate = panelFileDeliverySafetyGate;
+        _panelFileDeliveryService = panelFileDeliveryService;
         _logger = logger;
     }
 
@@ -499,6 +502,12 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                     outboundTexts,
                     trainingSnapshots,
                     cancellationToken);
+                if (panelIdentityTurn.DeliveryAuthorizedNow)
+                {
+                    await _panelFileDeliveryService.DeliverAsync(
+                        supportCase, conversation.Id, inbound.CustomerPhoneE164,
+                        inbound.WhatsAppDeliveryRoute, cancellationToken);
+                }
             }
             catch (Exception ex)
             {

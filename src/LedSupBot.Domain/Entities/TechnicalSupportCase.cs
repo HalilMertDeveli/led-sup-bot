@@ -41,6 +41,9 @@ public class TechnicalSupportCase : Entity
     /// <summary>Backend-authoritative, identity/package/asset-bound PF6 confirmation and delivery-gate state.</summary>
     public string? PanelFileDeliveryConfirmationJson { get; set; }
 
+    /// <summary>PF7 immutable asset binding plus per-document delivery/retry audit.</summary>
+    public string? PanelFileDeliveryStateJson { get; set; }
+
     public ScreenInformation? ScreenInformation { get; set; }
 
     public ReceiverInformation? ReceiverInformation { get; set; }

@@ -89,6 +89,7 @@ public static class DependencyInjection
             services.AddScoped<IPanelFilePackageResolver, PanelFilePackageResolver>();
             services.AddScoped<IPanelIdentityCoordinator, PanelIdentityCoordinator>();
             services.AddScoped<IPanelFileDeliverySafetyGate, PanelFileDeliverySafetyGate>();
+            services.AddScoped<IPanelFileDeliveryService, PanelFileDeliveryService>();
             services.AddScoped<IPanelFileAssetRegistry, PanelFileAssetRegistry>();
             services.AddScoped<IPanelFilePackageRegistry, PanelFilePackageRegistry>();
             services.AddScoped<IPanelFilePackageAdminQuery, PanelFilePackageAdminQuery>();

@@ -93,7 +93,7 @@ public sealed partial class PanelFileDeliverySafetyGate(
                 CustomerMessageId = customerMessageId, Reason = null, Decision = PanelFileDeliveryDecision.Allowed,
                 BlockedReason = PanelFileDeliveryBlockedReason.None };
             await PersistAsync(supportCase, confirmed, ct);
-            return Turn(identity, confirmed, "Panel kimliği doğrulandı. Dosya teslimatı için güvenlik koşulları sağlandı.");
+            return Turn(identity, confirmed, "Panel kimliği doğrulandı. Dosya teslimatı için güvenlik koşulları sağlandı.", true);
         }
 
         if (identityTurnAttempted && current.Decision == PanelFileDeliveryDecision.Blocked) return new(false);
@@ -183,12 +183,12 @@ public sealed partial class PanelFileDeliverySafetyGate(
         string.Equals(state.ReceiverConfigSha256, current.ReceiverConfigSha256, StringComparison.Ordinal);
     private static string BuildIdentityToken(PanelIdentityCaseState state) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
         $"{state.CanonicalKey}|{state.PixelPitchMessageId}|{state.PanelCodeMessageId}|{state.SecondaryCodeMessageId}|{state.UpdatedAt:O}"))).ToLowerInvariant();
-    private static PanelIdentityTurnResult Turn(PanelIdentityCaseState identity, PanelFileDeliveryConfirmationState confirmation, string reply) =>
+    private static PanelIdentityTurnResult Turn(PanelIdentityCaseState identity, PanelFileDeliveryConfirmationState confirmation, string reply, bool deliveryAuthorizedNow = false) =>
         new(true, reply, JsonSerializer.Serialize(new { panelIdentityAttempted = true, panelIdentityCanonicalKey = identity.CanonicalKey,
             packageResolutionStatus = identity.PackageResolution, packageId = identity.PackageId, confirmationRequested = true,
             confirmationStatus = confirmation.Status, confirmationTargetCanonicalKey = confirmation.CanonicalKey,
             confirmationTargetPackageId = confirmation.PackageId, deliveryGateDecision = confirmation.Decision,
-            deliveryGateBlockedReason = confirmation.BlockedReason, identity.PixelPitchSource, identity.PanelCodeSource, identity.SecondaryCodeSource }, JsonOptions));
+            deliveryGateBlockedReason = confirmation.BlockedReason, identity.PixelPitchSource, identity.PanelCodeSource, identity.SecondaryCodeSource }, JsonOptions), deliveryAuthorizedNow);
     private static PanelFileDeliveryGateResult Block(PanelFileDeliveryBlockedReason reason, Guid? packageId = null, string? key = null) =>
         new(PanelFileDeliveryDecision.Blocked, reason, CanonicalKey: key, PackageId: packageId);
     private static string Display(PanelIdentityCaseState state) => $"{state.PixelPitch} + {state.PanelCode} + {state.SecondaryCode}";

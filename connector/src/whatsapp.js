@@ -389,6 +389,25 @@ export async function sendImage(toAddress, imageBuffer, caption) {
   };
 }
 
+export async function sendDocument(toAddress, documentBuffer, contentType, fileName, caption) {
+  if (!sock || status !== "CONNECTED") throw new Error(`Connector not connected (status=${status})`);
+  const jid = resolveOutboundJid(toAddress);
+  if (!jid) throw new Error("Invalid outbound destination");
+  assertNonSelfJid(jid);
+  const exactRoutePreserved = String(toAddress || "").includes("@") ? normalizeWhatsAppJid(toAddress) === jid : true;
+  const result = await sock.sendMessage(jid, {
+    document: documentBuffer,
+    mimetype: contentType || "application/octet-stream",
+    fileName,
+    caption: caption || undefined,
+  });
+  const id = result?.key?.id;
+  if (id) markBotSent(id);
+  logger.info({ event: "OUTBOUND_DOCUMENT_SEND_COMPLETED", destinationType: jidDomain(jid),
+    exactRoutePreserved, messageId: id || null }, "outbound document send completed");
+  return { externalMessageId: id || null, remoteJid: jid, destinationType: jidDomain(jid), exactRoutePreserved };
+}
+
 function mapBaileysDeliveryStatus(status) {
   if (status === undefined || status === null) return null;
   switch (Number(status)) {

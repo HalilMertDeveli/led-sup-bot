@@ -96,4 +96,8 @@ public sealed record PanelIdentityCaseState(
     IReadOnlyList<PanelIdentityConflict>? Conflicts = null, Guid? PixelPitchMessageId = null, Guid? PanelCodeMessageId = null,
     Guid? SecondaryCodeMessageId = null);
 
-public sealed record PanelIdentityTurnResult(bool Attempted, string? Reply = null, string ContextJson = "{}");
+public sealed record PanelIdentityTurnResult(
+    bool Attempted,
+    string? Reply = null,
+    string ContextJson = "{}",
+    bool DeliveryAuthorizedNow = false);

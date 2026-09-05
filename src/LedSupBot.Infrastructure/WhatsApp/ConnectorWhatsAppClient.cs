@@ -163,6 +163,27 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
         return result?.ExternalMessageId;
     }
 
+    public async Task<string?> SendDocumentMessageAsync(
+        string toPhoneE164, Stream document, string contentType, string fileName,
+        string? caption = null, CancellationToken cancellationToken = default)
+    {
+        var destination = NormalizeDestination(toPhoneE164);
+        using var ms = new MemoryStream();
+        await document.CopyToAsync(ms, cancellationToken);
+        using var response = await _http.PostAsJsonAsync("send/document", new
+        {
+            to = destination,
+            caption,
+            contentType,
+            fileName = Path.GetFileName(fileName),
+            documentBase64 = Convert.ToBase64String(ms.ToArray())
+        }, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Connector document send failed: {(int)response.StatusCode}");
+        var result = await response.Content.ReadFromJsonAsync<SendPayload>(cancellationToken: cancellationToken);
+        return result?.ExternalMessageId;
+    }
+
     public async Task<WhatsAppMediaDownloadResult> DownloadMediaAsync(string mediaId, CancellationToken cancellationToken = default)
     {
         using var response = await _http.PostAsJsonAsync(

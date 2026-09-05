@@ -21,6 +21,11 @@ public interface IWhatsAppClient
         string? caption = null,
         CancellationToken cancellationToken = default);
 
+    Task<string?> SendDocumentMessageAsync(
+        string toPhoneE164, Stream document, string contentType, string fileName,
+        string? caption = null, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Document sending is not supported by this client.");
+
     Task SendComposingAsync(string toPhoneE164, CancellationToken cancellationToken = default);
 
     Task SendPausedPresenceAsync(string toPhoneE164, CancellationToken cancellationToken = default);

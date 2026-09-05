@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import express from "express";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
-import { getStatus, sendText, sendImage, sendPresence, startWhatsApp, downloadMediaByMessageId } from "./whatsapp.js";
+import { getStatus, sendText, sendImage, sendDocument, sendPresence, startWhatsApp, downloadMediaByMessageId } from "./whatsapp.js";
 import { getConnectedSelfJids } from "./selfIdentity.js";
 import { getSignalDiagnosticCounters } from "./safeSignalDiagnostics.js";
 
@@ -83,6 +83,27 @@ app.post("/send/image", requireSecret, async (req, res) => {
   } catch (error) {
     logger.error({ err: error?.message }, "send image failed");
     return res.status(503).json({ error: "send_image_failed" });
+  }
+});
+
+app.post("/send/document", requireSecret, async (req, res) => {
+  try {
+    const toRaw = String(req.body?.to || "").trim();
+    const documentBase64 = String(req.body?.documentBase64 || "").trim();
+    const fileName = String(req.body?.fileName || "").trim();
+    const contentType = String(req.body?.contentType || "application/octet-stream").trim();
+    const caption = req.body?.caption ? String(req.body.caption) : null;
+    if (!toRaw || !documentBase64 || !fileName || fileName.includes("/") || fileName.includes("\\"))
+      return res.status(400).json({ error: "invalid_document_request" });
+    const documentBuffer = Buffer.from(documentBase64, "base64");
+    if (!documentBuffer.length) return res.status(400).json({ error: "invalid_document_data" });
+    const result = await sendDocument(toRaw, documentBuffer, contentType, fileName, caption);
+    return res.json({ ok: true, externalMessageId: result.externalMessageId,
+      destinationType: result.destinationType, baileysMessageIdPresent: Boolean(result.externalMessageId),
+      exactRoutePreserved: result.exactRoutePreserved ?? true, sockSendMessageCalled: true });
+  } catch (error) {
+    logger.error({ err: error?.message }, "send document failed");
+    return res.status(503).json({ error: "send_document_failed" });
   }
 });
 

@@ -1217,6 +1217,9 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                     b.Property<string>("PanelFileDeliveryConfirmationJson")
                         .HasColumnType("jsonb");
 
+                    b.Property<string>("PanelFileDeliveryStateJson")
+                        .HasColumnType("text");
+
                     b.Property<string>("PanelIdentityStateJson")
                         .HasColumnType("jsonb");
 
