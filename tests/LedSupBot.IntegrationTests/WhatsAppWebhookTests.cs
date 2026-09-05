@@ -27,10 +27,12 @@ public sealed class WhatsAppWebhookFixture : IAsyncLifetime
     public string AdminSessionSecret { get; } = "test-admin-session-secret-minimum-length";
     public WebApplicationFactory<Program> Factory { get; private set; } = null!;
     public RecordingWhatsAppClient WhatsApp { get; } = new();
+    public string MediaRoot { get; private set; } = string.Empty;
 
     public async Task InitializeAsync()
     {
         await _postgres.StartAsync();
+        MediaRoot = Path.Combine(Path.GetTempPath(), "led-sup-bot-admin-media", Guid.NewGuid().ToString("N"));
 
         await using (var db = CreateDb())
         {
@@ -46,6 +48,9 @@ public sealed class WhatsAppWebhookFixture : IAsyncLifetime
             builder.UseSetting("Admin:DashboardPassword", AdminPassword);
             builder.UseSetting("Admin:SessionSecret", AdminSessionSecret);
             builder.UseSetting("Workflow:AutoReplyEnabled", "false");
+            builder.UseSetting("MediaStorage:RootPath", MediaRoot);
+            builder.UseSetting("PanelFilePackages:MaxFirmwareFileSizeBytes", "4");
+            builder.UseSetting("PanelFilePackages:MaxReceiverConfigFileSizeBytes", "4");
             builder.UseSetting("WhatsAppTestMode:Enabled", "false");
             builder.ConfigureServices(services =>
             {
@@ -59,6 +64,7 @@ public sealed class WhatsAppWebhookFixture : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await Factory.DisposeAsync();
+        if (Directory.Exists(MediaRoot)) Directory.Delete(MediaRoot, true);
         await _postgres.DisposeAsync();
     }
 

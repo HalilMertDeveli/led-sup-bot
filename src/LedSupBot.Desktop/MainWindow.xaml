@@ -116,6 +116,10 @@
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <!-- Operator-only training data view -->
                     <Button Style="{StaticResource SecondaryButton}"
+                            Command="{Binding TogglePanelFilesViewCommand}"
+                            Content="{Binding PanelFilesToggleText}"
+                            Padding="10,6" Margin="0,0,8,0" />
+                    <Button Style="{StaticResource SecondaryButton}"
                             Command="{Binding ToggleTrainingDataViewCommand}"
                             Content="{Binding TrainingDataToggleText}"
                             Padding="10,6"
@@ -140,7 +144,7 @@
 
         <!-- 1: MAIN 3-COLUMN WORKSPACE -->
         <Grid Grid.Row="1"
-              Visibility="{Binding IsTrainingDataViewVisible, Converter={StaticResource InverseBoolToVis}}">
+              Visibility="{Binding IsConversationWorkspaceVisible, Converter={StaticResource BoolToVis}}">
             <Grid.ColumnDefinitions>
                 <!-- Col 0: Conversations Sidebar -->
                 <ColumnDefinition Width="300" MinWidth="240" MaxWidth="420" />
@@ -792,6 +796,8 @@
         <!-- Small operator-only training management view; reuses the current API session. -->
         <views:TrainingDataView Grid.Row="1"
                                 Visibility="{Binding IsTrainingDataViewVisible, Converter={StaticResource BoolToVis}}" />
+        <views:PanelFilesView Grid.Row="1"
+                              Visibility="{Binding IsPanelFilesViewVisible, Converter={StaticResource BoolToVis}}" />
 
         <!-- 2: GLOBAL STATUS & ERROR BAR (Bottom) -->
         <Border Grid.Row="2" Background="#2B1414" BorderBrush="{StaticResource DangerBrush}" BorderThickness="0,1,0,0" Padding="12,6"

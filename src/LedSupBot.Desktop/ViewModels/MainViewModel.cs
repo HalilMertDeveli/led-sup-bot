@@ -66,6 +66,11 @@ public sealed class MainViewModel : ViewModelBase
     private DateTime? _trainingDateTo;
     private TrainingExampleCountsDto _trainingCounts = new();
     private TrainingExampleDto? _selectedTrainingExample;
+    private bool _isPanelFilesViewVisible;
+    private bool _isLoadingPanelPackages;
+    private string _panelPackageSearch = "", _panelPitchFilter = "", _panelCodeFilter = "", _panelStatusFilter = "all", _panelReadinessFilter = "all";
+    private string _newPanelPitch = "P2.5", _newPanelCode = "", _newSecondaryCode = "";
+    private PanelPackageDto? _selectedPanelPackage;
 
     public MainViewModel(
         LedSupBotApiClient api,
@@ -85,6 +90,7 @@ public sealed class MainViewModel : ViewModelBase
         SupportSteps = new ObservableCollection<SupportStepViewModel>();
         PanelPhotos = new ObservableCollection<PhotoDetailDto>();
         TrainingExamples = new ObservableCollection<TrainingExampleDto>();
+        PanelPackages = new ObservableCollection<PanelPackageDto>();
 
         TrainingStatusOptions = ["all", "Approved", "Edited", "Rejected", "Excluded"];
         TrainingIntentOptions = ["", "Acknowledgement", "CasualConversation", "Correction", "GeneralKnowledge", "LedTechnicalQuestion", "LedTroubleshooting", "NewCase", "QuestionAboutCurrentStep", "FlowRecovery", "ResumeWorkflow", "WorkflowInformation", "Unclear"];
@@ -119,6 +125,14 @@ public sealed class MainViewModel : ViewModelBase
             message => message?.IsFeedbackEditorOpen == true && !message.IsSavingFeedback);
         ToggleTrainingDataViewCommand = new RelayCommand(ToggleTrainingDataView);
         RefreshTrainingDataCommand = new AsyncRelayCommand(LoadTrainingExamplesAsync, () => !IsLoadingTrainingData);
+        TogglePanelFilesViewCommand = new RelayCommand(TogglePanelFilesView);
+        RefreshPanelPackagesCommand = new AsyncRelayCommand(LoadPanelPackagesAsync, () => !IsLoadingPanelPackages);
+        CreatePanelPackageCommand = new AsyncRelayCommand(CreatePanelPackageAsync, () => !IsLoadingPanelPackages && !string.IsNullOrWhiteSpace(NewPanelPitch) && !string.IsNullOrWhiteSpace(NewPanelCode) && !string.IsNullOrWhiteSpace(NewSecondaryCode));
+        EditPanelPackageCommand = new AsyncRelayCommand(EditPanelPackageAsync, () => SelectedPanelPackage?.Status == "Draft");
+        UploadFirmwareCommand = new AsyncRelayCommand(() => UploadPanelAssetAsync("firmware", ".hex"), () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
+        UploadReceiverConfigCommand = new AsyncRelayCommand(() => UploadPanelAssetAsync("receiver-config", ".rcvbp"), () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
+        ActivatePanelPackageCommand = new AsyncRelayCommand(ActivatePanelPackageAsync, () => SelectedPanelPackage?.Status == "Draft");
+        ArchivePanelPackageCommand = new AsyncRelayCommand(ArchivePanelPackageAsync, () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
 
         _signalR.ConnectionStateChanged += (state, label) =>
         {
@@ -206,6 +220,14 @@ public sealed class MainViewModel : ViewModelBase
     public ICommand CancelTrainingFeedbackCommand { get; }
     public ICommand ToggleTrainingDataViewCommand { get; }
     public ICommand RefreshTrainingDataCommand { get; }
+    public ICommand TogglePanelFilesViewCommand { get; }
+    public ICommand RefreshPanelPackagesCommand { get; }
+    public ICommand CreatePanelPackageCommand { get; }
+    public ICommand EditPanelPackageCommand { get; }
+    public ICommand UploadFirmwareCommand { get; }
+    public ICommand UploadReceiverConfigCommand { get; }
+    public ICommand ActivatePanelPackageCommand { get; }
+    public ICommand ArchivePanelPackageCommand { get; }
     public ICommand AddCaseMemoryCommand { get; }
 
     #endregion
@@ -569,6 +591,24 @@ public sealed class MainViewModel : ViewModelBase
 
     #region Teacher Mode & Training Data Properties
 
+    public ObservableCollection<PanelPackageDto> PanelPackages { get; }
+    public IReadOnlyList<string> PanelStatusOptions { get; } = ["all", "Draft", "Active", "Archived"];
+    public IReadOnlyList<string> PanelReadinessOptions { get; } = ["all", "READY", "INCOMPLETE", "NOT_DELIVERY_ELIGIBLE"];
+    public bool IsPanelFilesViewVisible { get => _isPanelFilesViewVisible; private set { if (SetProperty(ref _isPanelFilesViewVisible, value)) { RaisePropertyChanged(nameof(PanelFilesToggleText)); RaisePropertyChanged(nameof(IsConversationWorkspaceVisible)); } } }
+    public bool IsConversationWorkspaceVisible => !IsPanelFilesViewVisible && !IsTrainingDataViewVisible;
+    public string PanelFilesToggleText => IsPanelFilesViewVisible ? "💬 Konuşmalara Dön" : "📦 Panel Dosyaları";
+    public bool IsLoadingPanelPackages { get => _isLoadingPanelPackages; private set { if (SetProperty(ref _isLoadingPanelPackages, value)) CommandManager.InvalidateRequerySuggested(); } }
+    public string PanelPackageSearch { get => _panelPackageSearch; set => SetProperty(ref _panelPackageSearch, value ?? ""); }
+    public string PanelPitchFilter { get => _panelPitchFilter; set => SetProperty(ref _panelPitchFilter, value ?? ""); }
+    public string PanelCodeFilter { get => _panelCodeFilter; set => SetProperty(ref _panelCodeFilter, value ?? ""); }
+    public string PanelStatusFilter { get => _panelStatusFilter; set => SetProperty(ref _panelStatusFilter, value ?? "all"); }
+    public string PanelReadinessFilter { get => _panelReadinessFilter; set => SetProperty(ref _panelReadinessFilter, value ?? "all"); }
+    public string NewPanelPitch { get => _newPanelPitch; set { if (SetProperty(ref _newPanelPitch, value ?? "")) RaisePropertyChanged(nameof(NewPanelCanonicalPreview)); } }
+    public string NewPanelCode { get => _newPanelCode; set { if (SetProperty(ref _newPanelCode, value ?? "")) RaisePropertyChanged(nameof(NewPanelCanonicalPreview)); } }
+    public string NewSecondaryCode { get => _newSecondaryCode; set { if (SetProperty(ref _newSecondaryCode, value ?? "")) RaisePropertyChanged(nameof(NewPanelCanonicalPreview)); } }
+    public string NewPanelCanonicalPreview => $"{NewPanelPitch.Trim().ToUpperInvariant()}-{NewPanelCode.Trim().ToUpperInvariant()}-{NewSecondaryCode.Trim().ToUpperInvariant()}";
+    public PanelPackageDto? SelectedPanelPackage { get => _selectedPanelPackage; set { if (SetProperty(ref _selectedPanelPackage, value)) CommandManager.InvalidateRequerySuggested(); } }
+
     public bool IsTrainingDataViewVisible
     {
         get => _isTrainingDataViewVisible;
@@ -577,6 +617,7 @@ public sealed class MainViewModel : ViewModelBase
             if (SetProperty(ref _isTrainingDataViewVisible, value))
             {
                 RaisePropertyChanged(nameof(TrainingDataToggleText));
+                RaisePropertyChanged(nameof(IsConversationWorkspaceVisible));
             }
         }
     }
@@ -1501,10 +1542,77 @@ public sealed class MainViewModel : ViewModelBase
     private void ToggleTrainingDataView()
     {
         IsTrainingDataViewVisible = !IsTrainingDataViewVisible;
+        if (IsTrainingDataViewVisible) IsPanelFilesViewVisible = false;
         if (IsTrainingDataViewVisible)
         {
             _ = LoadTrainingExamplesAsync();
         }
+    }
+
+    private void TogglePanelFilesView()
+    {
+        IsPanelFilesViewVisible = !IsPanelFilesViewVisible;
+        if (IsPanelFilesViewVisible) { IsTrainingDataViewVisible = false; _ = LoadPanelPackagesAsync(); }
+    }
+
+    private async Task LoadPanelPackagesAsync()
+    {
+        IsLoadingPanelPackages = true; ErrorMessage = null;
+        try
+        {
+            var result = await _api.GetPanelPackagesAsync(PanelPackageSearch, PanelPitchFilter, PanelCodeFilter, PanelStatusFilter, PanelReadinessFilter);
+            RunOnUi(() => { PanelPackages.Clear(); foreach (var item in result.Items) PanelPackages.Add(item); SelectedPanelPackage = PanelPackages.FirstOrDefault(); });
+        }
+        catch (Exception ex) { DesktopLog.Error("LoadPanelPackages", ex); ErrorMessage = MapApiError(ex); }
+        finally { IsLoadingPanelPackages = false; }
+    }
+
+    private async Task CreatePanelPackageAsync()
+    {
+        try
+        {
+            var created = await _api.CreatePanelPackageAsync(new PanelPackageWriteRequest { PixelPitch = NewPanelPitch, PanelCode = NewPanelCode, SecondaryCode = NewSecondaryCode });
+            await LoadPanelPackagesAsync(); if (created is not null) SelectedPanelPackage = PanelPackages.FirstOrDefault(x => x.Id == created.Id);
+        }
+        catch (Exception ex) { ErrorMessage = MapApiError(ex); }
+    }
+
+    private async Task UploadPanelAssetAsync(string slot, string extension)
+    {
+        if (SelectedPanelPackage is null) return;
+        var dialog = new Microsoft.Win32.OpenFileDialog { Filter = $"{extension} dosyası|*{extension}", CheckFileExists = true, Multiselect = false };
+        if (dialog.ShowDialog() != true) return;
+        try { SelectedPanelPackage = await _api.UploadPanelAssetAsync(SelectedPanelPackage.Id, slot, dialog.FileName); await LoadPanelPackagesAsync(); }
+        catch (Exception ex) { ErrorMessage = MapApiError(ex); }
+    }
+
+    private async Task EditPanelPackageAsync()
+    {
+        if (SelectedPanelPackage is null) return;
+        var selectedId = SelectedPanelPackage.Id;
+        var dialog = new PanelPackageEditWindow(SelectedPanelPackage) { Owner = System.Windows.Application.Current.MainWindow };
+        if (dialog.ShowDialog() != true) return;
+        try
+        {
+            await _api.UpdatePanelPackageAsync(selectedId, dialog.Edit);
+            await LoadPanelPackagesAsync();
+            SelectedPanelPackage = PanelPackages.FirstOrDefault(x => x.Id == selectedId);
+        }
+        catch (Exception ex) { ErrorMessage = MapApiError(ex); }
+    }
+
+    private async Task ActivatePanelPackageAsync()
+    {
+        if (SelectedPanelPackage is null) return;
+        try { await _api.ActivatePanelPackageAsync(SelectedPanelPackage.Id); await LoadPanelPackagesAsync(); }
+        catch (Exception ex) { ErrorMessage = MapApiError(ex); }
+    }
+
+    private async Task ArchivePanelPackageAsync()
+    {
+        if (SelectedPanelPackage is null) return;
+        try { await _api.ArchivePanelPackageAsync(SelectedPanelPackage.Id); await LoadPanelPackagesAsync(); }
+        catch (Exception ex) { ErrorMessage = MapApiError(ex); }
     }
 
     private async Task LoadTrainingExamplesAsync()

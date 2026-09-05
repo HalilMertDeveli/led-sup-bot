@@ -70,22 +70,35 @@ public sealed class PanelFileAssetRegistry(
             .OrderByDescending(x => x.Version).ToListAsync(cancellationToken);
         if (previous.Any(x => x.Sha256 == hash)) throw new InvalidOperationException("This exact asset version is already registered.");
         buffer.Position = 0;
-        var stored = await storage.StoreAsync(buffer, "application/octet-stream",
-            new MediaStoreRequest($"panel-packages/{packageId:N}", Path.GetExtension(originalFileName)), cancellationToken);
-        await using (var storedStream = await storage.OpenReadAsync(stored.StorageKey, cancellationToken))
+        StoredMediaReference? stored = null;
+        try
         {
-            var storedHash = Convert.ToHexString(await SHA256.HashDataAsync(storedStream, cancellationToken)).ToLowerInvariant();
-            if (stored.SizeBytes != total || storedHash != hash) throw new IOException("Stored panel asset failed integrity verification.");
-        }
+            stored = await storage.StoreAsync(buffer, "application/octet-stream",
+                new MediaStoreRequest($"panel-packages/{packageId:N}", Path.GetExtension(originalFileName)), cancellationToken);
+            await using (var storedStream = await storage.OpenReadAsync(stored.StorageKey, cancellationToken))
+            {
+                var storedHash = Convert.ToHexString(await SHA256.HashDataAsync(storedStream, cancellationToken)).ToLowerInvariant();
+                if (stored.SizeBytes != total || storedHash != hash) throw new IOException("Stored panel asset failed integrity verification.");
+            }
 
-        foreach (var item in previous) item.Status = PanelFileAssetStatus.Archived;
-        var asset = new PanelFilePackageAsset
+            foreach (var item in previous) item.Status = PanelFileAssetStatus.Archived;
+            var asset = new PanelFilePackageAsset
+            {
+                PanelFilePackageId = packageId, AssetType = type, OriginalFileName = originalFileName,
+                StorageKey = stored.StorageKey, MimeType = stored.ContentType, FileSize = stored.SizeBytes,
+                Sha256 = hash, Version = previous.Count == 0 ? 1 : previous.Max(x => x.Version) + 1
+            };
+            db.PanelFilePackageAssets.Add(asset); await db.SaveChangesAsync(cancellationToken); return asset;
+        }
+        catch
         {
-            PanelFilePackageId = packageId, AssetType = type, OriginalFileName = originalFileName,
-            StorageKey = stored.StorageKey, MimeType = stored.ContentType, FileSize = stored.SizeBytes,
-            Sha256 = hash, Version = previous.Count == 0 ? 1 : previous.Max(x => x.Version) + 1
-        };
-        db.PanelFilePackageAssets.Add(asset); await db.SaveChangesAsync(cancellationToken); return asset;
+            if (stored is not null)
+            {
+                try { await storage.DeleteAsync(stored.StorageKey, CancellationToken.None); }
+                catch { /* Preserve the original failure; orphan cleanup is best effort. */ }
+            }
+            throw;
+        }
     }
 
     private static bool IsReservedFileName(string fileName)

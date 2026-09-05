@@ -7,7 +7,10 @@ using LedSupBot.Application.Workflow;
 using LedSupBot.Application.CaseMemory;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
+using LedSupBot.Application.PanelFiles;
+using LedSupBot.Domain.PanelFiles;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace LedSupBot.Api.Admin;
@@ -44,6 +47,14 @@ public static class AdminEndpointExtensions
         group.MapPost("/case-memories/{id:guid}/reject", RejectMemoryAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapPost("/case-memories/{id:guid}/archive", ArchiveMemoryAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapGet("/case-memories", ListMemoriesAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapGet("/panel-file-packages", ListPanelPackagesAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapGet("/panel-file-packages/{id:guid}", GetPanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPost("/panel-file-packages", CreatePanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapMethods("/panel-file-packages/{id:guid}", ["PUT", "PATCH"], UpdatePanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPost("/panel-file-packages/{id:guid}/activate", ActivatePanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPost("/panel-file-packages/{id:guid}/archive", ArchivePanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPost("/panel-file-packages/{id:guid}/assets/{slot}", UploadPanelAssetAsync)
+            .DisableAntiforgery().AddEndpointFilter(AdminAuthFilter.InvokeAsync);
 
         return group;
     }
@@ -332,6 +343,71 @@ public static class AdminEndpointExtensions
         [FromQuery] string? category, [FromServices] IVerifiedCaseMemoryService service, CancellationToken ct) =>
         Results.Ok(await service.ListAsync(status, model, category, ct));
 
+    private static async Task<IResult> ListPanelPackagesAsync([FromQuery] string? search, [FromQuery] string? pitch,
+        [FromQuery] string? code, [FromQuery] PanelFilePackageStatus? status, [FromQuery] string? readiness,
+        [FromQuery] int? limit, [FromServices] IPanelFilePackageAdminQuery query, CancellationToken ct) =>
+        Results.Ok(await query.ListAsync(search, pitch, code, status, readiness, limit ?? 100, ct));
+
+    private static async Task<IResult> GetPanelPackageAsync(Guid id, [FromServices] IPanelFilePackageAdminQuery query, CancellationToken ct) =>
+        await query.GetAsync(id, ct) is { } package ? Results.Ok(package) : Results.NotFound(new { error = "package_not_found" });
+
+    private static async Task<IResult> CreatePanelPackageAsync([FromBody] PanelPackageWriteRequest request,
+        [FromServices] IPanelFilePackageRegistry registry, [FromServices] IPanelFilePackageAdminQuery query, CancellationToken ct)
+    {
+        try
+        {
+            var package = await registry.CreateDraftAsync(request.PixelPitch, request.PanelCode, request.SecondaryCode, request.DisplayName, ct);
+            if (request.Version > 1 || request.Manufacturer is not null || request.Description is not null || request.Notes is not null)
+                package = await registry.UpdateDraftAsync(package.Id, package.PixelPitch, package.PanelCode, package.SecondaryCode,
+                    request.DisplayName, request.Manufacturer, request.Description, request.Notes, package.Version, ct) ?? package;
+            return Results.Created($"/api/admin/panel-file-packages/{package.Id}", await query.GetAsync(package.Id, ct));
+        }
+        catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (InvalidOperationException) { return Results.Conflict(new { error = "Bu paket zaten mevcut." }); }
+        catch (DbUpdateException) { return Results.Conflict(new { error = "Bu paket zaten mevcut." }); }
+    }
+
+    private static async Task<IResult> UpdatePanelPackageAsync(Guid id, [FromBody] PanelPackageWriteRequest request,
+        [FromServices] IPanelFilePackageRegistry registry, [FromServices] IPanelFilePackageAdminQuery query, CancellationToken ct)
+    {
+        try
+        {
+            var updated = await registry.UpdateDraftAsync(id, request.PixelPitch, request.PanelCode, request.SecondaryCode,
+                request.DisplayName, request.Manufacturer, request.Description, request.Notes, request.Version, ct);
+            return updated is null ? Results.Conflict(new { error = "Yalnızca boş Draft paket düzenlenebilir." }) : Results.Ok(await query.GetAsync(id, ct));
+        }
+        catch (InvalidOperationException) { return Results.Conflict(new { error = "Bu paket zaten mevcut." }); }
+    }
+
+    private static async Task<IResult> ActivatePanelPackageAsync(Guid id, [FromServices] IPanelFilePackageRegistry registry,
+        [FromServices] IPanelFilePackageAdminQuery query, CancellationToken ct) =>
+        await registry.ActivateAsync(id, ct) ? Results.Ok(await query.GetAsync(id, ct)) : Results.Conflict(new { error = ".hex ve .rcvbp dosyaları tamamlanmadan paket aktifleştirilemez." });
+
+    private static async Task<IResult> ArchivePanelPackageAsync(Guid id, [FromServices] IPanelFilePackageRegistry registry,
+        [FromServices] IPanelFilePackageAdminQuery query, CancellationToken ct) =>
+        await registry.ArchiveAsync(id, ct) ? Results.Ok(await query.GetAsync(id, ct)) : Results.NotFound();
+
+    private static async Task<IResult> UploadPanelAssetAsync(Guid id, string slot, IFormFile file,
+        [FromServices] IPanelFileAssetRegistry registry, [FromServices] IPanelFilePackageAdminQuery query,
+        [FromServices] IOptions<PanelFilePackageOptions> options, CancellationToken ct)
+    {
+        var type = slot.ToLowerInvariant() switch { "firmware" => PanelFileAssetType.FirmwareHex, "receiver-config" => PanelFileAssetType.ReceiverConfigRcvbp, _ => (PanelFileAssetType?)null };
+        if (type is null) return Results.BadRequest(new { error = "Geçersiz dosya yuvası." });
+        var max = type == PanelFileAssetType.FirmwareHex ? options.Value.MaxFirmwareFileSizeBytes : options.Value.MaxReceiverConfigFileSizeBytes;
+        try
+        {
+            await using var stream = file.OpenReadStream();
+            await registry.StoreAsync(id, type.Value, file.FileName, stream, max, ct);
+            return Results.Ok(await query.GetAsync(id, ct));
+        }
+        catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (InvalidOperationException) { return Results.Conflict(new { error = "Bu dosya zaten bu pakette mevcut." }); }
+        catch (KeyNotFoundException) { return Results.NotFound(new { error = "package_not_found" }); }
+        catch (IOException) { return Results.Json(new { error = "panel_file_storage_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
+        catch (DbUpdateException) { return Results.Json(new { error = "panel_file_persistence_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
+    }
+
     private static string GuessContentType(string storageKey)
     {
         var ext = Path.GetExtension(storageKey).ToLowerInvariant();
@@ -345,6 +421,8 @@ public static class AdminEndpointExtensions
     }
 
     internal sealed record LoginRequest(string Password);
+    internal sealed record PanelPackageWriteRequest(string PixelPitch, string PanelCode, string SecondaryCode,
+        string? DisplayName, string? Manufacturer, string? Description, string? Notes, int Version = 1);
 }
 
 internal static class AdminAuthFilter

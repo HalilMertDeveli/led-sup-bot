@@ -86,6 +86,18 @@ public sealed class LocalMediaStorage : IMediaStorage
         }
     }
 
+    public Task DeleteAsync(string storageKey, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var fullPath = ResolveSafePath(storageKey);
+        if (File.Exists(fullPath))
+        {
+            File.Delete(fullPath);
+        }
+
+        return Task.CompletedTask;
+    }
+
     internal string ResolveSafePath(string storageKey)
     {
         if (string.IsNullOrWhiteSpace(storageKey))

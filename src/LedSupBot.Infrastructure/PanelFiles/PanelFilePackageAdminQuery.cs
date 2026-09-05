@@ -21,11 +21,19 @@ public sealed class PanelFilePackageAdminQuery(ApplicationDbContext db, IMediaSt
         if (!string.IsNullOrWhiteSpace(pitch)) query = query.Where(x => x.PixelPitch == pitch.Trim().ToUpper());
         if (!string.IsNullOrWhiteSpace(code)) query = query.Where(x => x.PanelCode == code.Trim().ToUpper());
         if (status is not null) query = query.Where(x => x.Status == status);
-        var total = await query.CountAsync(cancellationToken);
-        var packages = await query.OrderByDescending(x => x.UpdatedAt).Take(Math.Clamp(limit, 1, 200)).ToListAsync(cancellationToken);
-        var mapped = packages.Select(Map).Where(x => string.IsNullOrWhiteSpace(readiness) ||
-            x.Readiness.Equals(readiness, StringComparison.OrdinalIgnoreCase)).ToList();
-        return new(mapped, string.IsNullOrWhiteSpace(readiness) ? total : mapped.Count);
+        var boundedLimit = Math.Clamp(limit, 1, 200);
+        if (string.IsNullOrWhiteSpace(readiness))
+        {
+            var total = await query.CountAsync(cancellationToken);
+            var packages = await query.OrderByDescending(x => x.UpdatedAt).Take(boundedLimit).ToListAsync(cancellationToken);
+            return new(packages.Select(Map).ToList(), total);
+        }
+
+        // Readiness includes private-storage existence and therefore cannot be translated to SQL.
+        // Bound the candidate set before evaluating it, then paginate the filtered result.
+        var candidates = await query.OrderByDescending(x => x.UpdatedAt).Take(200).ToListAsync(cancellationToken);
+        var filtered = candidates.Select(Map).Where(x => x.Readiness.Equals(readiness, StringComparison.OrdinalIgnoreCase)).ToList();
+        return new(filtered.Take(boundedLimit).ToList(), filtered.Count);
     }
 
     public async Task<PanelFilePackageAdminDto?> GetAsync(Guid id, CancellationToken cancellationToken = default) =>
@@ -40,8 +48,11 @@ public sealed class PanelFilePackageAdminQuery(ApplicationDbContext db, IMediaSt
         var ready = package.Status == PanelFilePackageStatus.Active &&
                     active.Count(x => x.AssetType == PanelFileAssetType.FirmwareHex) == 1 &&
                     active.Count(x => x.AssetType == PanelFileAssetType.ReceiverConfigRcvbp) == 1;
+        var readiness = package.Status != PanelFilePackageStatus.Active
+            ? "NOT_DELIVERY_ELIGIBLE"
+            : ready ? "READY" : "INCOMPLETE";
         return new(package.Id, package.PixelPitch, package.PanelCode, package.SecondaryCode, package.CanonicalKey,
             package.DisplayName, package.Manufacturer, package.Description, package.Notes, package.Status,
-            package.Version, ready ? "READY" : "INCOMPLETE", assets, package.UpdatedAt);
+            package.Version, readiness, assets, package.UpdatedAt);
     }
 }

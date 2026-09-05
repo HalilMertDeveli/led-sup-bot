@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.IO;
 using System.Text.Json;
 using LedSupBot.Desktop.Models;
 
@@ -130,6 +131,40 @@ public sealed class LedSupBotApiClient : IDisposable
         using var response = await _http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode) throw new LedSupBotApiException("Vaka hafızası işlemi tamamlanamadı.", (int)response.StatusCode);
         return await response.Content.ReadFromJsonAsync<CaseMemoryDto>(JsonOptions, ct);
+    }
+
+    public async Task<PanelPackageListResponse> GetPanelPackagesAsync(string? search, string? pitch, string? code, string? status, string? readiness, CancellationToken ct = default)
+    {
+        var query = new List<string>(); AddQueryValue(query, "search", search); AddQueryValue(query, "pitch", pitch);
+        AddQueryValue(query, "code", code); AddQueryValue(query, "status", status is "all" ? null : status);
+        AddQueryValue(query, "readiness", readiness is "all" ? null : readiness);
+        return await GetAsync<PanelPackageListResponse>("api/admin/panel-file-packages" + (query.Count > 0 ? "?" + string.Join("&", query) : ""), ct) ?? new();
+    }
+    public Task<PanelPackageDto?> CreatePanelPackageAsync(PanelPackageWriteRequest body, CancellationToken ct = default) => SendPanelAsync(HttpMethod.Post, "api/admin/panel-file-packages", body, ct);
+    public Task<PanelPackageDto?> UpdatePanelPackageAsync(Guid id, PanelPackageWriteRequest body, CancellationToken ct = default) => SendPanelAsync(HttpMethod.Put, $"api/admin/panel-file-packages/{id:D}", body, ct);
+    public Task<PanelPackageDto?> ActivatePanelPackageAsync(Guid id, CancellationToken ct = default) => SendPanelAsync(HttpMethod.Post, $"api/admin/panel-file-packages/{id:D}/activate", null, ct);
+    public Task<PanelPackageDto?> ArchivePanelPackageAsync(Guid id, CancellationToken ct = default) => SendPanelAsync(HttpMethod.Post, $"api/admin/panel-file-packages/{id:D}/archive", null, ct);
+    public async Task<PanelPackageDto?> UploadPanelAssetAsync(Guid id, string slot, string filePath, CancellationToken ct = default)
+    {
+        await using var file = File.OpenRead(filePath); using var content = new MultipartFormDataContent();
+        using var part = new StreamContent(file); part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        content.Add(part, "file", Path.GetFileName(filePath));
+        using var response = await _http.PostAsync($"api/admin/panel-file-packages/{id:D}/assets/{slot}", content, ct);
+        return await ReadPanelResponseAsync(response, ct);
+    }
+    private async Task<PanelPackageDto?> SendPanelAsync(HttpMethod method, string path, object? body, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(method, path); if (body is not null) request.Content = JsonContent.Create(body);
+        using var response = await _http.SendAsync(request, ct); return await ReadPanelResponseAsync(response, ct);
+    }
+    private static async Task<PanelPackageDto?> ReadPanelResponseAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (!response.IsSuccessStatusCode)
+        {
+            var raw = await response.Content.ReadAsStringAsync(ct);
+            throw new LedSupBotApiException(raw.Contains("zaten") ? "Bu paket veya dosya zaten mevcut." : raw.Contains("boyut") ? "Dosya boyutu izin verilen sınırı aşıyor." : "Panel dosyası işlemi tamamlanamadı.", (int)response.StatusCode);
+        }
+        return await response.Content.ReadFromJsonAsync<PanelPackageDto>(JsonOptions, ct);
     }
 
     public async Task<MessagesResponse?> GetMessagesAsync(

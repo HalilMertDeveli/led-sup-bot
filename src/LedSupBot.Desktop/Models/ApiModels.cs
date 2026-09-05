@@ -213,6 +213,52 @@ public sealed class CaseMemoryEditRequest
     public double Confidence { get; set; } = .7;
 }
 
+public sealed class PanelPackageListResponse
+{
+    [JsonPropertyName("items")] public List<PanelPackageDto> Items { get; set; } = [];
+    [JsonPropertyName("total")] public int Total { get; set; }
+}
+public sealed class PanelPackageDto
+{
+    [JsonPropertyName("id")] public Guid Id { get; set; }
+    [JsonPropertyName("pixelPitch")] public string PixelPitch { get; set; } = "";
+    [JsonPropertyName("panelCode")] public string PanelCode { get; set; } = "";
+    [JsonPropertyName("secondaryCode")] public string SecondaryCode { get; set; } = "";
+    [JsonPropertyName("canonicalKey")] public string CanonicalKey { get; set; } = "";
+    [JsonPropertyName("displayName")] public string DisplayName { get; set; } = "";
+    [JsonPropertyName("manufacturer")] public string? Manufacturer { get; set; }
+    [JsonPropertyName("description")] public string? Description { get; set; }
+    [JsonPropertyName("notes")] public string? Notes { get; set; }
+    [JsonPropertyName("status")] public string Status { get; set; } = "Draft";
+    [JsonPropertyName("version")] public int Version { get; set; }
+    [JsonPropertyName("readiness")] public string Readiness { get; set; } = "NOT_DELIVERY_ELIGIBLE";
+    [JsonPropertyName("assets")] public List<PanelPackageAssetDto> Assets { get; set; } = [];
+    [JsonPropertyName("updatedAt")] public DateTimeOffset UpdatedAt { get; set; }
+    public string FirmwareLabel => AssetLabel("FirmwareHex");
+    public string ReceiverConfigLabel => AssetLabel("ReceiverConfigRcvbp");
+    private string AssetLabel(string type) => Assets.Where(x => x.AssetType == type && x.Status == "Active")
+        .OrderByDescending(x => x.Version).Select(x => $"{x.OriginalFileName} · {x.FileSize:N0} B · SHA256 {x.Sha256}").FirstOrDefault() ?? "Eksik";
+}
+public sealed class PanelPackageAssetDto
+{
+    [JsonPropertyName("id")] public Guid Id { get; set; }
+    [JsonPropertyName("assetType")] public string AssetType { get; set; } = "";
+    [JsonPropertyName("originalFileName")] public string OriginalFileName { get; set; } = "";
+    [JsonPropertyName("mimeType")] public string MimeType { get; set; } = "";
+    [JsonPropertyName("fileSize")] public long FileSize { get; set; }
+    [JsonPropertyName("sha256")] public string Sha256 { get; set; } = "";
+    [JsonPropertyName("version")] public int Version { get; set; }
+    [JsonPropertyName("status")] public string Status { get; set; } = "";
+    [JsonPropertyName("createdAt")] public DateTimeOffset CreatedAt { get; set; }
+}
+public sealed class PanelPackageWriteRequest
+{
+    public string PixelPitch { get; set; } = ""; public string PanelCode { get; set; } = "";
+    public string SecondaryCode { get; set; } = ""; public string? DisplayName { get; set; }
+    public string? Manufacturer { get; set; } public string? Description { get; set; }
+    public string? Notes { get; set; } public int Version { get; set; } = 1;
+}
+
 public sealed class ScreenDetailDto
 {
     [JsonPropertyName("widthCm")]
