@@ -38,6 +38,9 @@ public class TechnicalSupportCase : Entity
     /// <summary>Backend-authoritative current panel identity and package-resolution provenance.</summary>
     public string? PanelIdentityStateJson { get; set; }
 
+    /// <summary>Backend-authoritative, identity/package/asset-bound PF6 confirmation and delivery-gate state.</summary>
+    public string? PanelFileDeliveryConfirmationJson { get; set; }
+
     public ScreenInformation? ScreenInformation { get; set; }
 
     public ReceiverInformation? ReceiverInformation { get; set; }

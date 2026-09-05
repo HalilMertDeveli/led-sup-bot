@@ -1214,6 +1214,9 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
 
+                    b.Property<string>("PanelFileDeliveryConfirmationJson")
+                        .HasColumnType("jsonb");
+
                     b.Property<string>("PanelIdentityStateJson")
                         .HasColumnType("jsonb");
 

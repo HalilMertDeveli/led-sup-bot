@@ -39,6 +39,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
     private readonly WebGroundingOptions _webOptions;
     private readonly ILogger<ConversationWorkflowService> _logger;
     private readonly IPanelIdentityCoordinator _panelIdentityCoordinator;
+    private readonly IPanelFileDeliverySafetyGate _panelFileDeliverySafetyGate;
 
     public ConversationWorkflowService(
         IApplicationDbContext db,
@@ -58,6 +59,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         IOptions<AiExtractionOptions> aiOptions,
         IOptions<WebGroundingOptions> webOptions,
         IPanelIdentityCoordinator panelIdentityCoordinator,
+        IPanelFileDeliverySafetyGate panelFileDeliverySafetyGate,
         ILogger<ConversationWorkflowService> logger)
     {
         _db = db;
@@ -77,6 +79,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         _aiOptions = aiOptions.Value;
         _webOptions = webOptions.Value;
         _panelIdentityCoordinator = panelIdentityCoordinator;
+        _panelFileDeliverySafetyGate = panelFileDeliverySafetyGate;
         _logger = logger;
     }
 
@@ -123,6 +126,10 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             if (imageAnalysis?.ValidatedModels.Count == 0 && !string.IsNullOrWhiteSpace(imageAnalysis?.CustomerClarification))
                 clarificationTexts.Add(imageAnalysis.CustomerClarification);
         }
+
+        var deliveryGateTurn = await _panelFileDeliverySafetyGate.HandleAsync(supportCase, inbound.TextContent,
+            inbound.MessageId, panelIdentityTurn.Attempted, cancellationToken);
+        if (deliveryGateTurn.Attempted) panelIdentityTurn = deliveryGateTurn;
 
         if (!panelIdentityTurn.Attempted)
             await ApplyInboundContentAsync(conversation.Id, supportCase, inbound, clarificationTexts, cancellationToken);

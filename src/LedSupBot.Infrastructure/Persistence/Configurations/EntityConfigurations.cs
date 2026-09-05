@@ -191,6 +191,7 @@ public sealed class TechnicalSupportCaseConfiguration : IEntityTypeConfiguration
         builder.Property(x => x.QuestionAttemptsJson).HasMaxLength(2000);
         builder.Property(x => x.DiagnosticStateJson).HasColumnType("jsonb");
         builder.Property(x => x.PanelIdentityStateJson).HasColumnType("jsonb");
+        builder.Property(x => x.PanelFileDeliveryConfirmationJson).HasColumnType("jsonb");
 
         builder.HasIndex(x => x.ConversationId)
             .HasDatabaseName("ix_technical_support_cases_conversation_id");
