@@ -39,6 +39,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
     private readonly WebGroundingOptions _webOptions;
     private readonly ILogger<ConversationWorkflowService> _logger;
     private readonly PanelIdentityWorkflowService _panelIdentityWorkflow;
+    private readonly PanelIdentityPhotoWorkflowService _panelIdentityPhotoWorkflow;
 
     public ConversationWorkflowService(
         IApplicationDbContext db,
@@ -58,6 +59,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         IOptions<AiExtractionOptions> aiOptions,
         IOptions<WebGroundingOptions> webOptions,
         PanelIdentityWorkflowService panelIdentityWorkflow,
+        PanelIdentityPhotoWorkflowService panelIdentityPhotoWorkflow,
         ILogger<ConversationWorkflowService> logger)
     {
         _db = db;
@@ -77,6 +79,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         _aiOptions = aiOptions.Value;
         _webOptions = webOptions.Value;
         _panelIdentityWorkflow = panelIdentityWorkflow;
+        _panelIdentityPhotoWorkflow = panelIdentityPhotoWorkflow;
         _logger = logger;
     }
 
@@ -118,6 +121,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         {
             var ids = inbound.CoalescedMessageIds is { Count: > 0 } ? inbound.CoalescedMessageIds : [inbound.MessageId];
             imageAnalysis = await _imageAnalysis.AnalyzeAsync(ids, inbound.TextContent, cancellationToken);
+            panelIdentityTurn = await _panelIdentityPhotoWorkflow.ApplyAsync(supportCase, imageAnalysis, inbound.MessageId, cancellationToken);
             await ApplyValidatedImageFactsAsync(supportCase.Id, conversation.CurrentStage, imageAnalysis, cancellationToken);
             if (imageAnalysis?.ValidatedModels.Count == 0 && !string.IsNullOrWhiteSpace(imageAnalysis?.CustomerClarification))
                 clarificationTexts.Add(imageAnalysis.CustomerClarification);

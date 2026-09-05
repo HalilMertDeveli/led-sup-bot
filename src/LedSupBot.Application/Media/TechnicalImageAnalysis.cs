@@ -5,6 +5,7 @@ using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using LedSupBot.Application.PanelFiles;
 
 namespace LedSupBot.Application.Media;
 
@@ -29,7 +30,8 @@ public sealed record TechnicalImageAnalysisResult(
     bool OcrAttempted = false,
     bool OcrSucceeded = false,
     bool VisionAttempted = false,
-    bool VisionSucceeded = false);
+    bool VisionSucceeded = false,
+    PanelLabelIdentityObservation? PanelIdentityObservation = null);
 
 public sealed record ValidatedImageAnalysis(
     TechnicalImageAnalysisResult Analysis,

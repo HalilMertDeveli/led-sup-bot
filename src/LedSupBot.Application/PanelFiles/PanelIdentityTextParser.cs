@@ -8,8 +8,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace LedSupBot.Application.PanelFiles;
 
-public enum PanelIdentityTextStatus { NoIdentity, CompleteIdentity, PartialIdentity, AmbiguousIdentity, InvalidIdentity }
-public enum PanelIdentitySource { CustomerPattern, CustomerNaturalText, ExistingCurrentCaseFact, OperatorCorrection }
+public enum PanelIdentityTextStatus { NoIdentity, CompleteIdentity, PartialIdentity, AmbiguousIdentity, InvalidIdentity, PhotoIdentityRetraction }
+public enum PanelIdentitySource { CustomerPattern, CustomerNaturalText, ExistingCurrentCaseFact, OperatorCorrection, PanelLabelOcr, PanelLabelVision, OcrAndVision, MixedContext }
 
 public sealed record PanelIdentityTextResult(
     PanelIdentityTextStatus Status,
@@ -32,6 +32,9 @@ public sealed partial class PanelIdentityTextParser(IPanelIdentityNormalizer nor
         if (string.IsNullOrWhiteSpace(text)) return new(PanelIdentityTextStatus.NoIdentity);
         var bounded = text.Trim();
         if (bounded.Length > MaxInputLength) bounded = bounded[..MaxInputLength];
+
+        if (WrongPhotoRegex().IsMatch(bounded))
+            return new(PanelIdentityTextStatus.PhotoIdentityRetraction, Evidence: BoundedEvidence(bounded));
 
         var correction = CorrectionRegex().Match(bounded);
         if (correction.Success)
@@ -82,6 +85,8 @@ public sealed partial class PanelIdentityTextParser(IPanelIdentityNormalizer nor
     private static partial Regex AmbiguousRegex();
     [GeneratedRegex(@"\b(?:hay[ıi]r\s+)?(?:son\s+kod|secondary\s*(?:code|kod))\s*(?:=|:)?\s*([A-Z0-9]{2,32})\b", SafeOptions)]
     private static partial Regex CorrectionRegex();
+    [GeneratedRegex(@"\b(?:yanl[ıi]ş|hatali|hatalı)\s+panel(?:in)?\s+(?:foto(?:ğraf|graf)(?:ını|ini)?|resm(?:ini|i))", SafeOptions)]
+    private static partial Regex WrongPhotoRegex();
 }
 
 public sealed record PanelIdentityCaseState(
@@ -92,7 +97,11 @@ public sealed record PanelIdentityCaseState(
     PanelIdentitySource Source,
     string PackageResolution,
     Guid? PackageId,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    PanelIdentitySource? PixelPitchSource = null,
+    PanelIdentitySource? PanelCodeSource = null,
+    PanelIdentitySource? SecondaryCodeSource = null,
+    Guid? SourceMessageId = null);
 
 public sealed record PanelIdentityTurnResult(bool Attempted, string? Reply = null, string ContextJson = "{}");
 
@@ -109,6 +118,16 @@ public sealed class PanelIdentityWorkflowService(
         var parsed = parser.Parse(text);
         if (parsed.Status == PanelIdentityTextStatus.NoIdentity) return new(false);
         var previous = Deserialize(supportCase.PanelIdentityStateJson);
+        if (parsed.Status == PanelIdentityTextStatus.PhotoIdentityRetraction)
+        {
+            if (previous?.Source is not (PanelIdentitySource.PanelLabelOcr or PanelIdentitySource.PanelLabelVision or PanelIdentitySource.OcrAndVision or PanelIdentitySource.MixedContext))
+                return new(false);
+            await db.TechnicalSupportCases.Where(x => x.Id == supportCase.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.PanelIdentityStateJson, (string?)null), ct);
+            supportCase.PanelIdentityStateJson = null;
+            return new(true, "Tamam, yanlış panele ait fotoğraftan okunan bilgileri geçersiz kıldım. Doğru panelin etiketini gönderebilir misiniz?",
+                JsonSerializer.Serialize(new { panelIdentityAttempted = true, panelIdentityRetracted = true, packageResolutionAttempted = false }, JsonOptions));
+        }
         var candidate = parsed.Identity;
         var source = parsed.Source ?? PanelIdentitySource.CustomerPattern;
 

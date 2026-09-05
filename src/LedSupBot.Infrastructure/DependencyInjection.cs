@@ -88,6 +88,7 @@ public static class DependencyInjection
             services.AddSingleton<IPanelIdentityTextParser, PanelIdentityTextParser>();
             services.AddScoped<IPanelFilePackageResolver, PanelFilePackageResolver>();
             services.AddScoped<PanelIdentityWorkflowService>();
+            services.AddScoped<PanelIdentityPhotoWorkflowService>();
             services.AddScoped<IPanelFileAssetRegistry, PanelFileAssetRegistry>();
             services.AddScoped<IPanelFilePackageRegistry, PanelFilePackageRegistry>();
             services.AddScoped<IPanelFilePackageAdminQuery, PanelFilePackageAdminQuery>();
