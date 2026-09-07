@@ -298,6 +298,28 @@ app.MapPost("/internal/conversations/{conversationId:guid}/resume-bot", async (
         : Results.NotFound(new { error = "conversation_not_found" });
 });
 
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/hubs/admin"))
+    {
+        var auth = context.RequestServices.GetRequiredService<IAdminAuthService>();
+        if (!auth.IsConfigured)
+        {
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            return;
+        }
+
+        var token = context.Request.Cookies[AdminEndpointExtensions.SessionCookieName];
+        if (!auth.TryValidateSessionToken(token))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+    }
+
+    await next(context);
+});
+
 app.MapAdminEndpoints();
 app.MapHub<AdminHub>("/hubs/admin");
 

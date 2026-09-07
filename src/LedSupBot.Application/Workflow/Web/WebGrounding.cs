@@ -48,14 +48,19 @@ public static partial class InformationSourceRoutingPolicy
         var text = Normalize(message);
         if (ConversationSemantics.IsWaitAcknowledgement(message) || intent == ConversationIntent.Acknowledgement)
             return InformationSourceRoute.NoSearch;
+        if (intent == ConversationIntent.QuestionAboutCurrentStep)
+            return InformationSourceRoute.NoSearch;
 
+        var cardQuestion = TechnicalCardQuestionRegex().IsMatch(text);
         var requiresCurrent = CurrentInformationRegex().IsMatch(text) || ExplicitSearchRegex().IsMatch(text);
-        if (!requiresCurrent) return InformationSourceRoute.NoSearch;
-
         // Exact verified internal product knowledge remains authoritative unless the
         // customer explicitly asks for changing/current external information.
         if (rag.Level == GroundingLevel.GroundedExact && !CurrentProductStateRegex().IsMatch(text))
             return InformationSourceRoute.NoSearch;
+
+        if (cardQuestion)
+            return rag.Used ? InformationSourceRoute.RagAndWeb : InformationSourceRoute.WebSearch;
+        if (!requiresCurrent) return InformationSourceRoute.NoSearch;
 
         return rag.Used ? InformationSourceRoute.RagAndWeb : InformationSourceRoute.WebSearch;
     }
@@ -87,6 +92,8 @@ public static partial class InformationSourceRoutingPolicy
     private static partial Regex ExplicitSearchRegex();
     [GeneratedRegex(@"\b(firmware|surum|versiyon|yeni cikan|en son|en yeni|guncel|hala satiliyor)\b", RegexOptions.CultureInvariant)]
     private static partial Regex CurrentProductStateRegex();
+    [GeneratedRegex(@"^(?=.*\b(?:kart|receiver|receiving card|sender card|alici kart|verici kart|controller|kontrolcu|processor|islemci|player|playbox|e\d+|5a-?75e|x\d+[a-z]?)\b)(?=.*(?:\?|kac|kapasite|cozunurluk|piksel|pixel|port|firmware|ne ise yar|destek)).*$", RegexOptions.CultureInvariant)]
+    private static partial Regex TechnicalCardQuestionRegex();
     [GeneratedRegex(@"(?<!\d)(?:\+?90\s*)?0?5\d{2}[\s.()-]*\d{3}[\s.()-]*\d{2}[\s.()-]*\d{2}(?!\d)", RegexOptions.CultureInvariant)]
     private static partial Regex PhoneRegex();
     [GeneratedRegex(@"(?i)\banydesk\s*(?:adres(?:i)?|kod(?:u)?|id)?\s*[:#-]?\s*\d{8,12}\b", RegexOptions.CultureInvariant)]

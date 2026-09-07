@@ -5,9 +5,11 @@ import { logger } from "./logger.js";
 import { getStatus, sendText, sendImage, sendDocument, sendPresence, startWhatsApp, downloadMediaByMessageId } from "./whatsapp.js";
 import { getConnectedSelfJids } from "./selfIdentity.js";
 import { getSignalDiagnosticCounters } from "./safeSignalDiagnostics.js";
+import { documentJsonLimit, validateOutboundDocument } from "./documentPolicy.js";
 
 const app = express();
-app.use(express.json({ limit: "2mb" }));
+const standardJson = express.json({ limit: "2mb" });
+app.use((req, res, next) => req.path === "/send/document" ? next() : standardJson(req, res, next));
 
 function requireSecret(req, res, next) {
   const provided = req.header("X-Connector-Secret") || "";
@@ -86,17 +88,18 @@ app.post("/send/image", requireSecret, async (req, res) => {
   }
 });
 
-app.post("/send/document", requireSecret, async (req, res) => {
+app.post("/send/document", requireSecret, express.json({ limit: documentJsonLimit }), async (req, res) => {
   try {
     const toRaw = String(req.body?.to || "").trim();
     const documentBase64 = String(req.body?.documentBase64 || "").trim();
     const fileName = String(req.body?.fileName || "").trim();
     const contentType = String(req.body?.contentType || "application/octet-stream").trim();
     const caption = req.body?.caption ? String(req.body.caption) : null;
-    if (!toRaw || !documentBase64 || !fileName || fileName.includes("/") || fileName.includes("\\"))
+    if (!toRaw || !documentBase64)
       return res.status(400).json({ error: "invalid_document_request" });
     const documentBuffer = Buffer.from(documentBase64, "base64");
-    if (!documentBuffer.length) return res.status(400).json({ error: "invalid_document_data" });
+    const policyError = validateOutboundDocument(fileName, documentBuffer);
+    if (policyError) return res.status(policyError === "document_too_large" ? 413 : 400).json({ error: policyError });
     const result = await sendDocument(toRaw, documentBuffer, contentType, fileName, caption);
     return res.json({ ok: true, externalMessageId: result.externalMessageId,
       destinationType: result.destinationType, baileysMessageIdPresent: Boolean(result.externalMessageId),

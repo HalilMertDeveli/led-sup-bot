@@ -234,6 +234,9 @@ public sealed class PanelPackageDto
     [JsonPropertyName("readiness")] public string Readiness { get; set; } = "NOT_DELIVERY_ELIGIBLE";
     [JsonPropertyName("assets")] public List<PanelPackageAssetDto> Assets { get; set; } = [];
     [JsonPropertyName("updatedAt")] public DateTimeOffset UpdatedAt { get; set; }
+    [JsonPropertyName("originalFolderName")] public string? OriginalFolderName { get; set; }
+    [JsonPropertyName("importedAt")] public DateTimeOffset? ImportedAt { get; set; }
+    public int ActiveFileCount => Assets.Count(x => x.Status == "Active");
     public string FirmwareLabel => AssetLabel("FirmwareHex");
     public string ReceiverConfigLabel => AssetLabel("ReceiverConfigRcvbp");
     private string AssetLabel(string type) => Assets.Where(x => x.AssetType == type && x.Status == "Active")

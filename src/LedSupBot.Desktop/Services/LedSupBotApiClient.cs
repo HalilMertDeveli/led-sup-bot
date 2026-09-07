@@ -152,6 +152,29 @@ public sealed class LedSupBotApiClient : IDisposable
         using var response = await _http.PostAsync($"api/admin/panel-file-packages/{id:D}/assets/{slot}", content, ct);
         return await ReadPanelResponseAsync(response, ct);
     }
+    public async Task<PanelPackageDto?> ImportPanelFolderAsync(string folderPath, CancellationToken ct = default)
+    {
+        var root = Path.GetFullPath(folderPath);
+        var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).ToList();
+        using var content = new MultipartFormDataContent();
+        content.Add(new StringContent(Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar))), "folderName");
+        var streams = new List<Stream>();
+        try
+        {
+            foreach (var path in files)
+            {
+                var info = new FileInfo(path);
+                if ((info.Attributes & FileAttributes.ReparsePoint) != 0) throw new LedSupBotApiException("Bağlantı/reparse dosyaları içe aktarılamaz.");
+                var stream = File.OpenRead(path); streams.Add(stream);
+                var part = new StreamContent(stream);
+                part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+                content.Add(part, "files", Path.GetRelativePath(root, path).Replace('\\', '/'));
+            }
+            using var response = await _http.PostAsync("api/admin/panel-file-packages/import-folder", content, ct);
+            return await ReadPanelResponseAsync(response, ct);
+        }
+        finally { foreach (var stream in streams) await stream.DisposeAsync(); }
+    }
     private async Task<PanelPackageDto?> SendPanelAsync(HttpMethod method, string path, object? body, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(method, path); if (body is not null) request.Content = JsonContent.Create(body);

@@ -13,7 +13,8 @@ public sealed record PanelFilePackageResolution(
     PanelFilePackageResolutionStatus Status,
     Guid? PackageId = null,
     string? CanonicalKey = null,
-    IReadOnlyList<PanelFilePackageAsset>? Assets = null);
+    IReadOnlyList<PanelFilePackageAsset>? Assets = null,
+    bool IsFolderPackage = false);
 
 public interface IPanelFilePackageResolver
 {
@@ -25,7 +26,12 @@ public static class PanelFileAssetPolicy
     public static bool TryClassify(string? fileName, out PanelFileAssetType type)
     {
         type = default;
-        var extension = Path.GetExtension(Path.GetFileName(fileName ?? string.Empty));
+        var candidate = fileName ?? string.Empty;
+        if (candidate.Contains('/') || candidate.Contains('\\')) return false;
+        var safeName = Path.GetFileName(candidate);
+        var stem = Path.GetFileNameWithoutExtension(safeName);
+        if (string.IsNullOrWhiteSpace(stem) || stem.Contains('.', StringComparison.Ordinal)) return false;
+        var extension = Path.GetExtension(safeName);
         if (extension.Equals(".hex", StringComparison.OrdinalIgnoreCase)) { type = PanelFileAssetType.FirmwareHex; return true; }
         if (extension.Equals(".rcvbp", StringComparison.OrdinalIgnoreCase)) { type = PanelFileAssetType.ReceiverConfigRcvbp; return true; }
         return false;
@@ -54,13 +60,23 @@ public sealed class PanelFilePackageOptions
     public const string SectionName = "PanelFilePackages";
     public long MaxFirmwareFileSizeBytes { get; set; } = 16 * 1024 * 1024;
     public long MaxReceiverConfigFileSizeBytes { get; set; } = 8 * 1024 * 1024;
+    public long MaxImportedFileSizeBytes { get; set; } = 25 * 1024 * 1024;
+    public int MaxImportedFileCount { get; set; } = 100;
+}
+
+public sealed record PanelFolderImportFile(string RelativePath, string FileName, string ContentType, Stream Content);
+public interface IPanelFolderImportService
+{
+    Task<PanelFilePackage> ImportAsync(string folderName, IReadOnlyList<PanelFolderImportFile> files,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record PanelFileAssetAdminDto(Guid Id, PanelFileAssetType AssetType, string OriginalFileName,
     string MimeType, long FileSize, string Sha256, int Version, PanelFileAssetStatus Status, DateTimeOffset CreatedAt);
 public sealed record PanelFilePackageAdminDto(Guid Id, string PixelPitch, string PanelCode, string SecondaryCode,
     string CanonicalKey, string DisplayName, string? Manufacturer, string? Description, string? Notes,
-    PanelFilePackageStatus Status, int Version, string Readiness, IReadOnlyList<PanelFileAssetAdminDto> Assets, DateTimeOffset UpdatedAt);
+    PanelFilePackageStatus Status, int Version, string Readiness, IReadOnlyList<PanelFileAssetAdminDto> Assets, DateTimeOffset UpdatedAt,
+    string? OriginalFolderName = null, DateTimeOffset? ImportedAt = null);
 public sealed record PanelFilePackageListResult(IReadOnlyList<PanelFilePackageAdminDto> Items, int Total);
 
 public interface IPanelFilePackageAdminQuery

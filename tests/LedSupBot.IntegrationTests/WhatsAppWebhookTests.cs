@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.WhatsApp;
 using LedSupBot.Domain.Enums;
+using LedSupBot.Domain.Entities;
 using LedSupBot.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -100,6 +101,51 @@ public sealed class WhatsAppWebhookTests
             externalMessageId = "x"
         });
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Contact_update_merges_trusted_lid_customer_and_preserves_route()
+    {
+        var suffix = Random.Shared.Next(100000, 999999).ToString();
+        var phone = "90555" + suffix;
+        var lid = Random.Shared.NextInt64(100000000000000, 999999999999999) + "@lid";
+        Guid conversationId;
+        await using (var db = _fixture.CreateDb())
+        {
+            var canonical = new Customer { PhoneNumber = phone };
+            var lidCustomer = new Customer { PhoneNumber = lid };
+            db.Customers.AddRange(canonical, lidCustomer);
+            var conversation = new Conversation { CustomerId = lidCustomer.Id, LastInboundWhatsAppAddress = lid };
+            db.Conversations.Add(conversation);
+            await db.SaveChangesAsync();
+            conversationId = conversation.Id;
+        }
+
+        var client = _fixture.Factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Connector-Secret", _fixture.SharedSecret);
+        var response = await client.PostAsJsonAsync("/internal/whatsapp/events", new
+        {
+            eventType = "ContactUpdated", remoteJid = lid, lidJid = lid,
+            phoneJid = phone + "@s.whatsapp.net", savedDisplayName = "Ahmet LED"
+        });
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            await using var poll = _fixture.CreateDb();
+            var updated = await poll.Conversations.Include(x => x.Customer).SingleAsync(x => x.Id == conversationId);
+            if (updated.Customer.DisplayName == "Ahmet LED") break;
+            await Task.Delay(50);
+        }
+
+        await using var verify = _fixture.CreateDb();
+        var actual = await verify.Conversations.Include(x => x.Customer).SingleAsync(x => x.Id == conversationId);
+        Assert.Equal("Ahmet LED", actual.Customer.DisplayName);
+        Assert.Equal(phone, actual.Customer.PhoneNumber);
+        Assert.Equal(lid, actual.Customer.LinkedWhatsAppLid);
+        Assert.Equal(lid, actual.LastInboundWhatsAppAddress);
+        Assert.Single(await verify.Customers.Where(x => x.PhoneNumber == phone || x.PhoneNumber == lid).ToListAsync());
     }
 
     [Fact]

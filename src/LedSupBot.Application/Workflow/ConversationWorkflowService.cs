@@ -16,6 +16,7 @@ using LedSupBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Text.RegularExpressions;
 
 namespace LedSupBot.Application.Workflow;
 
@@ -140,7 +141,8 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         }
 
         if (!panelIdentityTurn.Attempted)
-            await ApplyInboundContentAsync(conversation.Id, supportCase, inbound, clarificationTexts, cancellationToken);
+            await ApplyInboundContentAsync(conversation.Id, conversation.CurrentStage, supportCase, inbound,
+                clarificationTexts, cancellationToken);
 
         if (!await IsAutoReplyAllowedAsync(conversation.Id, cancellationToken))
         {
@@ -288,9 +290,19 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             _logger.LogInformation("WebSearchUsed={WebSearchUsed} sourceCount={SourceCount} conversationId={ConversationId}",
                 webResult.Used ? 1 : 0, webResult.Sources.Count, conversation.Id);
 
-            var webReply = webResult.Used && !string.IsNullOrWhiteSpace(webResult.Reply)
-                ? webResult.Reply
-                : "Şu an güncel bilgiyi web üzerinden doğrulayamıyorum.";
+            var exactSpecIsAuthoritative = grounding.Level == GroundingLevel.GroundedExact && grounding.Used;
+            var exactClaimNeedsModel = grounding.ExactClaimNeedsModel;
+            var webReply = exactClaimNeedsModel
+                ? "Kesin teknik değeri doğrulayabilmem için kartın tam modelini veya etiket fotoğrafını paylaşır mısınız?"
+                : webResult.Used && !string.IsNullOrWhiteSpace(webResult.Reply)
+                    ? webResult.Reply
+                    : "Şu an güncel bilgiyi web üzerinden doğrulayamıyorum.";
+            if (exactSpecIsAuthoritative && aiPlan?.HasUsableReply == true)
+            {
+                // Web is supplemental metadata for exact specifications; it may not
+                // replace the response grounded in the verified internal Spec corpus.
+                webReply = aiPlan.Reply!;
+            }
             aiPlan = (aiPlan ?? new ValidatedAiResponsePlan(
                 effectiveIntent, null, null, false, null)) with
             {
@@ -648,6 +660,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
     private async Task ApplyInboundContentAsync(
         Guid conversationId,
+        ConversationStage priorStage,
         TechnicalSupportCase supportCase,
         WorkflowInboundMessage inbound,
         List<string> clarificationTexts,
@@ -705,7 +718,8 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         await ApplyReceiverSlotAsync(supportCase.Id, inbound.TextContent, cancellationToken);
         await ApplyPlayerSlotAsync(supportCase.Id, inbound.TextContent, cancellationToken);
         await ApplyProcessorHdmiSlotAsync(supportCase.Id, inbound.TextContent, slots, clarificationTexts, cancellationToken);
-        await ApplyConfigSlotAsync(supportCase.Id, inbound.TextContent, slots, clarificationTexts, cancellationToken);
+        await ApplyConfigSlotAsync(supportCase.Id, inbound.TextContent, slots, priorStage,
+            clarificationTexts, cancellationToken);
         await ApplyAnyDeskSlotAsync(supportCase.Id, inbound.TextContent, clarificationTexts, cancellationToken);
 
         var aiValidated = await _aiOrchestrator.TryExtractAsync(
@@ -1036,10 +1050,19 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         Guid caseId,
         string text,
         WorkflowSlotState slots,
+        ConversationStage priorStage,
         List<string> clarificationTexts,
         CancellationToken cancellationToken)
     {
         if (slots.ConfigConfirmed)
+        {
+            return;
+        }
+
+        // Short confirmations and denials only belong to the config slot when the
+        // persisted conversation stage shows that this was the pending question.
+        // Explicit config/USB wording may still arrive out of order in a multi-slot turn.
+        if (priorStage != ConversationStage.AskConfigConnection && !HasExplicitConfigContext(text))
         {
             return;
         }
@@ -1056,6 +1079,11 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             clarificationTexts.Add(WorkflowPrompts.ExplainConfigConnection);
         }
     }
+
+    private static bool HasExplicitConfigContext(string text) =>
+        Regex.IsMatch(text,
+            @"(?i)\b(?:config|cobfig|usb(?:-?[ab])?|yazıcı\s+kablosu|yazici\s+kablosu)\b",
+            RegexOptions.CultureInvariant);
 
     private async Task ApplyAnyDeskSlotAsync(
         Guid caseId,

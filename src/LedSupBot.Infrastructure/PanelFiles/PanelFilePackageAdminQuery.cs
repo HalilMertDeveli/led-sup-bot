@@ -45,14 +45,15 @@ public sealed class PanelFilePackageAdminQuery(ApplicationDbContext db, IMediaSt
         var assets = package.Assets.OrderByDescending(x => x.Version).Select(x => new PanelFileAssetAdminDto(
             x.Id, x.AssetType, x.OriginalFileName, x.MimeType, x.FileSize, x.Sha256, x.Version, x.Status, x.CreatedAt)).ToList();
         var active = package.Assets.Where(x => x.Status == PanelFileAssetStatus.Active && storage.Exists(x.StorageKey)).ToList();
-        var ready = package.Status == PanelFilePackageStatus.Active &&
-                    active.Count(x => x.AssetType == PanelFileAssetType.FirmwareHex) == 1 &&
-                    active.Count(x => x.AssetType == PanelFileAssetType.ReceiverConfigRcvbp) == 1;
+        var ready = package.Status == PanelFilePackageStatus.Active && (package.OriginalFolderName is not null
+            ? active.Count > 0
+            : active.Count(x => x.AssetType == PanelFileAssetType.FirmwareHex) == 1 &&
+              active.Count(x => x.AssetType == PanelFileAssetType.ReceiverConfigRcvbp) == 1);
         var readiness = package.Status != PanelFilePackageStatus.Active
             ? "NOT_DELIVERY_ELIGIBLE"
             : ready ? "READY" : "INCOMPLETE";
         return new(package.Id, package.PixelPitch, package.PanelCode, package.SecondaryCode, package.CanonicalKey,
             package.DisplayName, package.Manufacturer, package.Description, package.Notes, package.Status,
-            package.Version, readiness, assets, package.UpdatedAt);
+            package.Version, readiness, assets, package.UpdatedAt, package.OriginalFolderName, package.ImportedAt);
     }
 }

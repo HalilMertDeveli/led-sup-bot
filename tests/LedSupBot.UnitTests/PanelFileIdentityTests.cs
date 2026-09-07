@@ -43,6 +43,10 @@ public sealed class PanelFileIdentityTests
     [InlineData("receiver.rcvbp", true, PanelFileAssetType.ReceiverConfigRcvbp)]
     [InlineData("wrong.exe", false, PanelFileAssetType.FirmwareHex)]
     [InlineData("scan.txt", false, PanelFileAssetType.FirmwareHex)]
+    [InlineData("payload.exe.hex", false, PanelFileAssetType.FirmwareHex)]
+    [InlineData("config.rcvbp.hex", false, PanelFileAssetType.FirmwareHex)]
+    [InlineData("../firmware.hex", false, PanelFileAssetType.FirmwareHex)]
+    [InlineData("..\\firmware.hex", false, PanelFileAssetType.FirmwareHex)]
     public void Asset_extensions_are_strict(string file, bool valid, PanelFileAssetType expected)
     {
         Assert.Equal(valid, PanelFileAssetPolicy.TryClassify(file, out var actual));

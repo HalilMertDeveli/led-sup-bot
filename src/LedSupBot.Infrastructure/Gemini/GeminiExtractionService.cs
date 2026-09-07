@@ -69,7 +69,7 @@ public sealed class GeminiExtractionService : IAiService
         }
         catch (JsonException ex)
         {
-            _logger.LogWarning(ex, "Gemini JSON deserialization failed: {Raw}", rawJson);
+            _logger.LogWarning(ex, "Gemini JSON deserialization failed");
             return new AiStructuredExtraction(
                 ConversationIntent.Unclear,
                 Screen: null,

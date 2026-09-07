@@ -25,13 +25,19 @@ public sealed record PanelFileDeliveryConfirmationState(
     DateTimeOffset RequestedAt, PanelFileConfirmationStatus Status, DateTimeOffset? ConfirmedAt = null,
     DateTimeOffset? RejectedAt = null, DateTimeOffset? InvalidatedAt = null, Guid? CustomerMessageId = null,
     string? Reason = null, PanelFileDeliveryDecision Decision = PanelFileDeliveryDecision.Blocked,
-    PanelFileDeliveryBlockedReason BlockedReason = PanelFileDeliveryBlockedReason.ConfirmationRequired);
+    PanelFileDeliveryBlockedReason BlockedReason = PanelFileDeliveryBlockedReason.ConfirmationRequired,
+    IReadOnlyList<PanelFileAssetBinding>? Assets = null,
+    bool IsFolderPackage = false);
+
+public sealed record PanelFileAssetBinding(Guid AssetId, string Sha256, string OriginalFileName);
 
 public sealed record PanelFileDeliveryGateResult(
     PanelFileDeliveryDecision Decision, PanelFileDeliveryBlockedReason BlockedReason,
     Guid? ConfirmationId = null, string? CanonicalKey = null, Guid? PackageId = null,
     Guid? FirmwareAssetId = null, string? FirmwareSha256 = null,
-    Guid? ReceiverConfigAssetId = null, string? ReceiverConfigSha256 = null);
+    Guid? ReceiverConfigAssetId = null, string? ReceiverConfigSha256 = null,
+    IReadOnlyList<PanelFileAssetBinding>? Assets = null,
+    bool IsFolderPackage = false);
 
 public interface IPanelFileDeliverySafetyGate
 {
@@ -68,6 +74,11 @@ public sealed partial class PanelFileDeliverySafetyGate(
 
         if (IsResume(customerText) && confirmation?.Status == PanelFileConfirmationStatus.Pending && matching)
             return Turn(identity, confirmation, $"{Display(identity)} bilgisinin doğru olup olmadığını kontrol ediyorduk. Doğru mu?");
+        if (IsResume(customerText) && confirmation?.Status == PanelFileConfirmationStatus.Confirmed && matching)
+        {
+            var deliveryStatus = PanelFileConversationGuidance.Handle(supportCase, customerText);
+            if (deliveryStatus.Attempted) return deliveryStatus;
+        }
 
         if (IsNegative(customerText) && confirmation?.Status == PanelFileConfirmationStatus.Pending)
         {
@@ -83,6 +94,9 @@ public sealed partial class PanelFileDeliverySafetyGate(
         if (IsPositive(customerText))
         {
             if (confirmation?.Status != PanelFileConfirmationStatus.Pending || !matching) return new(false);
+            if (IsBareAcknowledgement(customerText) &&
+                !await LatestBotTurnIsConfirmationPromptAsync(supportCase.ConversationId, identity, ct))
+                return new(false);
             current = await ResolveCurrentAsync(supportCase, identity, ct); // mandatory final revalidation
             if (!Matches(confirmation, current))
             {
@@ -99,12 +113,24 @@ public sealed partial class PanelFileDeliverySafetyGate(
         if (identityTurnAttempted && current.Decision == PanelFileDeliveryDecision.Blocked) return new(false);
         if (identityTurnAttempted && current.Decision == PanelFileDeliveryDecision.Allowed)
         {
+            if (current.IsFolderPackage && IsExplicitPackageRequest(customerText))
+            {
+                var explicitlyConfirmed = new PanelFileDeliveryConfirmationState(
+                    Guid.NewGuid(), supportCase.Id, identity.CanonicalKey, current.PackageId!.Value,
+                    BuildIdentityToken(identity), current.FirmwareAssetId!.Value, current.FirmwareSha256!,
+                    current.ReceiverConfigAssetId!.Value, current.ReceiverConfigSha256!, DateTimeOffset.UtcNow,
+                    PanelFileConfirmationStatus.Confirmed, ConfirmedAt: DateTimeOffset.UtcNow,
+                    CustomerMessageId: customerMessageId, Decision: PanelFileDeliveryDecision.Allowed,
+                    BlockedReason: PanelFileDeliveryBlockedReason.None, Assets: current.Assets);
+                await PersistAsync(supportCase, explicitlyConfirmed, ct);
+                return Turn(identity, explicitlyConfirmed, "Tamam, bu klasöre ait dosyaları gönderiyorum.", true);
+            }
             if (confirmation is null || confirmation.Status is PanelFileConfirmationStatus.Invalidated or PanelFileConfirmationStatus.Rejected || !matching)
             {
                 confirmation = new(Guid.NewGuid(), supportCase.Id, identity.CanonicalKey, current.PackageId!.Value,
                     BuildIdentityToken(identity), current.FirmwareAssetId!.Value, current.FirmwareSha256!,
                     current.ReceiverConfigAssetId!.Value, current.ReceiverConfigSha256!, DateTimeOffset.UtcNow,
-                    PanelFileConfirmationStatus.Pending);
+                    PanelFileConfirmationStatus.Pending, Assets: current.Assets);
                 await PersistAsync(supportCase, confirmation, ct);
             }
             return Turn(identity, confirmation, $"Etiketi {Display(identity)} olarak okudum. Doğru mu?");
@@ -153,13 +179,15 @@ public sealed partial class PanelFileDeliverySafetyGate(
                 PanelFilePackageResolutionStatus.InactivePackage => PanelFileDeliveryBlockedReason.PackageInactive,
                 _ => PanelFileDeliveryBlockedReason.MissingIdentity,
             }, result.PackageId, result.CanonicalKey);
-        var hex = result.Assets?.SingleOrDefault(x => x.AssetType == PanelFileAssetType.FirmwareHex);
-        var rcvbp = result.Assets?.SingleOrDefault(x => x.AssetType == PanelFileAssetType.ReceiverConfigRcvbp);
-        if (hex is null) return Block(PanelFileDeliveryBlockedReason.MissingFirmware, result.PackageId, result.CanonicalKey);
-        if (rcvbp is null) return Block(PanelFileDeliveryBlockedReason.MissingReceiverConfig, result.PackageId, result.CanonicalKey);
+        var activeAssets = result.Assets?.OrderBy(x => x.RelativePath ?? x.OriginalFileName, StringComparer.OrdinalIgnoreCase).ToList() ?? [];
+        if (activeAssets.Count == 0) return Block(PanelFileDeliveryBlockedReason.PackageIncomplete, result.PackageId, result.CanonicalKey);
+        var hex = activeAssets.FirstOrDefault(x => x.AssetType == PanelFileAssetType.FirmwareHex) ?? activeAssets[0];
+        var rcvbp = activeAssets.FirstOrDefault(x => x.AssetType == PanelFileAssetType.ReceiverConfigRcvbp) ?? activeAssets[^1];
         return new(PanelFileDeliveryDecision.Allowed, PanelFileDeliveryBlockedReason.None, CanonicalKey: result.CanonicalKey,
             PackageId: result.PackageId, FirmwareAssetId: hex.Id, FirmwareSha256: hex.Sha256,
-            ReceiverConfigAssetId: rcvbp.Id, ReceiverConfigSha256: rcvbp.Sha256);
+            ReceiverConfigAssetId: rcvbp.Id, ReceiverConfigSha256: rcvbp.Sha256,
+            Assets: activeAssets.Select(x => new PanelFileAssetBinding(x.Id, x.Sha256, x.OriginalFileName)).ToList(),
+            IsFolderPackage: result.IsFolderPackage);
     }
 
     private async Task<PanelFileDeliveryConfirmationState> InvalidateAsync(TechnicalSupportCase supportCase,
@@ -176,11 +204,37 @@ public sealed partial class PanelFileDeliverySafetyGate(
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.PanelFileDeliveryConfirmationJson, json), ct);
         supportCase.PanelFileDeliveryConfirmationJson = json;
     }
+    private async Task<bool> LatestBotTurnIsConfirmationPromptAsync(
+        Guid conversationId, PanelIdentityCaseState identity, CancellationToken ct)
+    {
+        var latestBotText = await db.Messages
+            .AsNoTracking()
+            .Where(x => x.ConversationId == conversationId &&
+                        x.Direction == Domain.Enums.MessageDirection.Outbound &&
+                        x.SentBy == Domain.Enums.MessageSender.Bot &&
+                        x.MessageType == Domain.Enums.MessageType.Text)
+            .OrderByDescending(x => x.CreatedAt)
+            .ThenByDescending(x => x.Id)
+            .Select(x => x.Content)
+            .FirstOrDefaultAsync(ct);
+
+        return latestBotText is not null &&
+               latestBotText.Contains(Display(identity), StringComparison.OrdinalIgnoreCase) &&
+               latestBotText.Contains("doğru mu", StringComparison.OrdinalIgnoreCase);
+    }
     private static bool Matches(PanelFileDeliveryConfirmationState state, PanelFileDeliveryGateResult current) =>
         current.Decision == PanelFileDeliveryDecision.Allowed && state.PackageId == current.PackageId &&
         string.Equals(state.CanonicalKey, current.CanonicalKey, StringComparison.Ordinal) && state.FirmwareAssetId == current.FirmwareAssetId &&
         state.ReceiverConfigAssetId == current.ReceiverConfigAssetId && string.Equals(state.FirmwareSha256, current.FirmwareSha256, StringComparison.Ordinal) &&
-        string.Equals(state.ReceiverConfigSha256, current.ReceiverConfigSha256, StringComparison.Ordinal);
+        string.Equals(state.ReceiverConfigSha256, current.ReceiverConfigSha256, StringComparison.Ordinal) &&
+        AssetBindingsMatch(state.Assets, current.Assets);
+    private static bool AssetBindingsMatch(IReadOnlyList<PanelFileAssetBinding>? left, IReadOnlyList<PanelFileAssetBinding>? right)
+    {
+        if (left is null) return true; // compatibility with confirmations written before N-file delivery
+        if (right is null || left.Count != right.Count) return false;
+        return left.Zip(right).All(x => x.First.AssetId == x.Second.AssetId &&
+            string.Equals(x.First.Sha256, x.Second.Sha256, StringComparison.OrdinalIgnoreCase));
+    }
     private static string BuildIdentityToken(PanelIdentityCaseState state) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
         $"{state.CanonicalKey}|{state.PixelPitchMessageId}|{state.PanelCodeMessageId}|{state.SecondaryCodeMessageId}|{state.UpdatedAt:O}"))).ToLowerInvariant();
     private static PanelIdentityTurnResult Turn(PanelIdentityCaseState identity, PanelFileDeliveryConfirmationState confirmation, string reply, bool deliveryAuthorizedNow = false) =>
@@ -193,14 +247,18 @@ public sealed partial class PanelFileDeliverySafetyGate(
         new(PanelFileDeliveryDecision.Blocked, reason, CanonicalKey: key, PackageId: packageId);
     private static string Display(PanelIdentityCaseState state) => $"{state.PixelPitch} + {state.PanelCode} + {state.SecondaryCode}";
     private static bool IsPositive(string? text) => PositiveRegex().IsMatch(text ?? "");
+    private static bool IsBareAcknowledgement(string? text) => BareAcknowledgementRegex().IsMatch(text ?? "");
     private static bool IsNegative(string? text) => NegativeRegex().IsMatch(text ?? "");
     private static bool IsUncertain(string? text) => UncertainRegex().IsMatch(text ?? "");
     private static bool IsResume(string? text) => ResumeRegex().IsMatch(text ?? "");
+    private static bool IsExplicitPackageRequest(string? text) => ExplicitPackageRequestRegex().IsMatch(text ?? "");
     private static PanelIdentityCaseState? DeserializeIdentity(string? json) { try { return string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<PanelIdentityCaseState>(json, JsonOptions); } catch (JsonException) { return null; } }
     private static PanelFileDeliveryConfirmationState? DeserializeConfirmation(string? json) { try { return string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<PanelFileDeliveryConfirmationState>(json, JsonOptions); } catch (JsonException) { return null; } }
     private static JsonSerializerOptions CreateOptions() { var options = new JsonSerializerOptions(JsonSerializerDefaults.Web); options.Converters.Add(new JsonStringEnumConverter()); return options; }
     [GeneratedRegex(@"^\s*(?:evet|doğru|dogru|aynen|bu\s+doğru|bu\s+dogru|tamam\s+doğru|tamam\s+dogru|tamam)\s*[.!]?\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)] private static partial Regex PositiveRegex();
+    [GeneratedRegex(@"^\s*tamam\s*[.!]?\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)] private static partial Regex BareAcknowledgementRegex();
     [GeneratedRegex(@"^\s*(?:hayır|hayir)\s*[.!]?\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)] private static partial Regex NegativeRegex();
     [GeneratedRegex(@"^\s*bilmiyorum\s*[.!]?\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)] private static partial Regex UncertainRegex();
     [GeneratedRegex(@"\bnerede\s+kalm[ıi]şt[ıi]k\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)] private static partial Regex ResumeRegex();
+    [GeneratedRegex(@"^\s*P\s*\d+(?:[.,]\d+)?\s*\+\s*[A-Z0-9-]+\s*\+\s*[A-Z0-9-]+\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)] private static partial Regex ExplicitPackageRequestRegex();
 }

@@ -61,6 +61,11 @@ public sealed class WhatsAppInboundEvent
     /// <summary>Baileys sender_pn JID when inbound remoteJid is @lid (optional).</summary>
     public string? SenderPnJid { get; set; }
 
+    /// <summary>Trusted Baileys contact mapping fields from contacts.upsert/update.</summary>
+    public string? LidJid { get; set; }
+    public string? PhoneJid { get; set; }
+    public string? SavedDisplayName { get; set; }
+
     public bool FromMe { get; set; }
 
     public bool BotOriginated { get; set; }

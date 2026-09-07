@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using LedSupBot.Application.PanelFiles;
 using LedSupBot.Application.Media;
 using LedSupBot.Domain.Enums;
+using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.PanelFiles;
 using LedSupBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,37 @@ namespace LedSupBot.IntegrationTests;
 public sealed class PanelFileDeliverySafetyGateTests(WorkflowFixture fixture)
 {
     private static readonly JsonSerializerOptions JsonOptions = Options();
+
+    [Fact]
+    public async Task Folder_package_sends_all_files_and_retries_only_failed_asset()
+    {
+        var code = Code();
+        await using (var importScope = fixture.Services.CreateAsyncScope())
+        {
+            await importScope.ServiceProvider.GetRequiredService<IPanelFolderImportService>().ImportAsync(
+                $"P2.5+{code.ToLowerInvariant()}+2012",
+                [
+                    new("a.hex", "a.hex", "application/octet-stream", new MemoryStream("a"u8.ToArray())),
+                    new("nested/b.rcvbp", "b.rcvbp", "application/octet-stream", new MemoryStream("b"u8.ToArray())),
+                    new("notes.txt", "notes.txt", "text/plain", new MemoryStream("c"u8.ToArray()))
+                ]);
+        }
+        var (conversation, customer) = await fixture.SeedConversationAsync();
+        fixture.WhatsApp.SentDocuments.Clear();
+        fixture.WhatsApp.FailDocumentCall = 3;
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, $"P2.5+{code}+2012");
+        Assert.Equal(2, fixture.WhatsApp.SentDocuments.Count);
+
+        fixture.WhatsApp.FailDocumentCall = null;
+        await using var retryScope = fixture.Services.CreateAsyncScope();
+        var supportCase = await retryScope.ServiceProvider.GetRequiredService<ApplicationDbContext>()
+            .TechnicalSupportCases.AsNoTracking().SingleAsync(x => x.ConversationId == conversation.Id);
+        var result = await retryScope.ServiceProvider.GetRequiredService<IPanelFileDeliveryService>()
+            .DeliverAsync(supportCase, conversation.Id, customer.PhoneNumber, null);
+        Assert.Equal(PanelFileDeliveryOutcome.Completed, result.Outcome);
+        Assert.Equal(3, fixture.WhatsApp.SentDocuments.Count);
+        Assert.Equal(3, fixture.WhatsApp.SentDocuments.Select(x => x.FileName).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
 
     [Fact]
     public async Task PF6_Exact_ready_requires_confirmation_then_exact_yes_allows_without_sending_files()
@@ -252,8 +284,100 @@ public sealed class PanelFileDeliverySafetyGateTests(WorkflowFixture fixture)
             Assert.Single(fixture.WhatsApp.SentDocuments);
             Assert.Contains(fixture.WhatsApp.SentTexts, x => x.Contains("diğer dosyada gönderim hatası", StringComparison.OrdinalIgnoreCase));
             Assert.DoesNotContain(fixture.WhatsApp.SentTexts, x => x.Contains("dosyalar gönderildi", StringComparison.OrdinalIgnoreCase));
+            fixture.WhatsApp.FailDocumentCall = null;
+            await using var scope = fixture.Services.CreateAsyncScope();
+            var retryCase = await scope.ServiceProvider.GetRequiredService<ApplicationDbContext>()
+                .TechnicalSupportCases.AsNoTracking().SingleAsync(x => x.ConversationId == conversation.Id);
+            var retry = await scope.ServiceProvider.GetRequiredService<IPanelFileDeliveryService>()
+                .DeliverAsync(retryCase, conversation.Id, customer.PhoneNumber, null);
+            Assert.Equal(PanelFileDeliveryOutcome.Completed, retry.Outcome);
+            Assert.Collection(fixture.WhatsApp.SentDocuments,
+                x => Assert.EndsWith(".hex", x.FileName, StringComparison.OrdinalIgnoreCase),
+                x => Assert.EndsWith(".rcvbp", x.FileName, StringComparison.OrdinalIgnoreCase));
         }
         finally { fixture.WhatsApp.FailDocumentCall = null; }
+    }
+
+    [Fact]
+    public async Task HealthCheck_Caller_cancellation_during_document_transport_propagates()
+    {
+        var code = Code(); await ReadyPackage(code, "2012");
+        var (conversation, customer) = await fixture.SeedConversationAsync();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, $"P2.5+{code}+2012");
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, "Evet");
+        await using (var resetScope = fixture.Services.CreateAsyncScope())
+        {
+            var resetDb = resetScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            await resetDb.TechnicalSupportCases.Where(x => x.ConversationId == conversation.Id)
+                .ExecuteUpdateAsync(x => x.SetProperty(c => c.PanelFileDeliveryStateJson, (string?)null));
+        }
+        fixture.WhatsApp.SentDocuments.Clear();
+
+        using var cancellation = new CancellationTokenSource();
+        fixture.WhatsApp.BeforeDocumentSend = cancellation.Cancel;
+        try
+        {
+            await using var scope = fixture.Services.CreateAsyncScope();
+            var supportCase = await scope.ServiceProvider.GetRequiredService<ApplicationDbContext>()
+                .TechnicalSupportCases.AsNoTracking().SingleAsync(x => x.ConversationId == conversation.Id);
+            var delivery = scope.ServiceProvider.GetRequiredService<IPanelFileDeliveryService>();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => delivery.DeliverAsync(
+                supportCase, conversation.Id, customer.PhoneNumber, null, cancellationToken: cancellation.Token));
+            Assert.Empty(fixture.WhatsApp.SentDocuments);
+        }
+        finally
+        {
+            fixture.WhatsApp.BeforeDocumentSend = null;
+        }
+    }
+
+    [Fact]
+    public async Task HealthCheck_Concurrent_same_logical_delivery_is_idempotent()
+    {
+        var code = Code(); await ReadyPackage(code, "2012");
+        var (conversation, customer) = await fixture.SeedConversationAsync();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, $"P2.5+{code}+2012");
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, "Evet");
+        await using (var resetScope = fixture.Services.CreateAsyncScope())
+        {
+            var resetDb = resetScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            await resetDb.TechnicalSupportCases.Where(x => x.ConversationId == conversation.Id)
+                .ExecuteUpdateAsync(x => x.SetProperty(c => c.PanelFileDeliveryStateJson, (string?)null));
+        }
+        fixture.WhatsApp.SentDocuments.Clear();
+
+        await using var firstScope = fixture.Services.CreateAsyncScope();
+        await using var secondScope = fixture.Services.CreateAsyncScope();
+        var firstDb = firstScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var secondDb = secondScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var firstCase = await firstDb.TechnicalSupportCases.AsNoTracking().SingleAsync(x => x.ConversationId == conversation.Id);
+        var secondCase = await secondDb.TechnicalSupportCases.AsNoTracking().SingleAsync(x => x.ConversationId == conversation.Id);
+        await Task.WhenAll(
+            firstScope.ServiceProvider.GetRequiredService<IPanelFileDeliveryService>().DeliverAsync(firstCase, conversation.Id, customer.PhoneNumber, null),
+            secondScope.ServiceProvider.GetRequiredService<IPanelFileDeliveryService>().DeliverAsync(secondCase, conversation.Id, customer.PhoneNumber, null));
+        Assert.Equal(2, fixture.WhatsApp.SentDocuments.Count);
+    }
+
+    [Fact]
+    public async Task HealthCheck_Stale_loaded_case_cannot_deliver_after_identity_correction()
+    {
+        var code = Code(); await ReadyPackage(code, "2012"); await ReadyPackage(code, "2013");
+        var (conversation, customer) = await fixture.SeedConversationAsync();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, $"P2.5+{code}+2012");
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, "Evet");
+        TechnicalSupportCase staleCase;
+        await using (var staleScope = fixture.Services.CreateAsyncScope())
+            staleCase = await staleScope.ServiceProvider.GetRequiredService<ApplicationDbContext>()
+                .TechnicalSupportCases.AsNoTracking().SingleAsync(x => x.ConversationId == conversation.Id);
+
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, "2012 değil 2013");
+        fixture.WhatsApp.SentDocuments.Clear();
+        await using var deliveryScope = fixture.Services.CreateAsyncScope();
+        var result = await deliveryScope.ServiceProvider.GetRequiredService<IPanelFileDeliveryService>()
+            .DeliverAsync(staleCase, conversation.Id, customer.PhoneNumber, null);
+        Assert.Equal(PanelFileDeliveryOutcome.Blocked, result.Outcome);
+        Assert.Empty(fixture.WhatsApp.SentDocuments);
     }
 
     private async Task<Guid> ReadyPackage(string code, string secondary)

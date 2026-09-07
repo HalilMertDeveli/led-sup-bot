@@ -18,6 +18,7 @@ import { messageObservabilityFields, redactJid } from "./observability.js";
 import { jidDomain } from "./messageMap.js";
 import { forwardEventToAspNet } from "./webhook.js";
 import { assertNonSelfJid, isSelfJid, remoteJidType, setConnectedSelfJids } from "./selfIdentity.js";
+import { mapContactUpdate } from "./contactMap.js";
 
 /** @type {ReturnType<typeof makeWASocket> | null} */
 let sock = null;
@@ -108,6 +109,20 @@ export async function startWhatsApp() {
         timestamp: new Date().toISOString(),
       });
     });
+
+    const forwardContacts = (contacts) => {
+      for (const contact of contacts ?? []) {
+        const mapped = mapContactUpdate(contact);
+        if (!mapped) continue;
+        void forwardEventToAspNet({
+          ...mapped,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    };
+
+    sock.ev.on("contacts.upsert", forwardContacts);
+    sock.ev.on("contacts.update", forwardContacts);
 
     sock.ev.on("connection.update", (update) => {
       const { connection, lastDisconnect, qr } = update;

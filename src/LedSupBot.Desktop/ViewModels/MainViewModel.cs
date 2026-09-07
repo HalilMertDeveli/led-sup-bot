@@ -128,6 +128,7 @@ public sealed class MainViewModel : ViewModelBase
         TogglePanelFilesViewCommand = new RelayCommand(TogglePanelFilesView);
         RefreshPanelPackagesCommand = new AsyncRelayCommand(LoadPanelPackagesAsync, () => !IsLoadingPanelPackages);
         CreatePanelPackageCommand = new AsyncRelayCommand(CreatePanelPackageAsync, () => !IsLoadingPanelPackages && !string.IsNullOrWhiteSpace(NewPanelPitch) && !string.IsNullOrWhiteSpace(NewPanelCode) && !string.IsNullOrWhiteSpace(NewSecondaryCode));
+        ImportPanelFolderCommand = new AsyncRelayCommand(ImportPanelFolderAsync, () => !IsLoadingPanelPackages);
         EditPanelPackageCommand = new AsyncRelayCommand(EditPanelPackageAsync, () => SelectedPanelPackage?.Status == "Draft");
         UploadFirmwareCommand = new AsyncRelayCommand(() => UploadPanelAssetAsync("firmware", ".hex"), () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
         UploadReceiverConfigCommand = new AsyncRelayCommand(() => UploadPanelAssetAsync("receiver-config", ".rcvbp"), () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
@@ -223,6 +224,7 @@ public sealed class MainViewModel : ViewModelBase
     public ICommand TogglePanelFilesViewCommand { get; }
     public ICommand RefreshPanelPackagesCommand { get; }
     public ICommand CreatePanelPackageCommand { get; }
+    public ICommand ImportPanelFolderCommand { get; }
     public ICommand EditPanelPackageCommand { get; }
     public ICommand UploadFirmwareCommand { get; }
     public ICommand UploadReceiverConfigCommand { get; }
@@ -1581,6 +1583,21 @@ public sealed class MainViewModel : ViewModelBase
             await LoadPanelPackagesAsync(); if (created is not null) SelectedPanelPackage = PanelPackages.FirstOrDefault(x => x.Id == created.Id);
         }
         catch (Exception ex) { ErrorMessage = MapApiError(ex); }
+    }
+
+    private async Task ImportPanelFolderAsync()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Panel dosya klasörünü seçin" };
+        if (dialog.ShowDialog() != true) return;
+        IsLoadingPanelPackages = true; ErrorMessage = null;
+        try
+        {
+            var imported = await _api.ImportPanelFolderAsync(dialog.FolderName);
+            await LoadPanelPackagesAsync();
+            if (imported is not null) SelectedPanelPackage = PanelPackages.FirstOrDefault(x => x.Id == imported.Id);
+        }
+        catch (Exception ex) { DesktopLog.Error("ImportPanelFolder", ex); ErrorMessage = MapApiError(ex); }
+        finally { IsLoadingPanelPackages = false; }
     }
 
     private async Task UploadPanelAssetAsync(string slot, string extension)

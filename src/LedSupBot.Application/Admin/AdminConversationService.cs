@@ -2,6 +2,7 @@ using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Application.Workflow.Parsing;
 using LedSupBot.Application.Training;
+using LedSupBot.Application.WhatsApp;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -490,7 +491,11 @@ public static class AdminDisplayFormat
             ? customer.DisplayName
             : MaskPhone(customer.PhoneNumber);
 
-    public static string MaskPhone(string phone) => string.IsNullOrWhiteSpace(phone) ? "—" : phone;
+    public static string MaskPhone(string phone) => string.IsNullOrWhiteSpace(phone)
+        ? "—"
+        : WhatsAppEventMapper.IsLidJid(phone)
+            ? "Telefon numarası çözümleniyor"
+            : phone;
 
     public static string MaskAnyDesk(string address) => string.IsNullOrWhiteSpace(address) ? "—" : address;
 

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.PanelFiles;
 using LedSupBot.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,34 @@ namespace LedSupBot.IntegrationTests;
 [Collection("whatsapp-webhook")]
 public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
 {
+    [Fact]
+    public async Task Folder_import_uses_exact_folder_identity_and_versions_all_regular_files()
+    {
+        var client = fixture.CreateAdminClient();
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
+        var code = Random.Shared.Next(100000, 999999) + "s";
+        using var first = new MultipartFormDataContent();
+        first.Add(new StringContent($"P2.5+{code}+2012"), "folderName");
+        first.Add(new ByteArrayContent("hex"u8.ToArray()), "files", "firmware-final.hex");
+        first.Add(new ByteArrayContent("cfg"u8.ToArray()), "files", "nested/scan-new.rcvbp");
+        first.Add(new ByteArrayContent("notes"u8.ToArray()), "files", "notes.txt");
+        var imported = await client.PostAsync("/api/admin/panel-file-packages/import-folder", first);
+        Assert.Equal(HttpStatusCode.OK, imported.StatusCode);
+        var body = JsonDocument.Parse(await imported.Content.ReadAsStringAsync()).RootElement;
+        var id = body.GetProperty("id").GetGuid();
+        Assert.Equal($"P2.5-{code.ToUpperInvariant()}-2012", body.GetProperty("canonicalKey").GetString());
+        Assert.Equal("READY", body.GetProperty("readiness").GetString());
+        Assert.Equal(3, body.GetProperty("assets").EnumerateArray().Count(x => x.GetProperty("status").GetString() == "Active"));
+
+        await using var scope = fixture.Factory.Services.CreateAsyncScope();
+        var reimported = await scope.ServiceProvider.GetRequiredService<IPanelFolderImportService>().ImportAsync(
+            $"P2.5+{code.ToUpperInvariant()}+2012",
+            [new PanelFolderImportFile("anything.bin", "anything.bin", "application/octet-stream", new MemoryStream("replacement"u8.ToArray()))]);
+        Assert.Equal(id, reimported.Id);
+        Assert.Equal(2, reimported.Version);
+        Assert.Single(reimported.Assets.Where(x => x.Status == LedSupBot.Domain.PanelFiles.PanelFileAssetStatus.Active));
+    }
+
     [Fact]
     public async Task PF2_Mutating_routes_require_admin_authentication()
     {

@@ -93,6 +93,7 @@ public static class DependencyInjection
             services.AddScoped<IPanelFileAssetRegistry, PanelFileAssetRegistry>();
             services.AddScoped<IPanelFilePackageRegistry, PanelFilePackageRegistry>();
             services.AddScoped<IPanelFilePackageAdminQuery, PanelFilePackageAdminQuery>();
+            services.AddScoped<IPanelFolderImportService, PanelFolderImportService>();
             services.AddScoped<IConversationTakeoverService, ConversationTakeoverService>();
             services.AddScoped<IConversationWorkflowService, ConversationWorkflowService>();
             services.AddScoped<IWorkflowOutboundDispatcher, WorkflowOutboundDispatcher>();

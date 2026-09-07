@@ -7,7 +7,10 @@
    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
    <StackPanel><TextBlock Text="PANEL DOSYALARI" Foreground="{StaticResource TextBrush}" FontSize="18" FontWeight="Bold"/>
     <TextBlock Text="Yetkili panel firmware ve receiver konfigürasyon paketleri" Foreground="{StaticResource CardMutedBrush}"/></StackPanel>
-   <Button Grid.Column="1" Content="YENİLE" Style="{StaticResource SecondaryButton}" Command="{Binding RefreshPanelPackagesCommand}"/>
+   <StackPanel Grid.Column="1" Orientation="Horizontal">
+    <Button Content="KLASÖR İÇE AKTAR" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" Command="{Binding ImportPanelFolderCommand}"/>
+    <Button Content="YENİLE" Style="{StaticResource SecondaryButton}" Command="{Binding RefreshPanelPackagesCommand}"/>
+   </StackPanel>
   </Grid>
   <Border Grid.Row="1" Style="{StaticResource CardBorder}" Margin="0,0,0,12"><StackPanel>
    <TextBlock Text="Yeni paket" Style="{StaticResource SectionTitle}"/>
@@ -32,6 +35,8 @@
     <DataGrid Grid.Row="1" ItemsSource="{Binding PanelPackages}" SelectedItem="{Binding SelectedPanelPackage}" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single">
      <DataGrid.Columns>
       <DataGridTextColumn Header="Canonical" Binding="{Binding CanonicalKey}" Width="*"/>
+      <DataGridTextColumn Header="Klasör" Binding="{Binding OriginalFolderName}" Width="*"/>
+      <DataGridTextColumn Header="Dosya" Binding="{Binding ActiveFileCount}" Width="55"/>
       <DataGridTextColumn Header="Durum" Binding="{Binding Status}" Width="85"/>
       <DataGridTextColumn Header="Hazırlık" Binding="{Binding Readiness}" Width="145"/>
       <DataGridTextColumn Header="Sürüm" Binding="{Binding Version}" Width="60"/>

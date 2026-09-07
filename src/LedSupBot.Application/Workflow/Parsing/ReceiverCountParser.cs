@@ -44,7 +44,9 @@ public static partial class ReceiverCountParser
 
         // 4. Keyword / Model before count: e.g. "colorlight e120 12 tane", "e120 4 adet", "receiver 8 adet", "receiverlar e120, toplam 6 tane", "kart sayısı 8"
         var modelBeforeCount = ModelOrKeywordBeforeCountPattern().Match(trimmed);
-        if (modelBeforeCount.Success && TryConvert(modelBeforeCount.Groups[1].Value, out count))
+        if (modelBeforeCount.Success &&
+            HasReceiverQuantityEvidence(trimmed, modelBeforeCount) &&
+            TryConvert(modelBeforeCount.Groups[1].Value, out count))
         {
             return true;
         }
@@ -57,6 +59,25 @@ public static partial class ReceiverCountParser
         }
 
         return false;
+    }
+
+    private static bool HasReceiverQuantityEvidence(string text, Match match)
+    {
+        var countGroup = match.Groups[1];
+        var beforeCount = text[match.Index..countGroup.Index];
+        var afterCount = text[(countGroup.Index + countGroup.Length)..];
+
+        // A model followed by an unrelated number is not a receiver quantity:
+        // "E120 HDMI 2", "E120 5 volt", "E120 81 il".
+        if (CompetingNumericContextBeforePattern().IsMatch(beforeCount) ||
+            CompetingNumericContextAfterPattern().IsMatch(afterCount))
+        {
+            return false;
+        }
+
+        return QuantityMarkerAfterPattern().IsMatch(afterCount) ||
+               QuantityLabelBeforePattern().IsMatch(beforeCount) ||
+               ReceiverKeywordBeforePattern().IsMatch(beforeCount);
     }
 
     private static bool IsGeneralOrUnrelatedPhrase(string text)
@@ -96,6 +117,21 @@ public static partial class ReceiverCountParser
 
     [GeneratedRegex(@"(?:receiver|reciver|reciever|yeşil\s+kart|yesil\s+kart|kart|e120|e80|5a75e|5a-75e|e320|mrv\d+|rv\d+|dh\d+)[^\d]{0,25}(?<![a-zA-Z0-9])(\d{1,3})\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ModelOrKeywordBeforeCountPattern();
+
+    [GeneratedRegex(@"\b(?:hdmi|volt(?:aj)?|gerilim|piksel|pixel|hz|cm|mm|metre|meter|il|port)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex CompetingNumericContextBeforePattern();
+
+    [GeneratedRegex(@"^\s*(?:volt(?:aj)?|v|cm|mm|metre|meter|piksel|pixel|hz|il|port)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex CompetingNumericContextAfterPattern();
+
+    [GeneratedRegex(@"^\s*(?:(?:tane|adet)\b|(?:receiver|reciver|reciever|kart)\b(?:\s*(?:var|kullandım|kullandık|kullanıyorum))?|(?:var|kullandım|kullandık|kullanıyorum)\b)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex QuantityMarkerAfterPattern();
+
+    [GeneratedRegex(@"\b(?:toplam|sayısı|sayisi)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex QuantityLabelBeforePattern();
+
+    [GeneratedRegex(@"\b(?:receiver(?:lar)?|reciver(?:lar)?|reciever(?:lar)?|kart(?:lar)?)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ReceiverKeywordBeforePattern();
 
     [GeneratedRegex(@"^(?:toplam\s+)?(?<![a-zA-Z0-9])(\d{1,3})\s*(?:tane|adet)?\s*(?:receiver|reciver|reciever|kart|var|kullandım|kullandık)?\.?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex StandalonePattern();

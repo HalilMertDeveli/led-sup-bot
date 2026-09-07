@@ -31,11 +31,13 @@ public sealed class PanelFilePackageResolver(
         if (package.Status != PanelFilePackageStatus.Active)
             return new(PanelFilePackageResolutionStatus.InactivePackage, package.Id, key);
         var active = package.Assets.Where(x => x.Status == PanelFileAssetStatus.Active && storage.Exists(x.StorageKey)).ToList();
-        var ready = active.Count(x => x.AssetType == PanelFileAssetType.FirmwareHex) == 1 &&
-                    active.Count(x => x.AssetType == PanelFileAssetType.ReceiverConfigRcvbp) == 1;
+        var ready = package.OriginalFolderName is not null
+            ? active.Count > 0
+            : active.Count(x => x.AssetType == PanelFileAssetType.FirmwareHex) == 1 &&
+              active.Count(x => x.AssetType == PanelFileAssetType.ReceiverConfigRcvbp) == 1;
         return ready
-            ? new(PanelFilePackageResolutionStatus.ExactMatch, package.Id, key, active)
-            : new(PanelFilePackageResolutionStatus.IncompletePackage, package.Id, key, active);
+            ? new(PanelFilePackageResolutionStatus.ExactMatch, package.Id, key, active, package.OriginalFolderName is not null)
+            : new(PanelFilePackageResolutionStatus.IncompletePackage, package.Id, key, active, package.OriginalFolderName is not null);
     }
 }
 
@@ -47,6 +49,7 @@ public sealed class PanelFileAssetRegistry(
         long maxSizeBytes = 25 * 1024 * 1024, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(originalFileName) || originalFileName.Length > 255 ||
+            originalFileName.Contains('/') || originalFileName.Contains('\\') ||
             Path.GetFileName(originalFileName) != originalFileName || IsReservedFileName(originalFileName) ||
             !PanelFileAssetPolicy.TryClassify(originalFileName, out var type))
             throw new ArgumentException("Only safe .hex and .rcvbp filenames are accepted.", nameof(originalFileName));
@@ -136,8 +139,11 @@ public sealed class PanelFilePackageRegistry(
         var package = await db.PanelFilePackages.Include(x => x.Assets).SingleOrDefaultAsync(x => x.Id == packageId, cancellationToken);
         if (package is null || package.Status == PanelFilePackageStatus.Archived) return false;
         var active = package.Assets.Where(x => x.Status == PanelFileAssetStatus.Active && storage.Exists(x.StorageKey)).ToList();
-        if (active.Count(x => x.AssetType == PanelFileAssetType.FirmwareHex) != 1 ||
-            active.Count(x => x.AssetType == PanelFileAssetType.ReceiverConfigRcvbp) != 1) return false;
+        var ready = package.OriginalFolderName is not null
+            ? active.Count > 0
+            : active.Count(x => x.AssetType == PanelFileAssetType.FirmwareHex) == 1 &&
+              active.Count(x => x.AssetType == PanelFileAssetType.ReceiverConfigRcvbp) == 1;
+        if (!ready) return false;
         package.Status = PanelFilePackageStatus.Active; await db.SaveChangesAsync(cancellationToken); return true;
     }
 

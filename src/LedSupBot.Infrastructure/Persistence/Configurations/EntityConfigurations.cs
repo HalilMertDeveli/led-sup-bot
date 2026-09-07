@@ -71,6 +71,7 @@ public sealed class PanelFilePackageConfiguration : IEntityTypeConfiguration<Pan
         builder.Property(x => x.SecondaryCode).HasMaxLength(32).IsRequired();
         builder.Property(x => x.CanonicalKey).HasMaxLength(128).IsRequired();
         builder.Property(x => x.DisplayName).HasMaxLength(256).IsRequired();
+        builder.Property(x => x.OriginalFolderName).HasMaxLength(255);
         builder.Property(x => x.Manufacturer).HasMaxLength(128);
         builder.Property(x => x.Description).HasMaxLength(2000);
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
@@ -88,14 +89,20 @@ public sealed class PanelFilePackageAssetConfiguration : IEntityTypeConfiguratio
         builder.Property(x => x.AssetType).HasConversion<string>().HasMaxLength(32);
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
         builder.Property(x => x.OriginalFileName).HasMaxLength(255).IsRequired();
+        builder.Property(x => x.RelativePath).HasMaxLength(512);
         builder.Property(x => x.StorageKey).HasMaxLength(512).IsRequired();
         builder.Property(x => x.MimeType).HasMaxLength(128).IsRequired();
         builder.Property(x => x.Sha256).HasMaxLength(64).IsRequired();
         builder.HasOne(x => x.Package).WithMany(x => x.Assets).HasForeignKey(x => x.PanelFilePackageId).OnDelete(DeleteBehavior.Restrict);
         builder.HasIndex(x => new { x.PanelFilePackageId, x.AssetType, x.Version }).IsUnique()
+            .HasFilter("\"RelativePath\" IS NULL")
             .HasDatabaseName("ux_panel_file_package_assets_version");
         builder.HasIndex(x => new { x.PanelFilePackageId, x.AssetType }).IsUnique()
-            .HasFilter("\"Status\" = 'Active'").HasDatabaseName("ux_panel_file_package_assets_active_type");
+            .HasFilter("\"Status\" = 'Active' AND \"RelativePath\" IS NULL").HasDatabaseName("ux_panel_file_package_assets_active_type");
+        builder.HasIndex(x => new { x.PanelFilePackageId, x.RelativePath, x.Version }).IsUnique()
+            .HasFilter("\"RelativePath\" IS NOT NULL").HasDatabaseName("ux_panel_file_package_assets_folder_version");
+        builder.HasIndex(x => new { x.PanelFilePackageId, x.RelativePath }).IsUnique()
+            .HasFilter("\"Status\" = 'Active' AND \"RelativePath\" IS NOT NULL").HasDatabaseName("ux_panel_file_package_assets_active_path");
         builder.HasIndex(x => x.Sha256).HasDatabaseName("ix_panel_file_package_assets_sha256");
     }
 }

@@ -163,7 +163,7 @@ public sealed class OpenAiExtractionService : IAiService
         }
         catch (JsonException ex)
         {
-            _logger.LogWarning(ex, "OpenAI extraction content JSON deserialization failed: {Raw}", rawContent);
+            _logger.LogWarning(ex, "OpenAI extraction content JSON deserialization failed");
             return new AiStructuredExtraction(
                 CustomerMessageIntent.Unknown,
                 Screen: null,

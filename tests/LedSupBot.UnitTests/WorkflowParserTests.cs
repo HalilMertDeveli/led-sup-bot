@@ -115,6 +115,27 @@ public sealed class WorkflowParserTests
         Assert.False(ReceiverCountParser.TryParse(text, out _));
     }
 
+    [Theory]
+    [InlineData("E120 5 volt")]
+    [InlineData("E120 HDMI 2")]
+    [InlineData("E120 81 il var")]
+    [InlineData("E120 1920x1080")]
+    public void ReceiverCountParser_Rejects_Numbers_Belonging_To_Other_Facts_After_A_Model(string text)
+    {
+        Assert.False(ReceiverCountParser.TryParse(text, out _));
+    }
+
+    [Theory]
+    [InlineData("E120 4 adet", 4)]
+    [InlineData("colorlight E120 12 tane", 12)]
+    [InlineData("receiver 8", 8)]
+    [InlineData("kart sayısı 6", 6)]
+    public void ReceiverCountParser_Preserves_Explicit_Model_First_Quantities(string text, int expected)
+    {
+        Assert.True(ReceiverCountParser.TryParse(text, out var count));
+        Assert.Equal(expected, count);
+    }
+
     [Fact]
     public void Multi_Slot_With_Explicit_Cm_Fills_Screen_And_Receiver()
     {

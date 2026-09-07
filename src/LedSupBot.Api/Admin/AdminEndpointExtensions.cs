@@ -55,6 +55,8 @@ public static class AdminEndpointExtensions
         group.MapPost("/panel-file-packages/{id:guid}/archive", ArchivePanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapPost("/panel-file-packages/{id:guid}/assets/{slot}", UploadPanelAssetAsync)
             .DisableAntiforgery().AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPost("/panel-file-packages/import-folder", ImportPanelFolderAsync)
+            .DisableAntiforgery().AddEndpointFilter(AdminAuthFilter.InvokeAsync);
 
         return group;
     }
@@ -406,6 +408,33 @@ public static class AdminEndpointExtensions
         catch (KeyNotFoundException) { return Results.NotFound(new { error = "package_not_found" }); }
         catch (IOException) { return Results.Json(new { error = "panel_file_storage_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
         catch (DbUpdateException) { return Results.Json(new { error = "panel_file_persistence_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
+    }
+
+    private static async Task<IResult> ImportPanelFolderAsync(HttpRequest request,
+        [FromServices] IPanelFolderImportService importer, [FromServices] IPanelFilePackageAdminQuery query,
+        CancellationToken ct)
+    {
+        try
+        {
+            var form = await request.ReadFormAsync(ct);
+            var folderName = form["folderName"].ToString();
+            var files = form.Files.Select(file => new PanelFolderImportFile(
+                file.FileName.Replace('\\', '/'), Path.GetFileName(file.FileName),
+                file.ContentType, file.OpenReadStream())).ToList();
+            try
+            {
+                var package = await importer.ImportAsync(folderName, files, ct);
+                return Results.Ok(await query.GetAsync(package.Id, ct));
+            }
+            finally
+            {
+                foreach (var file in files) await file.Content.DisposeAsync();
+            }
+        }
+        catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (IOException) { return Results.Json(new { error = "panel_folder_storage_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
+        catch (DbUpdateException) { return Results.Conflict(new { error = "panel_folder_import_conflict" }); }
     }
 
     private static string GuessContentType(string storageKey)

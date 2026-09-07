@@ -44,6 +44,19 @@ public sealed class InformationSourceRoutingPolicyTests
     }
 
     [Fact]
+    public void Card_question_with_general_rag_can_use_rag_and_web()
+    {
+        var rag = NoRag with { Attempted = true, Used = true, Level = GroundingLevel.GroundedGeneral };
+        Assert.Equal(InformationSourceRoute.RagAndWeb,
+            InformationSourceRoutingPolicy.Decide("E120 kartı ne işe yarıyor?", ConversationIntent.LedTechnicalQuestion, rag, Options));
+    }
+
+    [Fact]
+    public void Card_question_without_rag_can_use_web_without_fabricating_a_package_selection() =>
+        Assert.Equal(InformationSourceRoute.WebSearch,
+            InformationSourceRoutingPolicy.Decide("E120 kaç pixel destekliyor?", ConversationIntent.LedTechnicalQuestion, NoRag, Options));
+
+    [Fact]
     public void Wait_message_never_searches() =>
         Assert.Equal(InformationSourceRoute.NoSearch,
             InformationSourceRoutingPolicy.Decide("Bekle bi bakıyorum.", ConversationIntent.Acknowledgement, NoRag, Options));

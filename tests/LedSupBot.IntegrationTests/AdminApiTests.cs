@@ -25,6 +25,18 @@ public sealed class AdminApiTests
     }
 
     [Fact]
+    public async Task Admin_SignalR_Negotiate_Requires_Valid_Admin_Session()
+    {
+        using var anonymous = _fixture.CreateAdminClient();
+        var denied = await anonymous.PostAsync("/hubs/admin/negotiate?negotiateVersion=1", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
+
+        using var authenticated = await CreateAuthenticatedClientAsync();
+        var allowed = await authenticated.PostAsync("/hubs/admin/negotiate?negotiateVersion=1", null);
+        Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+    }
+
+    [Fact]
     public async Task Admin_Login_And_List_Conversations()
     {
         var client = await CreateAuthenticatedClientAsync();

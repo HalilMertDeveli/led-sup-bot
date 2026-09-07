@@ -56,6 +56,12 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
             return;
         }
 
+        if (string.Equals(inboundEvent.EventType, "ContactUpdated", StringComparison.OrdinalIgnoreCase))
+        {
+            await PersistContactUpdateAsync(inboundEvent, cancellationToken);
+            return;
+        }
+
         if (string.Equals(inboundEvent.EventType, "ConnectedIdentity", StringComparison.OrdinalIgnoreCase))
         {
             _selfIdentity.SetSelfJids([inboundEvent.SelfPnJid, inboundEvent.SelfLidJid]);
@@ -708,6 +714,61 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
 
         await PersistTrustedLidLinkAsync(db, customer, lidAddress, cancellationToken);
         _logger.LogInformation("WhatsApp LID/PN mapping persisted for trusted customer channel");
+    }
+
+    private async Task PersistContactUpdateAsync(WhatsAppInboundEvent inboundEvent, CancellationToken cancellationToken)
+    {
+        var db = _services.GetService<IApplicationDbContext>();
+        if (db is null) return;
+
+        var lid = WhatsAppEventMapper.IsLidJid(inboundEvent.LidJid)
+            ? WhatsAppEventMapper.NormalizeWhatsAppAddress(inboundEvent.LidJid!)
+            : WhatsAppEventMapper.IsLidJid(inboundEvent.RemoteJid)
+                ? WhatsAppEventMapper.NormalizeWhatsAppAddress(inboundEvent.RemoteJid!)
+                : null;
+        var phoneUser = inboundEvent.PhoneJid?.Split('@')[0]?.Split(':')[0];
+        var canonicalPhone = PhoneNumberNormalizer.TryNormalizeToCanonicalDigits(phoneUser);
+
+        Customer? canonical = canonicalPhone is null
+            ? null
+            : await FindCustomerByCanonicalPhoneAsync(db, canonicalPhone, cancellationToken);
+        Customer? lidCustomer = lid is null
+            ? null
+            : await db.Customers.FirstOrDefaultAsync(
+                x => x.LinkedWhatsAppLid == lid || x.PhoneNumber == lid, cancellationToken);
+
+        var customer = canonical ?? lidCustomer;
+        if (customer is null && canonicalPhone is not null)
+        {
+            customer = new Customer { PhoneNumber = canonicalPhone };
+            db.Customers.Add(customer);
+        }
+        if (customer is null) return;
+
+        if (canonical is not null && lidCustomer is not null && canonical.Id != lidCustomer.Id)
+        {
+            await db.Conversations.Where(x => x.CustomerId == lidCustomer.Id)
+                .ExecuteUpdateAsync(x => x.SetProperty(c => c.CustomerId, canonical.Id), cancellationToken);
+            db.Customers.Remove(lidCustomer);
+            customer = canonical;
+        }
+
+        if (lid is not null && !_selfIdentity.IsSelfJid(lid)) customer.LinkedWhatsAppLid = lid;
+        if (!string.IsNullOrWhiteSpace(inboundEvent.SavedDisplayName))
+        {
+            var name = inboundEvent.SavedDisplayName.Trim();
+            customer.DisplayName = name[..Math.Min(name.Length, 256)];
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        var notifier = _services.GetService<IAdminEventNotifier>();
+        if (notifier is not null)
+        {
+            var conversationIds = await db.Conversations.AsNoTracking()
+                .Where(x => x.CustomerId == customer.Id).Select(x => x.Id).ToListAsync(cancellationToken);
+            foreach (var conversationId in conversationIds)
+                await notifier.NotifyConversationUpdatedAsync(conversationId, cancellationToken);
+        }
     }
 
     private async Task PersistTrustedLidLinkAsync(

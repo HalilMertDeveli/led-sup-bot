@@ -925,6 +925,9 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<DateTimeOffset?>("ImportedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Manufacturer")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
@@ -932,6 +935,10 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                     b.Property<string>("Notes")
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("OriginalFolderName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
 
                     b.Property<string>("PanelCode")
                         .IsRequired()
@@ -1004,6 +1011,10 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("PanelFilePackageId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("RelativePath")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
                     b.Property<string>("Sha256")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -1033,11 +1044,22 @@ namespace LedSupBot.Infrastructure.Persistence.Migrations
                     b.HasIndex("PanelFilePackageId", "AssetType")
                         .IsUnique()
                         .HasDatabaseName("ux_panel_file_package_assets_active_type")
-                        .HasFilter("\"Status\" = 'Active'");
+                        .HasFilter("\"Status\" = 'Active' AND \"RelativePath\" IS NULL");
+
+                    b.HasIndex("PanelFilePackageId", "RelativePath")
+                        .IsUnique()
+                        .HasDatabaseName("ux_panel_file_package_assets_active_path")
+                        .HasFilter("\"Status\" = 'Active' AND \"RelativePath\" IS NOT NULL");
 
                     b.HasIndex("PanelFilePackageId", "AssetType", "Version")
                         .IsUnique()
-                        .HasDatabaseName("ux_panel_file_package_assets_version");
+                        .HasDatabaseName("ux_panel_file_package_assets_version")
+                        .HasFilter("\"RelativePath\" IS NULL");
+
+                    b.HasIndex("PanelFilePackageId", "RelativePath", "Version")
+                        .IsUnique()
+                        .HasDatabaseName("ux_panel_file_package_assets_folder_version")
+                        .HasFilter("\"RelativePath\" IS NOT NULL");
 
                     b.ToTable("panel_file_package_assets", (string)null);
                 });

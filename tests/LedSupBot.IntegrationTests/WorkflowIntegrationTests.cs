@@ -2075,8 +2075,11 @@ public sealed class PanelFilePackageIntegrationTests(WorkflowFixture fixture)
             Assert.Equal(canonical, package.CanonicalKey);
             await Assert.ThrowsAsync<InvalidOperationException>(() => registry.CreateDraftAsync("P2.5", $"{suffix}s", "2012"));
             await Assert.ThrowsAsync<ArgumentException>(() => assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "../bad.hex", new MemoryStream([1])));
+            await Assert.ThrowsAsync<ArgumentException>(() => assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "..\\bad.hex", new MemoryStream([1])));
             await Assert.ThrowsAsync<ArgumentException>(() => assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "bad.exe", new MemoryStream([1])));
             await Assert.ThrowsAsync<ArgumentException>(() => assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "firmware.hex.exe", new MemoryStream([1])));
+            await Assert.ThrowsAsync<ArgumentException>(() => assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "payload.exe.hex", new MemoryStream([1])));
+            await Assert.ThrowsAsync<ArgumentException>(() => assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "config.rcvbp.hex", new MemoryStream([1])));
             await Assert.ThrowsAsync<ArgumentException>(() => assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "CON.hex", new MemoryStream([1])));
             await Assert.ThrowsAsync<InvalidDataException>(() => assets.StoreAsync(package.Id, PanelFileAssetType.FirmwareHex, "large.hex", new MemoryStream([1, 2, 3]), 2));
 
@@ -2290,6 +2293,7 @@ public sealed class RecordingWhatsAppClient : IWhatsAppClient
     public List<string> SentTexts { get; } = [];
     public List<(string FileName, string ContentType, byte[] Content)> SentDocuments { get; } = [];
     public int? FailDocumentCall { get; set; }
+    public Action? BeforeDocumentSend { get; set; }
     private readonly Dictionary<string, (string Mime, byte[] Content)> _downloads = new(StringComparer.Ordinal);
 
     /// <summary>When true, send/download throw as if the connector is offline.</summary>
@@ -2328,6 +2332,8 @@ public sealed class RecordingWhatsAppClient : IWhatsAppClient
         string fileName, string? caption = null, CancellationToken cancellationToken = default)
     {
         if (FailDocumentCall == SentDocuments.Count + 1) throw new InvalidOperationException("document failure (simulated)");
+        BeforeDocumentSend?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
         using var memory = new MemoryStream();
         await document.CopyToAsync(memory, cancellationToken);
         SentDocuments.Add((fileName, contentType, memory.ToArray()));

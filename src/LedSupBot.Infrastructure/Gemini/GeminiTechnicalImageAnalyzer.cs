@@ -80,8 +80,13 @@ public sealed partial class GeminiTechnicalImageAnalyzer : ITechnicalImageAnalyz
         ConnectionPhoto, SoftwareScreenshot, or UnknownTechnicalImage.
         """;
         var body = new { contents = new[] { new { role = "user", parts = new object[] { new { text = $"{prompt}\nCustomer caption: {caption ?? "none"}\nLocal OCR (untrusted): {ocr}" }, new { inline_data = new { mime_type = mime, data = Convert.ToBase64String(bytes) } } } } }, generationConfig = new { temperature = 0, responseMimeType = "application/json" } };
-        var url = $"v1beta/models/{Uri.EscapeDataString(_options.Model)}:generateContent?key={Uri.EscapeDataString(_options.ApiKey)}";
-        using var response = await _http.PostAsJsonAsync(url, body, ct); response.EnsureSuccessStatusCode();
+        var url = $"v1beta/models/{Uri.EscapeDataString(_options.Model)}:generateContent";
+        using var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = JsonContent.Create(body),
+        };
+        request.Headers.Add("x-goog-api-key", _options.ApiKey);
+        using var response = await _http.SendAsync(request, ct); response.EnsureSuccessStatusCode();
         using var outer = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
         var text = outer.RootElement.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
         return string.IsNullOrWhiteSpace(text) ? null : ParseVisionJson(text);
