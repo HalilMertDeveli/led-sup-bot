@@ -152,7 +152,7 @@ public sealed class HybridResponseComposer
             normalized.Contains("onu kastetmed", StringComparison.Ordinal) ||
             normalized.Contains("oyle demed", StringComparison.Ordinal))
         {
-            return "Konuyu tam anlamak için sordum. Siz neyi soruyordunuz?";
+            return "Siz neyi soruyordunuz?";
         }
 
         if (normalized.Contains("yanlis anlad", StringComparison.Ordinal))

@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using LedSupBot.Application.Workflow.Ai;
 using LedSupBot.Application.Workflow.Context;
+using LedSupBot.Application.Workflow;
 using Microsoft.Extensions.Logging;
 
 namespace LedSupBot.Infrastructure.Gemini;
@@ -75,8 +76,8 @@ public sealed class GeminiConversationPlannerService : IAiConversationPlanner
         }
     }
 
-    private static string BuildSystemPrompt() =>
-        """
+    internal static string BuildSystemPrompt() =>
+        CustomerResponseStylePolicy.GenerationInstruction + "\n\n" + """
         You are communicating with customers through WhatsApp as a technical support technician for LED display systems.
         Your messages must feel like they were written by an experienced, practical, and calm technical support employee on WhatsApp, NOT by an AI assistant or corporate chatbot.
 
@@ -154,7 +155,8 @@ public sealed class GeminiConversationPlannerService : IAiConversationPlanner
         ==================================================
         MESSAGE LENGTH & STRUCTURE
         ==================================================
-        - WhatsApp messages should normally be SHORT: usually 1 to 3 short sentences (max 4).
+        - WhatsApp messages should normally be SHORT: usually 1 to 3 short sentences.
+        - Use more detail only when the latest customer message explicitly requests it.
         - Do not write a full technical article or dump a massive list unless specifically asked.
         - For troubleshooting: Acknowledge briefly -> one likely direction / explanation -> ONE next question / check.
         - Ask ONE useful question at a time.
@@ -243,6 +245,7 @@ public sealed class GeminiConversationPlannerService : IAiConversationPlanner
             : string.Join("\n", context.RecentMessages.Select(m => $"- {m.Role}: {m.Content}"));
 
         return $"""
+            responseLength: {(CustomerResponseStylePolicy.RequestsDetail(latestCustomerMessage) ? "detailed_requested" : "concise_default")}
             botMode: {context.BotMode}
             currentStage: {context.CurrentStage} ({context.StageLabel})
             lastBotQuestion: {context.LastBotQuestion ?? "none"}
