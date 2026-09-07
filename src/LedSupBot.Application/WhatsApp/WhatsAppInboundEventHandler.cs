@@ -1,6 +1,7 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Admin;
 using LedSupBot.Application.Media;
+using LedSupBot.Application.Audio;
 using LedSupBot.Application.Takeover;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Application.WhatsApp;
@@ -252,6 +253,10 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
                         phone,
                         cancellationToken);
                 }
+                else if (messageType == MessageType.Audio)
+                {
+                    await ProcessInboundAudioAsync(conversation.Id, message, inboundEvent, phone, cancellationToken);
+                }
                 else
                 {
                     await InvokeWorkflowIfAllowedAsync(
@@ -273,7 +278,7 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
     }
 
     private static bool ShouldRetryMediaProcessing(Message existingMessage, WhatsAppInboundEvent inboundEvent) =>
-        existingMessage.MessageType == MessageType.Image &&
+        existingMessage.MessageType is MessageType.Image or MessageType.Audio &&
         string.IsNullOrWhiteSpace(existingMessage.StorageKey) &&
         existingMessage.SentBy == MessageSender.Customer &&
         !inboundEvent.FromMe &&
@@ -290,7 +295,40 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
         var phone = WhatsAppEventMapper.ResolveCustomerAddress(inboundEvent)
             ?? WhatsAppEventMapper.NormalizePhone(inboundEvent.RemotePhoneNumber!);
 
-        await ProcessInboundImageAsync(conversationId, tracked, inboundEvent, phone, cancellationToken);
+        if (tracked.MessageType == MessageType.Audio)
+            await ProcessInboundAudioAsync(conversationId, tracked, inboundEvent, phone, cancellationToken);
+        else
+            await ProcessInboundImageAsync(conversationId, tracked, inboundEvent, phone, cancellationToken);
+    }
+
+    private async Task ProcessInboundAudioAsync(Guid conversationId, Message message, WhatsAppInboundEvent inboundEvent,
+        string phone, CancellationToken cancellationToken)
+    {
+        var options = _services.GetRequiredService<IOptions<VoiceOptions>>().Value;
+        if (!options.InboundEnabled || inboundEvent.Media?.Downloadable != true ||
+            inboundEvent.Media.FileLength is > 0 && inboundEvent.Media.FileLength > options.MaxAudioSizeBytes) return;
+
+        var downloaded = await _services.GetRequiredService<IWhatsAppClient>()
+            .DownloadMediaAsync(inboundEvent.ExternalMessageId!, cancellationToken);
+        if (downloaded.Content.LongLength == 0 || downloaded.Content.LongLength > options.MaxAudioSizeBytes) return;
+
+        var storage = _services.GetRequiredService<IMediaStorage>();
+        await using var source = new MemoryStream(downloaded.Content, writable: false);
+        var stored = await storage.StoreAsync(source, downloaded.MimeType,
+            new MediaStoreRequest($"voice/inbound/{conversationId:D}", ".ogg"), cancellationToken);
+        message.StorageKey = stored.StorageKey;
+        source.Position = 0;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.ProviderTimeoutSeconds, 1, 120)));
+        var result = await _services.GetRequiredService<ISpeechToTextService>()
+            .TranscribeAsync(source, downloaded.MimeType, options.LanguageCode, timeout.Token);
+        var transcript = result.Succeeded ? result.Transcript?.Trim() : null;
+        if (!string.IsNullOrWhiteSpace(transcript)) message.Content = transcript[..Math.Min(transcript.Length, 4000)];
+        await _services.GetRequiredService<IApplicationDbContext>().SaveChangesAsync(cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(message.Content))
+            await InvokeWorkflowIfAllowedAsync(conversationId, phone, message, inboundEvent,
+                await LoadCustomerForConversationAsync(conversationId, cancellationToken), message.Content, cancellationToken);
     }
 
     private async Task ProcessInboundImageAsync(

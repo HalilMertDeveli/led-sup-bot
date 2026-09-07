@@ -26,6 +26,10 @@ public interface IWhatsAppClient
         string? caption = null, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException("Document sending is not supported by this client.");
 
+    Task<string?> SendAudioMessageAsync(string toPhoneE164, Stream audio, string contentType,
+        bool voiceNote = true, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Audio sending is not supported by this client.");
+
     Task SendComposingAsync(string toPhoneE164, CancellationToken cancellationToken = default);
 
     Task SendPausedPresenceAsync(string toPhoneE164, CancellationToken cancellationToken = default);

@@ -1970,7 +1970,7 @@ public sealed class WorkflowIntegrationTests
         Assert.NotEqual(ConversationStage.AskScreenSize, convAfterDims.CurrentStage);
 
         // 3. Customer provides AnyDesk address
-        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "123 456 789");
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"wf-{Guid.NewGuid():N}", MessageType.Text, "AnyDesk: 123 456 789");
 
         var caseAfterAnyDesk = await _fixture.LoadCaseAsync(conversation.Id);
         Assert.NotNull(caseAfterAnyDesk?.ScreenInformation);

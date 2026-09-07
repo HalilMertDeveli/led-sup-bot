@@ -42,6 +42,8 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
     private readonly IPanelIdentityCoordinator _panelIdentityCoordinator;
     private readonly IPanelFileDeliverySafetyGate _panelFileDeliverySafetyGate;
     private readonly IPanelFileDeliveryService _panelFileDeliveryService;
+    private readonly IRemoteSupportAvailabilityPolicy _remoteSupportAvailability;
+    private readonly TimeProvider _timeProvider;
 
     public ConversationWorkflowService(
         IApplicationDbContext db,
@@ -63,6 +65,8 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         IPanelIdentityCoordinator panelIdentityCoordinator,
         IPanelFileDeliverySafetyGate panelFileDeliverySafetyGate,
         IPanelFileDeliveryService panelFileDeliveryService,
+        IRemoteSupportAvailabilityPolicy remoteSupportAvailability,
+        TimeProvider timeProvider,
         ILogger<ConversationWorkflowService> logger)
     {
         _db = db;
@@ -84,6 +88,8 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         _panelIdentityCoordinator = panelIdentityCoordinator;
         _panelFileDeliverySafetyGate = panelFileDeliverySafetyGate;
         _panelFileDeliveryService = panelFileDeliveryService;
+        _remoteSupportAvailability = remoteSupportAvailability;
+        _timeProvider = timeProvider;
         _logger = logger;
     }
 
@@ -158,7 +164,11 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         var slots = WorkflowSlotState.FromCase(supportCase, conversation);
         var assetAvailable = ConfigExampleAssetAvailable();
         var exampleCompleted = supportCase.ConfigConnection?.ExampleImageSent == true;
-        var effectiveStage = WorkflowStageResolver.ResolveEffectiveStage(slots, assetAvailable, exampleCompleted || !assetAvailable);
+        var remoteSupportAvailableNow = _remoteSupportAvailability.IsAvailable(_timeProvider.GetUtcNow());
+        var normalStage = WorkflowStageResolver.ResolveEffectiveStage(slots, assetAvailable, exampleCompleted || !assetAvailable);
+        var effectiveStage = WorkflowStageResolver.ResolveEffectiveStage(slots, assetAvailable, exampleCompleted || !assetAvailable, remoteSupportAvailableNow);
+        if (!remoteSupportAvailableNow && normalStage == ConversationStage.AskAnyDesk)
+            clarificationTexts.Add("Şimdilik buradan ilerleyelim. Uzaktan bağlantı gerekiyorsa mesai saatinde devam ederiz.");
         var diagnosticTurn = await _diagnostics.ApplyInboundAsync(supportCase, inbound, imageAnalysis,
             WorkflowStageResolver.ResolvePendingFact(effectiveStage) != PendingWorkflowFact.None, cancellationToken);
 
@@ -369,7 +379,8 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             effectiveStage = WorkflowStageResolver.ResolveEffectiveStage(
                 slots,
                 assetAvailable,
-                exampleCompleted || !assetAvailable);
+                exampleCompleted || !assetAvailable,
+                remoteSupportAvailableNow);
             if (effectiveStage == ConversationStage.AskAnyDesk &&
                 outboundTexts.All(t => !t.Contains("AnyDesk", StringComparison.OrdinalIgnoreCase)))
             {
@@ -720,7 +731,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         await ApplyProcessorHdmiSlotAsync(supportCase.Id, inbound.TextContent, slots, clarificationTexts, cancellationToken);
         await ApplyConfigSlotAsync(supportCase.Id, inbound.TextContent, slots, priorStage,
             clarificationTexts, cancellationToken);
-        await ApplyAnyDeskSlotAsync(supportCase.Id, inbound.TextContent, clarificationTexts, cancellationToken);
+        await ApplyAnyDeskSlotAsync(supportCase.Id, inbound.TextContent, priorStage, clarificationTexts, cancellationToken);
 
         var aiValidated = await _aiOrchestrator.TryExtractAsync(
             inbound.TextContent,
@@ -1088,26 +1099,33 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
     private async Task ApplyAnyDeskSlotAsync(
         Guid caseId,
         string text,
+        ConversationStage priorStage,
         List<string> clarificationTexts,
         CancellationToken cancellationToken)
     {
-        var exists = await _db.AnyDeskInformations
-            .AsNoTracking()
-            .AnyAsync(a => a.TechnicalSupportCaseId == caseId, cancellationToken);
-        if (exists)
-        {
-            return;
-        }
+        var existing = await _db.AnyDeskInformations
+            .FirstOrDefaultAsync(a => a.TechnicalSupportCaseId == caseId, cancellationToken);
+        var explicitContext = text.Contains("anydesk", StringComparison.OrdinalIgnoreCase) ||
+                              text.Contains("any desk", StringComparison.OrdinalIgnoreCase) ||
+                              text.Contains("enidesk", StringComparison.OrdinalIgnoreCase);
+        if (priorStage != ConversationStage.AskAnyDesk && !explicitContext) return;
 
         if (AnyDeskParser.TryParse(text, out var address))
         {
-            _db.AnyDeskInformations.Add(new AnyDeskInformation
+            if (existing is null)
             {
-                TechnicalSupportCaseId = caseId,
-                AnyDeskAddress = address,
-                CollectedAt = DateTimeOffset.UtcNow,
-                RawUtterance = text,
-            });
+                _db.AnyDeskInformations.Add(new AnyDeskInformation
+                {
+                    TechnicalSupportCaseId = caseId, AnyDeskAddress = address,
+                    CollectedAt = DateTimeOffset.UtcNow, RawUtterance = text,
+                });
+            }
+            else if (explicitContext && !string.Equals(existing.AnyDeskAddress, address, StringComparison.Ordinal))
+            {
+                existing.AnyDeskAddress = address;
+                existing.CollectedAt = DateTimeOffset.UtcNow;
+                existing.RawUtterance = text;
+            }
             await _db.SaveChangesAsync(cancellationToken);
             return;
         }

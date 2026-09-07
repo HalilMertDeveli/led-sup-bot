@@ -2,14 +2,14 @@ import crypto from "node:crypto";
 import express from "express";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
-import { getStatus, sendText, sendImage, sendDocument, sendPresence, startWhatsApp, downloadMediaByMessageId } from "./whatsapp.js";
+import { getStatus, sendText, sendImage, sendDocument, sendAudio, sendPresence, startWhatsApp, downloadMediaByMessageId } from "./whatsapp.js";
 import { getConnectedSelfJids } from "./selfIdentity.js";
 import { getSignalDiagnosticCounters } from "./safeSignalDiagnostics.js";
 import { documentJsonLimit, validateOutboundDocument } from "./documentPolicy.js";
 
 const app = express();
 const standardJson = express.json({ limit: "2mb" });
-app.use((req, res, next) => req.path === "/send/document" ? next() : standardJson(req, res, next));
+app.use((req, res, next) => req.path === "/send/document" || req.path === "/send/audio" ? next() : standardJson(req, res, next));
 
 function requireSecret(req, res, next) {
   const provided = req.header("X-Connector-Secret") || "";
@@ -107,6 +107,23 @@ app.post("/send/document", requireSecret, express.json({ limit: documentJsonLimi
   } catch (error) {
     logger.error({ err: error?.message }, "send document failed");
     return res.status(503).json({ error: "send_document_failed" });
+  }
+});
+
+app.post("/send/audio", requireSecret, express.json({ limit: "16mb" }), async (req, res) => {
+  try {
+    const toRaw = String(req.body?.to || "").trim();
+    const audioBase64 = String(req.body?.audioBase64 || "").trim();
+    const contentType = String(req.body?.contentType || "audio/ogg; codecs=opus").trim();
+    if (!toRaw || !audioBase64) return res.status(400).json({ error: "invalid_audio_request" });
+    const audioBuffer = Buffer.from(audioBase64, "base64");
+    if (!audioBuffer.length || audioBuffer.length > 10 * 1024 * 1024) return res.status(413).json({ error: "audio_too_large" });
+    const result = await sendAudio(toRaw, audioBuffer, contentType, req.body?.voiceNote !== false);
+    return res.json({ ok: true, externalMessageId: result.externalMessageId,
+      destinationType: result.destinationType, exactRoutePreserved: result.exactRoutePreserved ?? true });
+  } catch (error) {
+    logger.error({ err: error?.message }, "send audio failed");
+    return res.status(503).json({ error: "send_audio_failed" });
   }
 });
 

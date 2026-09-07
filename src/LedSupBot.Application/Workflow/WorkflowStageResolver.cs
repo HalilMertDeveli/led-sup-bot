@@ -4,7 +4,8 @@ namespace LedSupBot.Application.Workflow;
 
 public static class WorkflowStageResolver
 {
-    public static ConversationStage ResolveEffectiveStage(WorkflowSlotState slots, bool configExampleAssetAvailable, bool configExampleStepCompleted)
+    public static ConversationStage ResolveEffectiveStage(WorkflowSlotState slots, bool configExampleAssetAvailable, bool configExampleStepCompleted,
+        bool remoteSupportAvailable = true)
     {
         if (slots.SummaryCompleted)
         {
@@ -46,7 +47,7 @@ public static class WorkflowStageResolver
             return ConversationStage.AskConfigConnection;
         }
 
-        if (!slots.HasAnyDesk && !slots.IsAnyDeskDeferred)
+        if (remoteSupportAvailable && !slots.HasAnyDesk && !slots.IsAnyDeskDeferred)
         {
             return ConversationStage.AskAnyDesk;
         }

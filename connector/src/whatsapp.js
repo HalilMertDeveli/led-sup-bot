@@ -423,6 +423,15 @@ export async function sendDocument(toAddress, documentBuffer, contentType, fileN
   return { externalMessageId: id || null, remoteJid: jid, destinationType: jidDomain(jid), exactRoutePreserved };
 }
 
+export async function sendAudio(toAddress, audioBuffer, contentType, voiceNote = true) {
+  if (!sock) throw new Error("not_connected");
+  const remoteJid = resolveOutboundJid(toAddress);
+  if (!remoteJid) throw new Error("invalid_destination");
+  assertNotSelfDestination(remoteJid);
+  const sent = await sock.sendMessage(remoteJid, { audio: audioBuffer, mimetype: contentType, ptt: Boolean(voiceNote) });
+  return { externalMessageId: sent?.key?.id || null, destinationType: remoteJidType(remoteJid), exactRoutePreserved: true };
+}
+
 function mapBaileysDeliveryStatus(status) {
   if (status === undefined || status === null) return null;
   switch (Number(status)) {

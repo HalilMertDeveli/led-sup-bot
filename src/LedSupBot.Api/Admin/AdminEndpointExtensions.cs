@@ -434,7 +434,8 @@ public static class AdminEndpointExtensions
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
         catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
         catch (IOException) { return Results.Json(new { error = "panel_folder_storage_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
-        catch (DbUpdateException) { return Results.Conflict(new { error = "panel_folder_import_conflict" }); }
+        catch (DbUpdateException) { return Results.Json(new { error = "panel_folder_persistence_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
+        catch (UnauthorizedAccessException) { return Results.Json(new { error = "panel_folder_storage_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
     }
 
     private static string GuessContentType(string storageKey)

@@ -25,7 +25,7 @@ public sealed class LedSupBotApiClient : IDisposable
         _http = new HttpClient(_handler)
         {
             BaseAddress = new Uri(apiBaseUrl.TrimEnd('/') + "/"),
-            Timeout = TimeSpan.FromSeconds(30),
+            Timeout = TimeSpan.FromMinutes(5),
         };
     }
 
@@ -174,8 +174,19 @@ public sealed class LedSupBotApiClient : IDisposable
                 part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
                 content.Add(part, "files", Path.GetFileName(path));
             }
-            using var response = await _http.PostAsync("api/admin/panel-file-packages/import-folder", content, ct);
-            return await ReadPanelResponseAsync(response, ct);
+            try
+            {
+                using var response = await _http.PostAsync("api/admin/panel-file-packages/import-folder", content, ct);
+                return await ReadPanelResponseAsync(response, ct);
+            }
+            catch (HttpRequestException ex)
+            {
+                throw new LedSupBotApiException("API bağlantısı kurulamadı.", inner: ex);
+            }
+            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+            {
+                throw new LedSupBotApiException("Klasör yükleme zaman aşımına uğradı.", inner: ex);
+            }
         }
         finally { foreach (var stream in streams) await stream.DisposeAsync(); }
     }
@@ -189,11 +200,18 @@ public sealed class LedSupBotApiClient : IDisposable
         if (!response.IsSuccessStatusCode)
         {
             var raw = await response.Content.ReadAsStringAsync(ct);
-            throw new LedSupBotApiException(raw.Contains("2 veya 3 dosya") ? "Pakette 2 veya 3 dosya olmalı."
-                : raw.Contains("panel kodu formatına") ? "Bu klasör adı panel kodu formatına uymuyor."
-                : raw.Contains("zaten") ? "Bu paket veya dosya zaten mevcut."
-                : raw.Contains("boyut") ? "Dosya boyutu izin verilen sınırı aşıyor."
-                : "Dosyalar içe aktarılırken hata oluştu.", (int)response.StatusCode);
+            string? apiError = null;
+            try { apiError = JsonDocument.Parse(raw).RootElement.GetProperty("error").GetString(); } catch (JsonException) { } catch (KeyNotFoundException) { }
+            var status = (int)response.StatusCode;
+            var message = status is 401 or 403 ? "Yetkilendirme başarısız. Yeniden giriş yapın."
+                : apiError?.Contains("2 veya 3 dosya", StringComparison.OrdinalIgnoreCase) == true ? "Pakette 2 veya 3 dosya olmalı."
+                : apiError?.Contains("panel kodu formatına", StringComparison.OrdinalIgnoreCase) == true ? "Bu klasör adı panel kodu formatına uymuyor."
+                : apiError?.Contains("size", StringComparison.OrdinalIgnoreCase) == true || apiError?.Contains("boyut", StringComparison.OrdinalIgnoreCase) == true ? "Dosya boyutu izin verilen sınırı aşıyor."
+                : status == 409 ? "Bu paket içe aktarılırken kayıt çakışması oluştu."
+                : apiError == "panel_folder_storage_failed" ? "Dosyalar özel depoya yazılamadı."
+                : apiError == "panel_folder_persistence_failed" ? "Paket bilgileri veritabanına kaydedilemedi."
+                : "Sunucu klasör yükleme işlemini tamamlayamadı.";
+            throw new LedSupBotApiException(message, status);
         }
         return await response.Content.ReadFromJsonAsync<PanelPackageDto>(JsonOptions, ct);
     }

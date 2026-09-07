@@ -184,6 +184,21 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
         return result?.ExternalMessageId;
     }
 
+    public async Task<string?> SendAudioMessageAsync(string toPhoneE164, Stream audio, string contentType,
+        bool voiceNote = true, CancellationToken cancellationToken = default)
+    {
+        var destination = NormalizeDestination(toPhoneE164);
+        using var ms = new MemoryStream();
+        await audio.CopyToAsync(ms, cancellationToken);
+        using var response = await _http.PostAsJsonAsync("send/audio", new
+        {
+            to = destination, contentType, voiceNote, audioBase64 = Convert.ToBase64String(ms.ToArray())
+        }, cancellationToken);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"Connector audio send failed: {(int)response.StatusCode}");
+        var result = await response.Content.ReadFromJsonAsync<SendPayload>(cancellationToken: cancellationToken);
+        return result?.ExternalMessageId;
+    }
+
     public async Task<WhatsAppMediaDownloadResult> DownloadMediaAsync(string mediaId, CancellationToken cancellationToken = default)
     {
         using var response = await _http.PostAsJsonAsync(
