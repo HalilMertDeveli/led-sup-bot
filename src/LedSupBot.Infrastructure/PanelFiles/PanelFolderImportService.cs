@@ -19,8 +19,8 @@ public sealed class PanelFolderImportService(
         CancellationToken cancellationToken = default)
     {
         var identity = ParseFolderName(folderName);
-        if (files.Count is 0 || files.Count > options.Value.MaxImportedFileCount)
-            throw new InvalidDataException("Klasör boş veya izin verilen dosya sayısını aşıyor.");
+        if (files.Count < options.Value.MinImportedFileCount || files.Count > options.Value.MaxImportedFileCount)
+            throw new InvalidDataException("Pakette 2 veya 3 dosya olmalı.");
 
         var safeFiles = files.Select(ValidateFile).ToList();
         var duplicateOutgoingName = safeFiles.GroupBy(x => x.FileName, StringComparer.OrdinalIgnoreCase)
@@ -97,18 +97,19 @@ public sealed class PanelFolderImportService(
     {
         var safeName = (folderName ?? string.Empty).Trim();
         if (safeName.Length is 0 or > 255 || safeName.IndexOfAny(['/', '\\', ':']) >= 0) throw new ArgumentException("Geçersiz klasör adı.");
-        var parts = safeName.Split('+', StringSplitOptions.TrimEntries);
-        if (parts.Length != 3 || parts.Any(string.IsNullOrWhiteSpace)) throw new ArgumentException("Klasör adı P2.5+1065S+2012 biçiminde olmalıdır.");
+        var parts = System.Text.RegularExpressions.Regex.Split(safeName, @"\s*[+-]\s*");
+        if (parts.Length != 3 || parts.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("Bu klasör adı panel kodu formatına uymuyor.");
         var normalized = normalizer.Normalize(parts[0], parts[1], parts[2]);
         return normalized.Status == PanelIdentityNormalizationStatus.Valid && normalized.Identity?.CanonicalKey is not null
             ? normalized.Identity
-            : throw new ArgumentException("Klasör adı geçerli ve tam bir panel kimliği içermiyor.");
+            : throw new ArgumentException("Bu klasör adı panel kodu formatına uymuyor.");
     }
 
     private static PanelFolderImportFile ValidateFile(PanelFolderImportFile file)
     {
         var relative = (file.RelativePath ?? string.Empty).Replace('\\', '/').Trim('/');
-        if (relative.Length == 0 || relative.Length > 512 || relative.Split('/').Any(x => x is "" or "." or "..") || Path.IsPathRooted(relative))
+        if (relative.Length == 0 || relative.Length > 255 || relative.Contains('/') || Path.IsPathRooted(relative))
             throw new ArgumentException("Geçersiz göreli dosya yolu.");
         var fileName = Path.GetFileName(relative);
         if (!string.Equals(fileName, file.FileName, StringComparison.Ordinal) || fileName.Length > 255)

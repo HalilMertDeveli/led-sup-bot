@@ -24,7 +24,7 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
         using var first = new MultipartFormDataContent();
         first.Add(new StringContent($"P2.5+{code}+2012"), "folderName");
         first.Add(new ByteArrayContent("hex"u8.ToArray()), "files", "firmware-final.hex");
-        first.Add(new ByteArrayContent("cfg"u8.ToArray()), "files", "nested/scan-new.rcvbp");
+        first.Add(new ByteArrayContent("cfg"u8.ToArray()), "files", "scan-new.rcvbp");
         first.Add(new ByteArrayContent("notes"u8.ToArray()), "files", "notes.txt");
         var imported = await client.PostAsync("/api/admin/panel-file-packages/import-folder", first);
         Assert.Equal(HttpStatusCode.OK, imported.StatusCode);
@@ -37,10 +37,56 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
         await using var scope = fixture.Factory.Services.CreateAsyncScope();
         var reimported = await scope.ServiceProvider.GetRequiredService<IPanelFolderImportService>().ImportAsync(
             $"P2.5+{code.ToUpperInvariant()}+2012",
-            [new PanelFolderImportFile("anything.bin", "anything.bin", "application/octet-stream", new MemoryStream("replacement"u8.ToArray()))]);
+            [
+                new PanelFolderImportFile("anything.bin", "anything.bin", "application/octet-stream", new MemoryStream("replacement"u8.ToArray())),
+                new PanelFolderImportFile("anything-else.dat", "anything-else.dat", "application/octet-stream", new MemoryStream("replacement-2"u8.ToArray()))
+            ]);
         Assert.Equal(id, reimported.Id);
         Assert.Equal(2, reimported.Version);
-        Assert.Single(reimported.Assets.Where(x => x.Status == LedSupBot.Domain.PanelFiles.PanelFileAssetStatus.Active));
+        Assert.Equal(2, reimported.Assets.Count(x => x.Status == LedSupBot.Domain.PanelFiles.PanelFileAssetStatus.Active));
+    }
+
+    [Theory]
+    [InlineData("P2.5-1065AP+1012", "P2.5-1065AP-1012")]
+    [InlineData("P2.5+1065s+2012", "P2.5-1065S-2012")]
+    public async Task Folder_import_accepts_safe_separator_and_case_variants(string folderName, string canonical)
+    {
+        var client = fixture.CreateAdminClient();
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(folderName), "folderName");
+        form.Add(new ByteArrayContent([1]), "files", "random.hex");
+        form.Add(new ByteArrayContent([2]), "files", "other.rcvbp");
+        var response = await client.PostAsync("/api/admin/panel-file-packages/import-folder", form);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(canonical, JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("canonicalKey").GetString());
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(4)]
+    public async Task Folder_import_rejects_file_counts_outside_two_to_three(int count)
+    {
+        var client = fixture.CreateAdminClient();
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent($"P2.5+{Random.Shared.Next(100000, 999999)}S+2012"), "folderName");
+        for (var i = 0; i < count; i++) form.Add(new ByteArrayContent([(byte)i]), "files", $"file-{i}.bin");
+        var response = await client.PostAsync("/api/admin/panel-file-packages/import-folder", form);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("2 veya 3 dosya", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Folder_import_rejects_nested_relative_paths()
+    {
+        var client = fixture.CreateAdminClient();
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent($"P2.5+{Random.Shared.Next(100000, 999999)}S+2012"), "folderName");
+        form.Add(new ByteArrayContent([1]), "files", "nested/a.hex");
+        form.Add(new ByteArrayContent([2]), "files", "b.rcvbp");
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsync("/api/admin/panel-file-packages/import-folder", form)).StatusCode);
     }
 
     [Fact]

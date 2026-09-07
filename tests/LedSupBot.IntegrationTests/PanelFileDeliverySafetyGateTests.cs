@@ -26,7 +26,7 @@ public sealed class PanelFileDeliverySafetyGateTests(WorkflowFixture fixture)
                 $"P2.5+{code.ToLowerInvariant()}+2012",
                 [
                     new("a.hex", "a.hex", "application/octet-stream", new MemoryStream("a"u8.ToArray())),
-                    new("nested/b.rcvbp", "b.rcvbp", "application/octet-stream", new MemoryStream("b"u8.ToArray())),
+                    new("b.rcvbp", "b.rcvbp", "application/octet-stream", new MemoryStream("b"u8.ToArray())),
                     new("notes.txt", "notes.txt", "text/plain", new MemoryStream("c"u8.ToArray()))
                 ]);
         }

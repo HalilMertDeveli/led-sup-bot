@@ -155,7 +155,11 @@ public sealed class LedSupBotApiClient : IDisposable
     public async Task<PanelPackageDto?> ImportPanelFolderAsync(string folderPath, CancellationToken ct = default)
     {
         var root = Path.GetFullPath(folderPath);
-        var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).ToList();
+        var files = Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly)
+            .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (files.Count is < 2 or > 3)
+            throw new LedSupBotApiException("Pakette 2 veya 3 dosya olmalı.");
         using var content = new MultipartFormDataContent();
         content.Add(new StringContent(Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar))), "folderName");
         var streams = new List<Stream>();
@@ -168,7 +172,7 @@ public sealed class LedSupBotApiClient : IDisposable
                 var stream = File.OpenRead(path); streams.Add(stream);
                 var part = new StreamContent(stream);
                 part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-                content.Add(part, "files", Path.GetRelativePath(root, path).Replace('\\', '/'));
+                content.Add(part, "files", Path.GetFileName(path));
             }
             using var response = await _http.PostAsync("api/admin/panel-file-packages/import-folder", content, ct);
             return await ReadPanelResponseAsync(response, ct);
@@ -185,7 +189,11 @@ public sealed class LedSupBotApiClient : IDisposable
         if (!response.IsSuccessStatusCode)
         {
             var raw = await response.Content.ReadAsStringAsync(ct);
-            throw new LedSupBotApiException(raw.Contains("zaten") ? "Bu paket veya dosya zaten mevcut." : raw.Contains("boyut") ? "Dosya boyutu izin verilen sınırı aşıyor." : "Panel dosyası işlemi tamamlanamadı.", (int)response.StatusCode);
+            throw new LedSupBotApiException(raw.Contains("2 veya 3 dosya") ? "Pakette 2 veya 3 dosya olmalı."
+                : raw.Contains("panel kodu formatına") ? "Bu klasör adı panel kodu formatına uymuyor."
+                : raw.Contains("zaten") ? "Bu paket veya dosya zaten mevcut."
+                : raw.Contains("boyut") ? "Dosya boyutu izin verilen sınırı aşıyor."
+                : "Dosyalar içe aktarılırken hata oluştu.", (int)response.StatusCode);
         }
         return await response.Content.ReadFromJsonAsync<PanelPackageDto>(JsonOptions, ct);
     }

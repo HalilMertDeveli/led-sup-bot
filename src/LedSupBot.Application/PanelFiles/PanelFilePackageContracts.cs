@@ -61,7 +61,8 @@ public sealed class PanelFilePackageOptions
     public long MaxFirmwareFileSizeBytes { get; set; } = 16 * 1024 * 1024;
     public long MaxReceiverConfigFileSizeBytes { get; set; } = 8 * 1024 * 1024;
     public long MaxImportedFileSizeBytes { get; set; } = 25 * 1024 * 1024;
-    public int MaxImportedFileCount { get; set; } = 100;
+    public int MinImportedFileCount { get; set; } = 2;
+    public int MaxImportedFileCount { get; set; } = 3;
 }
 
 public sealed record PanelFolderImportFile(string RelativePath, string FileName, string ContentType, Stream Content);
