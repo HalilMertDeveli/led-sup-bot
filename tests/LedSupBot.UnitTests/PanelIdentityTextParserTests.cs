@@ -6,6 +6,32 @@ public sealed class PanelIdentityTextParserTests
 {
     private readonly PanelIdentityTextParser _parser = new(new PanelIdentityNormalizer());
 
+    [Theory]
+    [InlineData("P2.5+1065S+2012", true)]
+    [InlineData("Dosya P2.5+1065S+2012 için lazım", true)]
+    [InlineData("P3.076+1065AP+1012", true)]
+    [InlineData("P1.86+1065+2018", true)]
+    [InlineData("p2.5+1065S+2012", false)]
+    [InlineData("P2.5+1065s+2012", false)]
+    [InlineData("P2.5 +1065S+2012", false)]
+    [InlineData("P2.5+ 1065S+2012", false)]
+    [InlineData("P2.5+1065S +2012", false)]
+    [InlineData("P2.5+1065S+ 2012", false)]
+    [InlineData("P2.5-1065S-2012", false)]
+    [InlineData("P2.5/1065S/2012", false)]
+    [InlineData("P2.5 1065S 2012", false)]
+    [InlineData("P2,5+1065S+2012", false)]
+    [InlineData("P2.5+1065S", false)]
+    [InlineData("1065S+2012", false)]
+    [InlineData("P2.5++1065S+2012", false)]
+    [InlineData("P2.5+1065S+2012+X", false)]
+    [InlineData("P2.5+1065S+2012\n", false)]
+    [InlineData("P2.5\n+1065S+2012", false)]
+    [InlineData("P2.5+1065S+2012 ve P3.91+AB12+2013", false)]
+    [InlineData("P1.53+FM6126A+138", true)]
+    public void PATTERN_01_22_exact_customer_evidence_is_strict(string text, bool expected) =>
+        Assert.Equal(expected, _parser.Parse(text).HasExactCustomerPattern);
+
     [Fact]
     public void Multiple_distinct_text_identities_are_ambiguous()
     {

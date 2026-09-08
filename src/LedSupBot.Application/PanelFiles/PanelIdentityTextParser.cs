@@ -14,7 +14,8 @@ public sealed record PanelIdentityTextResult(
     IReadOnlyList<string>? MissingFields = null,
     PanelIdentitySource? Source = null,
     string? Evidence = null,
-    PanelIdentityField? CorrectedField = null);
+    PanelIdentityField? CorrectedField = null,
+    bool HasExactCustomerPattern = false);
 
 public interface IPanelIdentityTextParser { PanelIdentityTextResult Parse(string? text); }
 
@@ -25,6 +26,7 @@ public sealed partial class PanelIdentityTextParser(IPanelIdentityNormalizer nor
     public PanelIdentityTextResult Parse(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return new(PanelIdentityTextStatus.NoIdentity);
+        var hasLineBreak = text.Contains('\n') || text.Contains('\r');
         var bounded = text.Trim();
         if (bounded.Length > MaxInputLength) bounded = bounded[..MaxInputLength];
         if (WrongPhotoRegex().IsMatch(bounded)) return new(PanelIdentityTextStatus.PhotoIdentityRetraction, Evidence: Bound(bounded));
@@ -52,6 +54,11 @@ public sealed partial class PanelIdentityTextParser(IPanelIdentityNormalizer nor
             return new(PanelIdentityTextStatus.PartialIdentity, new(null, null, correction.Groups[1].Value),
                 [nameof(PanelIdentity.PixelPitch), nameof(PanelIdentity.PanelCode)], PanelIdentitySource.OperatorCorrection, Bound(correction.Value), PanelIdentityField.SecondaryCode);
 
+        Match[] exactMatches = hasLineBreak
+            ? []
+            : ExactCustomerPatternRegex().Matches(bounded).Cast<Match>().ToArray();
+        if (exactMatches.Length > 1 && exactMatches.Select(x => x.Value).Distinct(StringComparer.Ordinal).Count() > 1)
+            return new(PanelIdentityTextStatus.AmbiguousIdentity, Evidence: Bound(bounded));
         var completeMatches = CompleteRegex().Matches(bounded);
         if (completeMatches.Count > 1 && completeMatches.Select(x => x.Value).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
             return new(PanelIdentityTextStatus.AmbiguousIdentity, Evidence: Bound(bounded));
@@ -61,7 +68,8 @@ public sealed partial class PanelIdentityTextParser(IPanelIdentityNormalizer nor
             var normalized = normalizer.Normalize(complete.Groups[1].Value, complete.Groups[2].Value, complete.Groups[3].Value);
             if (normalized.Status != PanelIdentityNormalizationStatus.Valid) return new(PanelIdentityTextStatus.InvalidIdentity, Evidence: Bound(complete.Value));
             var source = string.Equals(complete.Value.Trim(), bounded, StringComparison.Ordinal) ? PanelIdentitySource.CustomerPattern : PanelIdentitySource.CustomerNaturalText;
-            return new(PanelIdentityTextStatus.CompleteIdentity, normalized.Identity, [], source, Bound(complete.Value));
+            var exact = exactMatches.Length == 1 && string.Equals(exactMatches[0].Value, complete.Value, StringComparison.Ordinal);
+            return new(PanelIdentityTextStatus.CompleteIdentity, normalized.Identity, [], source, Bound(complete.Value), HasExactCustomerPattern: exact);
         }
         var missingPitch = MissingPitchRegex().Match(bounded);
         if (missingPitch.Success)
@@ -80,6 +88,7 @@ public sealed partial class PanelIdentityTextParser(IPanelIdentityNormalizer nor
         Regex.IsMatch(value, @"(?i)^\s*E\d+\s+(?:değil|degil)\s+E\d+\s*$", RegexOptions.CultureInvariant);
     private const RegexOptions Options = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking;
     [GeneratedRegex(@"\b(P\d+(?:[.,]\d{1,3})?)\s*(?:\+|-|_|/|,|\s)\s*([A-Z0-9]{2,32})\s*(?:\+|-|_|/|,|\s)\s*([A-Z0-9]{2,32})\b", Options)] private static partial Regex CompleteRegex();
+    [GeneratedRegex(@"(?<![A-Z0-9.])P\d+(?:\.\d{1,3})?\+[A-Z0-9]{2,32}\+[A-Z0-9]{2,32}(?![A-Z0-9+])", RegexOptions.CultureInvariant)] private static partial Regex ExactCustomerPatternRegex();
     [GeneratedRegex(@"^\s*((?:\d{1,31}[A-Z][A-Z0-9]*|[A-Z][A-Z0-9]{0,30}\d[A-Z0-9]*))\s*(?:\+|/|,)\s*([A-Z0-9]{2,32})\s*[.!?]?\s*$", Options)] private static partial Regex MissingPitchRegex();
     [GeneratedRegex(@"^\s*(P\d+(?:[.,]\d{1,3})?)\s*(?:\+|/|,)\s*((?:\d{1,31}[A-Z][A-Z0-9]*|[A-Z][A-Z0-9]{0,30}\d[A-Z0-9]*))\s*[.!?]?\s*$", Options)] private static partial Regex MissingSecondaryRegex();
     [GeneratedRegex(@"^\s*P\d+(?:[.,]\d{1,3})?\s*(?:\+|/|,)\s*\d{2,32}\s*[.!?]?\s*$", Options)] private static partial Regex AmbiguousRegex();
@@ -101,7 +110,7 @@ public sealed record PanelIdentityCaseState(
     PanelIdentitySource? PixelPitchSource = null, PanelIdentitySource? PanelCodeSource = null, PanelIdentitySource? SecondaryCodeSource = null,
     Guid? SourceMessageId = null, PanelIdentityResolutionState ResolutionState = PanelIdentityResolutionState.MissingInformation,
     IReadOnlyList<PanelIdentityConflict>? Conflicts = null, Guid? PixelPitchMessageId = null, Guid? PanelCodeMessageId = null,
-    Guid? SecondaryCodeMessageId = null);
+    Guid? SecondaryCodeMessageId = null, Guid? ExactCustomerPatternMessageId = null);
 
 public sealed record PanelIdentityTurnResult(
     bool Attempted,

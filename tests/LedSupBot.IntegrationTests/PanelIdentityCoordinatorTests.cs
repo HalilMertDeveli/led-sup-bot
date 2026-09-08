@@ -55,11 +55,15 @@ public sealed class PanelIdentityCoordinatorTests(WorkflowFixture fixture)
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Image, null);
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, "2013 doğru.");
         var state = await State(conversation.Id);
+        Assert.Null(state.CanonicalKey);
+        Assert.Equal(PanelIdentityResolutionState.Candidate, state.ResolutionState);
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, $"P2.5+{code}+2013");
+        state = await State(conversation.Id);
         Assert.Equal($"P2.5-{code}-2013", state.CanonicalKey);
         Assert.Equal(PanelIdentityResolutionState.PackageNoMatch, state.ResolutionState);
         Assert.Null(state.PackageId);
         Assert.NotEqual(oldPackage, state.PackageId);
-        Assert.Equal(PanelIdentitySource.CustomerCorrection, state.SecondaryCodeSource);
+        Assert.Equal(PanelIdentitySource.CustomerPattern, state.SecondaryCodeSource);
         Assert.Empty(state.Conflicts!);
     }
 
@@ -72,10 +76,32 @@ public sealed class PanelIdentityCoordinatorTests(WorkflowFixture fixture)
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Image, null);
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, "2012");
         var state = await State(conversation.Id);
+        Assert.Null(state.CanonicalKey);
+        Assert.Equal(PanelIdentityResolutionState.Candidate, state.ResolutionState);
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, $"P2.5+{code}+2012");
+        state = await State(conversation.Id);
         Assert.Equal($"P2.5-{code}-2012", state.CanonicalKey);
-        Assert.Equal(PanelIdentitySource.PanelLabelOcr, state.PixelPitchSource);
-        Assert.Equal(PanelIdentitySource.PanelLabelOcr, state.PanelCodeSource);
-        Assert.Equal(PanelIdentitySource.CustomerNaturalText, state.SecondaryCodeSource);
+        Assert.Equal(PanelIdentitySource.CustomerPattern, state.PixelPitchSource);
+        Assert.Equal(PanelIdentitySource.CustomerPattern, state.PanelCodeSource);
+        Assert.Equal(PanelIdentitySource.CustomerPattern, state.SecondaryCodeSource);
+    }
+
+    [Fact]
+    public async Task PATTERN_19_20_candidate_cannot_select_or_send_but_new_exact_message_can_resolve()
+    {
+        var code = Code(); var package = await ReadyPackage(code, "2012");
+        var (conversation, customer) = await fixture.SeedConversationAsync();
+        fixture.WhatsApp.SentDocuments.Clear(); fixture.WhatsApp.SentTexts.Clear();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, $"p2.5\n{code.ToLowerInvariant()}+2012");
+        var candidate = await State(conversation.Id);
+        Assert.Null(candidate.CanonicalKey); Assert.Null(candidate.PackageId);
+        Assert.Empty(fixture.WhatsApp.SentDocuments);
+        Assert.Contains(fixture.WhatsApp.SentTexts, x => x.Contains($"P2.5+{code}+2012", StringComparison.Ordinal));
+
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, $"P2.5+{code}+2012");
+        var exact = await State(conversation.Id);
+        Assert.Equal(package, exact.PackageId);
+        Assert.Equal($"P2.5-{code}-2012", exact.CanonicalKey);
     }
 
     [Fact]

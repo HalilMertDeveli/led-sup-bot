@@ -112,6 +112,8 @@ public sealed class PanelFileDeliverySafetyGateTests(WorkflowFixture fixture)
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, $"P2.5+{code}+2012");
         var oldConfirmation = await Confirmation(conversation.Id);
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, "Hayır, 2013 olacak.");
+        Assert.Equal(PanelFileConfirmationStatus.Invalidated, (await Confirmation(conversation.Id)).Status);
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, $"P2.5+{code}+2013");
         var current = await Confirmation(conversation.Id);
         Assert.NotEqual(oldConfirmation.ConfirmationId, current.ConfirmationId);
         Assert.Equal(newer, current.PackageId);

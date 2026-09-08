@@ -58,8 +58,12 @@ public sealed partial class PanelIdentityCoordinator(
                 : await ApplyCorrectionAsync(supportCase, prior, field, value, sourceMessageId, ct);
         }
         var identity = parsed.Identity;
-        return await MergeAsync(supportCase, prior, identity?.PixelPitch, identity?.PanelCode, identity?.SecondaryCode,
-            parsed.Source ?? PanelIdentitySource.CustomerPattern, sourceMessageId, parsed.Evidence, ct);
+        // Only a fresh, literal uppercase P...+...+... customer token is authoritative.
+        // Informational candidates may be retained, but can never trigger package lookup.
+        var mergeBase = parsed.HasExactCustomerPattern ? null : prior;
+        return await MergeAsync(supportCase, mergeBase, identity?.PixelPitch, identity?.PanelCode, identity?.SecondaryCode,
+            parsed.Source ?? PanelIdentitySource.CustomerPattern, sourceMessageId, parsed.Evidence, ct,
+            exactCustomerPattern: parsed.HasExactCustomerPattern);
     }
 
     public async Task<PanelIdentityTurnResult> ApplyPhotoAsync(TechnicalSupportCase supportCase, ValidatedImageAnalysis? image, Guid sourceMessageId, CancellationToken ct = default)
@@ -84,7 +88,7 @@ public sealed partial class PanelIdentityCoordinator(
 
     private async Task<PanelIdentityTurnResult> MergeAsync(TechnicalSupportCase supportCase, PanelIdentityCaseState? prior,
         string? pitch, string? panel, string? secondary, PanelIdentitySource source, Guid sourceMessageId, string? evidence,
-        CancellationToken ct, PanelLabelIdentityObservation? observation = null)
+        CancellationToken ct, PanelLabelIdentityObservation? observation = null, bool exactCustomerPattern = false)
     {
         pitch = NormalizePitch(pitch); panel = NormalizeToken(panel); secondary = NormalizeToken(secondary);
         var conflicts = new List<PanelIdentityConflict>(prior?.Conflicts ?? []);
@@ -115,7 +119,7 @@ public sealed partial class PanelIdentityCoordinator(
             DistinctSources(pitchSource, panelSource, secondarySource) > 1 ? PanelIdentitySource.MixedContext : source,
             "NotAttempted", null, DateTimeOffset.UtcNow, pitchSource, panelSource, secondarySource, sourceMessageId,
             mergedPitch is not null && mergedPanel is not null && mergedSecondary is not null ? PanelIdentityResolutionState.Candidate : PanelIdentityResolutionState.MissingInformation,
-            [], pitchMessage, panelMessage, secondaryMessage);
+            [], pitchMessage, panelMessage, secondaryMessage, exactCustomerPattern ? sourceMessageId : prior?.ExactCustomerPatternMessageId);
         await PersistAsync(supportCase, candidate, ct); // stale package is invalidated before any new lookup
         return await ResolveOrClarifyAsync(supportCase, candidate, ct, observation);
     }
@@ -137,6 +141,7 @@ public sealed partial class PanelIdentityCoordinator(
             SecondaryCodeMessageId = field == PanelIdentityField.SecondaryCode ? sourceMessageId : prior.SecondaryCodeMessageId,
             CanonicalKey = null, PackageId = null, PackageResolution = "NotAttempted", Source = PanelIdentitySource.CustomerCorrection,
             ResolutionState = PanelIdentityResolutionState.Candidate,
+            ExactCustomerPatternMessageId = null,
             Conflicts = (prior.Conflicts ?? []).Where(x => x.Field != field).ToList(), UpdatedAt = DateTimeOffset.UtcNow,
         };
         if (state.Conflicts.Count > 0) state = state with { ResolutionState = PanelIdentityResolutionState.IdentityConflict, PackageResolution = "IdentityConflict" };
@@ -157,6 +162,7 @@ public sealed partial class PanelIdentityCoordinator(
         var state = prior with { PixelPitch = pitch, PanelCode = panel, SecondaryCode = secondary, CanonicalKey = null, PackageId = null,
             PackageResolution = remainingConflicts.Count > 0 ? "IdentityConflict" : "NotAttempted", Conflicts = remainingConflicts,
             ResolutionState = remainingConflicts.Count > 0 ? PanelIdentityResolutionState.IdentityConflict : PanelIdentityResolutionState.MissingInformation,
+            ExactCustomerPatternMessageId = null,
             UpdatedAt = DateTimeOffset.UtcNow };
         await PersistAsync(supportCase, state, ct);
         if (remainingConflicts.Count == 0 && pitch is not null && panel is not null && secondary is not null)
@@ -174,6 +180,12 @@ public sealed partial class PanelIdentityCoordinator(
         {
             var missing = state.PixelPitch is null ? "Pitch" : state.PanelCode is null ? "Panel kodu" : "Son kod";
             return Snapshot(state, $"Panel kimliği için {missing} bilgisini de paylaşır mısınız?", true, observation);
+        }
+        if (state.ExactCustomerPatternMessageId is null)
+        {
+            var suggestion = $"{state.PixelPitch}+{state.PanelCode}+{state.SecondaryCode}";
+            return Snapshot(state with { CanonicalKey = null, PackageId = null, PackageResolution = "NotAttempted", ResolutionState = PanelIdentityResolutionState.Candidate },
+                $"Dosya paketini doğrulamak için lütfen {suggestion} kodunu tek satırda, aynen gönderin.", true, observation);
         }
         var normalized = normalizer.Normalize(state.PixelPitch, state.PanelCode, state.SecondaryCode);
         if (normalized.Status != PanelIdentityNormalizationStatus.Valid || normalized.Identity?.CanonicalKey is null)

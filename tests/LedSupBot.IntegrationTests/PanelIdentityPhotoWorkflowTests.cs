@@ -32,15 +32,20 @@ public sealed class PanelIdentityPhotoWorkflowTests(WorkflowFixture fixture)
         var (conversation, customer) = await fixture.SeedConversationAsync();
         fixture.WhatsApp.SentTexts.Clear();
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf4-clear-{Guid.NewGuid():N}", MessageType.Image, null);
+        var candidate = (await fixture.LoadCaseAsync(conversation.Id))!.PanelIdentityStateJson;
+        Assert.DoesNotContain($"P2.5-{code}-2012", candidate);
+        Assert.Contains("PanelLabelOcr", candidate);
+        Assert.Contains($"P2.5+{code}+2012", Assert.Single(fixture.WhatsApp.SentTexts));
+        fixture.WhatsApp.SentTexts.Clear();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf4-exact-{Guid.NewGuid():N}", MessageType.Text, $"P2.5+{code}+2012");
 
         await using var verify = fixture.Services.CreateAsyncScope();
         var db = verify.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var support = await db.TechnicalSupportCases.AsNoTracking().SingleAsync(x => x.ConversationId == conversation.Id);
         Assert.Contains($"P2.5-{code}-2012", support.PanelIdentityStateJson);
         Assert.Contains(packageId.ToString(), support.PanelIdentityStateJson, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Etiketi P2.5", Assert.Single(fixture.WhatsApp.SentTexts));
+        Assert.Contains("P2.5", Assert.Single(fixture.WhatsApp.SentTexts));
         var snapshot = await db.AiReplyContextSnapshots.AsNoTracking().OrderByDescending(x => x.CreatedAt).FirstAsync(x => x.ConversationId == conversation.Id);
-        Assert.Contains("PanelLabelOcr", snapshot.PanelIdentityContextSnapshot);
         Assert.DoesNotContain("StorageKey", snapshot.PanelIdentityContextSnapshot, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(".hex", fixture.WhatsApp.SentTexts.Single(), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(".rcvbp", fixture.WhatsApp.SentTexts.Single(), StringComparison.OrdinalIgnoreCase);
@@ -55,11 +60,11 @@ public sealed class PanelIdentityPhotoWorkflowTests(WorkflowFixture fixture)
         fixture.WhatsApp.SentTexts.Clear();
         Configure(Observation(null, code, "2012", PanelLabelRecognitionStatus.Partial, true, false));
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf4-mixed-{Guid.NewGuid():N}", MessageType.Image, null);
+        Assert.DoesNotContain($"P2.5-{code}-2012", (await fixture.LoadCaseAsync(conversation.Id))!.PanelIdentityStateJson);
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf4-mixed-exact-{Guid.NewGuid():N}", MessageType.Text, $"P2.5+{code}+2012");
         var support = await fixture.LoadCaseAsync(conversation.Id);
         Assert.Contains($"P2.5-{code}-2012", support!.PanelIdentityStateJson);
-        Assert.Contains("MixedContext", support.PanelIdentityStateJson);
         Assert.Contains("CustomerPattern", support.PanelIdentityStateJson);
-        Assert.Contains("PanelLabelOcr", support.PanelIdentityStateJson);
     }
 
     [Fact]
