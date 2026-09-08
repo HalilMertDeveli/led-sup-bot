@@ -32,7 +32,7 @@ public sealed class PanelFilePackageResolver(
             return new(PanelFilePackageResolutionStatus.InactivePackage, package.Id, key);
         var active = package.Assets.Where(x => x.Status == PanelFileAssetStatus.Active && storage.Exists(x.StorageKey)).ToList();
         var ready = package.OriginalFolderName is not null
-            ? active.Count > 0
+            ? active.Count >= 2
             : active.Count(x => x.AssetType == PanelFileAssetType.FirmwareHex) == 1 &&
               active.Count(x => x.AssetType == PanelFileAssetType.ReceiverConfigRcvbp) == 1;
         return ready
@@ -140,7 +140,7 @@ public sealed class PanelFilePackageRegistry(
         if (package is null || package.Status == PanelFilePackageStatus.Archived) return false;
         var active = package.Assets.Where(x => x.Status == PanelFileAssetStatus.Active && storage.Exists(x.StorageKey)).ToList();
         var ready = package.OriginalFolderName is not null
-            ? active.Count > 0
+            ? active.Count >= 2
             : active.Count(x => x.AssetType == PanelFileAssetType.FirmwareHex) == 1 &&
               active.Count(x => x.AssetType == PanelFileAssetType.ReceiverConfigRcvbp) == 1;
         if (!ready) return false;

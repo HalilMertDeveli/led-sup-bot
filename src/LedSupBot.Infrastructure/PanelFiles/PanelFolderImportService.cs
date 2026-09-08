@@ -19,10 +19,11 @@ public sealed class PanelFolderImportService(
         CancellationToken cancellationToken = default)
     {
         var identity = ParseFolderName(folderName);
-        if (files.Count < options.Value.MinImportedFileCount || files.Count > options.Value.MaxImportedFileCount)
-            throw new InvalidDataException("Pakette 2 veya 3 dosya olmalı.");
+        if (files.Count < options.Value.MinImportedFileCount)
+            throw new InvalidDataException("Pakette en az 2 dosya olmalı.");
 
         var safeFiles = files.Select(ValidateFile).ToList();
+        PanelFolderImportMultipartFactory.ValidateMinimumAssets(safeFiles.Select(x => x.FileName).ToList());
         var duplicateOutgoingName = safeFiles.GroupBy(x => x.FileName, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault(x => x.Count() > 1);
         if (duplicateOutgoingName is not null)
@@ -95,15 +96,11 @@ public sealed class PanelFolderImportService(
 
     private PanelIdentity ParseFolderName(string folderName)
     {
-        var safeName = (folderName ?? string.Empty).Trim();
-        if (safeName.Length is 0 or > 255 || safeName.IndexOfAny(['/', '\\', ':']) >= 0) throw new ArgumentException("Geçersiz klasör adı.");
-        var parts = System.Text.RegularExpressions.Regex.Split(safeName, @"\s*[+-]\s*");
-        if (parts.Length != 3 || parts.Any(string.IsNullOrWhiteSpace))
-            throw new ArgumentException("Bu klasör adı panel kodu formatına uymuyor.");
-        var normalized = normalizer.Normalize(parts[0], parts[1], parts[2]);
+        var parsed = PanelFolderPackageNameParser.Parse(folderName);
+        var normalized = normalizer.Normalize(parsed.PixelPitch, parsed.PanelCode, parsed.SecondaryCode);
         return normalized.Status == PanelIdentityNormalizationStatus.Valid && normalized.Identity?.CanonicalKey is not null
             ? normalized.Identity
-            : throw new ArgumentException("Bu klasör adı panel kodu formatına uymuyor.");
+            : throw new ArgumentException("Bu klasör adı beklenen P+Chipset+Decoder formatında değil.");
     }
 
     private static PanelFolderImportFile ValidateFile(PanelFolderImportFile file)

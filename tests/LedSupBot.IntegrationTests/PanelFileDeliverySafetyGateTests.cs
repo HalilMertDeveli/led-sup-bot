@@ -17,7 +17,7 @@ public sealed class PanelFileDeliverySafetyGateTests(WorkflowFixture fixture)
     private static readonly JsonSerializerOptions JsonOptions = Options();
 
     [Fact]
-    public async Task Folder_package_sends_all_files_and_retries_only_failed_asset()
+    public async Task Folder_package_sends_all_five_files_in_order_and_retries_only_failed_asset()
     {
         var code = Code();
         await using (var importScope = fixture.Services.CreateAsyncScope())
@@ -25,16 +25,18 @@ public sealed class PanelFileDeliverySafetyGateTests(WorkflowFixture fixture)
             await importScope.ServiceProvider.GetRequiredService<IPanelFolderImportService>().ImportAsync(
                 $"P2.5+{code.ToLowerInvariant()}+2012",
                 [
-                    new("a.hex", "a.hex", "application/octet-stream", new MemoryStream("a"u8.ToArray())),
-                    new("b.rcvbp", "b.rcvbp", "application/octet-stream", new MemoryStream("b"u8.ToArray())),
-                    new("notes.txt", "notes.txt", "text/plain", new MemoryStream("c"u8.ToArray()))
+                    new("01-first.bin", "01-first.bin", "application/octet-stream", new MemoryStream("a"u8.ToArray())),
+                    new("02-second.txt", "02-second.txt", "application/octet-stream", new MemoryStream("b"u8.ToArray())),
+                    new("03-failed.raw", "03-failed.raw", "application/octet-stream", new MemoryStream("c"u8.ToArray())),
+                    new("04-fourth.rcvbp", "04-fourth.rcvbp", "application/octet-stream", new MemoryStream("d"u8.ToArray())),
+                    new("05-fifth.hex", "05-fifth.hex", "application/octet-stream", new MemoryStream("e"u8.ToArray()))
                 ]);
         }
         var (conversation, customer) = await fixture.SeedConversationAsync();
         fixture.WhatsApp.SentDocuments.Clear();
         fixture.WhatsApp.FailDocumentCall = 3;
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, $"P2.5+{code}+2012");
-        Assert.Equal(2, fixture.WhatsApp.SentDocuments.Count);
+        Assert.Equal(new[] { "01-first.bin", "02-second.txt" }, fixture.WhatsApp.SentDocuments.Select(x => x.FileName));
 
         fixture.WhatsApp.FailDocumentCall = null;
         await using var retryScope = fixture.Services.CreateAsyncScope();
@@ -43,8 +45,10 @@ public sealed class PanelFileDeliverySafetyGateTests(WorkflowFixture fixture)
         var result = await retryScope.ServiceProvider.GetRequiredService<IPanelFileDeliveryService>()
             .DeliverAsync(supportCase, conversation.Id, customer.PhoneNumber, null);
         Assert.Equal(PanelFileDeliveryOutcome.Completed, result.Outcome);
-        Assert.Equal(3, fixture.WhatsApp.SentDocuments.Count);
-        Assert.Equal(3, fixture.WhatsApp.SentDocuments.Select(x => x.FileName).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal(5, fixture.WhatsApp.SentDocuments.Count);
+        Assert.Equal(5, fixture.WhatsApp.SentDocuments.Select(x => x.FileName).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal(new[] { "01-first.bin", "02-second.txt", "03-failed.raw", "04-fourth.rcvbp", "05-fifth.hex" },
+            fixture.WhatsApp.SentDocuments.Select(x => x.FileName));
     }
 
     [Fact]

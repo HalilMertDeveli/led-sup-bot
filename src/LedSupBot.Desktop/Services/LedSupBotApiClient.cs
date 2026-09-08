@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.IO;
 using System.Text.Json;
+using LedSupBot.Application.PanelFiles;
 using LedSupBot.Desktop.Models;
 
 namespace LedSupBot.Desktop.Services;
@@ -154,26 +155,17 @@ public sealed class LedSupBotApiClient : IDisposable
     }
     public async Task<PanelPackageDto?> ImportPanelFolderAsync(string folderPath, CancellationToken ct = default)
     {
-        var root = Path.GetFullPath(folderPath);
-        var files = Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly)
-            .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        if (files.Count is < 2 or > 3)
-            throw new LedSupBotApiException("Pakette 2 veya 3 dosya olmalı.");
-        using var content = new MultipartFormDataContent();
-        content.Add(new StringContent(Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar))), "folderName");
-        var streams = new List<Stream>();
+        MultipartFormDataContent content;
         try
         {
-            foreach (var path in files)
-            {
-                var info = new FileInfo(path);
-                if ((info.Attributes & FileAttributes.ReparsePoint) != 0) throw new LedSupBotApiException("Bağlantı/reparse dosyaları içe aktarılamaz.");
-                var stream = File.OpenRead(path); streams.Add(stream);
-                var part = new StreamContent(stream);
-                part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-                content.Add(part, "files", Path.GetFileName(path));
-            }
+            content = PanelFolderImportMultipartFactory.Create(folderPath);
+        }
+        catch (InvalidDataException ex)
+        {
+            throw new LedSupBotApiException(ex.Message, inner: ex);
+        }
+        using (content)
+        {
             try
             {
                 using var response = await _http.PostAsync("api/admin/panel-file-packages/import-folder", content, ct);
@@ -188,7 +180,6 @@ public sealed class LedSupBotApiClient : IDisposable
                 throw new LedSupBotApiException("Klasör yükleme zaman aşımına uğradı.", inner: ex);
             }
         }
-        finally { foreach (var stream in streams) await stream.DisposeAsync(); }
     }
     private async Task<PanelPackageDto?> SendPanelAsync(HttpMethod method, string path, object? body, CancellationToken ct)
     {
@@ -204,8 +195,8 @@ public sealed class LedSupBotApiClient : IDisposable
             try { apiError = JsonDocument.Parse(raw).RootElement.GetProperty("error").GetString(); } catch (JsonException) { } catch (KeyNotFoundException) { }
             var status = (int)response.StatusCode;
             var message = status is 401 or 403 ? "Yetkilendirme başarısız. Yeniden giriş yapın."
-                : apiError?.Contains("2 veya 3 dosya", StringComparison.OrdinalIgnoreCase) == true ? "Pakette 2 veya 3 dosya olmalı."
-                : apiError?.Contains("panel kodu formatına", StringComparison.OrdinalIgnoreCase) == true ? "Bu klasör adı panel kodu formatına uymuyor."
+                : apiError?.Contains("en az 2 dosya", StringComparison.OrdinalIgnoreCase) == true ? "Pakette en az 2 dosya olmalı."
+                : apiError?.Contains("P+Chipset+Decoder", StringComparison.OrdinalIgnoreCase) == true ? "Bu klasör adı beklenen P+Chipset+Decoder formatında değil."
                 : apiError?.Contains("size", StringComparison.OrdinalIgnoreCase) == true || apiError?.Contains("boyut", StringComparison.OrdinalIgnoreCase) == true ? "Dosya boyutu izin verilen sınırı aşıyor."
                 : status == 409 ? "Bu paket içe aktarılırken kayıt çakışması oluştu."
                 : apiError == "panel_folder_storage_failed" ? "Dosyalar özel depoya yazılamadı."

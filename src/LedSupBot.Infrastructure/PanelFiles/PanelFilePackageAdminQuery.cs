@@ -46,7 +46,7 @@ public sealed class PanelFilePackageAdminQuery(ApplicationDbContext db, IMediaSt
             x.Id, x.AssetType, x.OriginalFileName, x.MimeType, x.FileSize, x.Sha256, x.Version, x.Status, x.CreatedAt)).ToList();
         var active = package.Assets.Where(x => x.Status == PanelFileAssetStatus.Active && storage.Exists(x.StorageKey)).ToList();
         var ready = package.Status == PanelFilePackageStatus.Active && (package.OriginalFolderName is not null
-            ? active.Count > 0
+            ? active.Count >= 2
             : active.Count(x => x.AssetType == PanelFileAssetType.FirmwareHex) == 1 &&
               active.Count(x => x.AssetType == PanelFileAssetType.ReceiverConfigRcvbp) == 1);
         var readiness = package.Status != PanelFilePackageStatus.Active

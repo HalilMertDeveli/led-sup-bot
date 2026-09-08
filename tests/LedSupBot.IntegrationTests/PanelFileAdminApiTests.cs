@@ -16,40 +16,91 @@ namespace LedSupBot.IntegrationTests;
 public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
 {
     [Fact]
-    public async Task Folder_import_uses_exact_folder_identity_and_versions_all_regular_files()
+    public async Task Folder_import_uses_real_desktop_request_shape_and_persists_every_asset_after_source_deletion()
     {
         var client = fixture.CreateAdminClient();
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
         var code = Random.Shared.Next(100000, 999999) + "s";
-        using var first = new MultipartFormDataContent();
-        first.Add(new StringContent($"P2.5+{code}+2012"), "folderName");
-        first.Add(new ByteArrayContent("hex"u8.ToArray()), "files", "firmware-final.hex");
-        first.Add(new ByteArrayContent("cfg"u8.ToArray()), "files", "scan-new.rcvbp");
-        first.Add(new ByteArrayContent("notes"u8.ToArray()), "files", "notes.txt");
-        var imported = await client.PostAsync("/api/admin/panel-file-packages/import-folder", first);
-        Assert.Equal(HttpStatusCode.OK, imported.StatusCode);
-        var body = JsonDocument.Parse(await imported.Content.ReadAsStringAsync()).RootElement;
-        var id = body.GetProperty("id").GetGuid();
-        Assert.Equal($"P2.5-{code.ToUpperInvariant()}-2012", body.GetProperty("canonicalKey").GetString());
-        Assert.Equal("READY", body.GetProperty("readiness").GetString());
-        Assert.Equal(3, body.GetProperty("assets").EnumerateArray().Count(x => x.GetProperty("status").GetString() == "Active"));
+        var originalFolderName = $"P2.5+{code}+2012";
+        var desktopRoot = Path.Combine(Path.GetTempPath(), "ledsup-desktop-import-tests", Guid.NewGuid().ToString("N"), originalFolderName);
+        Directory.CreateDirectory(desktopRoot);
+        await File.WriteAllBytesAsync(Path.Combine(desktopRoot, "random1.bin"), "bin"u8.ToArray());
+        await File.WriteAllBytesAsync(Path.Combine(desktopRoot, "random2.rcvbp"), "cfg"u8.ToArray());
+        await File.WriteAllBytesAsync(Path.Combine(desktopRoot, "random3.hex"), "hex"u8.ToArray());
+        Guid id;
+        try
+        {
+            using var first = PanelFolderImportMultipartFactory.Create(desktopRoot);
+            Assert.Equal("multipart/form-data", first.Headers.ContentType!.MediaType);
+            var parts = first.ToList();
+            Assert.Equal("folderName", parts[0].Headers.ContentDisposition!.Name);
+            Assert.Equal(originalFolderName, await parts[0].ReadAsStringAsync());
+            Assert.All(parts.Skip(1), part => Assert.Equal("files", part.Headers.ContentDisposition!.Name));
+            Assert.Equal(new[] { "random1.bin", "random2.rcvbp", "random3.hex" },
+                parts.Skip(1).Select(part => part.Headers.ContentDisposition!.FileName));
+            var imported = await client.PostAsync("/api/admin/panel-file-packages/import-folder", first);
+            Assert.Equal(HttpStatusCode.OK, imported.StatusCode);
+            var body = JsonDocument.Parse(await imported.Content.ReadAsStringAsync()).RootElement;
+            id = body.GetProperty("id").GetGuid();
+            Assert.Equal(originalFolderName, body.GetProperty("originalFolderName").GetString());
+            Assert.Equal($"P2.5-{code.ToUpperInvariant()}-2012", body.GetProperty("canonicalKey").GetString());
+            Assert.Equal("READY", body.GetProperty("readiness").GetString());
+            Assert.Equal(3, body.GetProperty("assets").EnumerateArray().Count(x => x.GetProperty("status").GetString() == "Active"));
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(desktopRoot)!, true);
+        }
+
+        await using (var verificationDb = fixture.CreateDb())
+        {
+            var persisted = await verificationDb.PanelFilePackages.AsNoTracking().Include(x => x.Assets).SingleAsync(x => x.Id == id);
+            Assert.Equal(originalFolderName, persisted.OriginalFolderName);
+            Assert.Equal($"P2.5-{code.ToUpperInvariant()}-2012", persisted.CanonicalKey);
+            var active = persisted.Assets.Where(x => x.Status == LedSupBot.Domain.PanelFiles.PanelFileAssetStatus.Active).ToList();
+            Assert.Equal(3, active.Count);
+            Assert.Contains(active, x => x.AssetType == LedSupBot.Domain.PanelFiles.PanelFileAssetType.PackageFile && x.OriginalFileName == "random1.bin");
+            Assert.Contains(active, x => x.AssetType == LedSupBot.Domain.PanelFiles.PanelFileAssetType.ReceiverConfigRcvbp && x.OriginalFileName == "random2.rcvbp");
+            Assert.Contains(active, x => x.AssetType == LedSupBot.Domain.PanelFiles.PanelFileAssetType.FirmwareHex && x.OriginalFileName == "random3.hex");
+            Assert.All(active, x => Assert.Contains("panel-packages", x.StorageKey, StringComparison.OrdinalIgnoreCase));
+            using var storageScope = fixture.Factory.Services.CreateScope();
+            var storage = storageScope.ServiceProvider.GetRequiredService<IMediaStorage>();
+            Assert.All(active, x => Assert.True(storage.Exists(x.StorageKey)));
+            var expectedBytes = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["random1.bin"] = "bin"u8.ToArray(),
+                ["random2.rcvbp"] = "cfg"u8.ToArray(),
+                ["random3.hex"] = "hex"u8.ToArray()
+            };
+            foreach (var asset in active)
+            {
+                await using var storedFile = await storage.OpenReadAsync(asset.StorageKey);
+                await using var bytes = new MemoryStream();
+                await storedFile.CopyToAsync(bytes);
+                Assert.Equal(expectedBytes[asset.OriginalFileName], bytes.ToArray());
+            }
+        }
 
         await using var scope = fixture.Factory.Services.CreateAsyncScope();
         var reimported = await scope.ServiceProvider.GetRequiredService<IPanelFolderImportService>().ImportAsync(
             $"P2.5+{code.ToUpperInvariant()}+2012",
             [
-                new PanelFolderImportFile("anything.bin", "anything.bin", "application/octet-stream", new MemoryStream("replacement"u8.ToArray())),
-                new PanelFolderImportFile("anything-else.dat", "anything-else.dat", "application/octet-stream", new MemoryStream("replacement-2"u8.ToArray()))
+                new PanelFolderImportFile("one.dat", "one.dat", "application/octet-stream", new MemoryStream("replacement-1"u8.ToArray())),
+                new PanelFolderImportFile("two.cfg", "two.cfg", "application/octet-stream", new MemoryStream("replacement-2"u8.ToArray())),
+                new PanelFolderImportFile("three.txt", "three.txt", "application/octet-stream", new MemoryStream("replacement-3"u8.ToArray())),
+                new PanelFolderImportFile("four.bin", "four.bin", "application/octet-stream", new MemoryStream("replacement-4"u8.ToArray())),
+                new PanelFolderImportFile("five.raw", "five.raw", "application/octet-stream", new MemoryStream("replacement-5"u8.ToArray()))
             ]);
         Assert.Equal(id, reimported.Id);
         Assert.Equal(2, reimported.Version);
-        Assert.Equal(2, reimported.Assets.Count(x => x.Status == LedSupBot.Domain.PanelFiles.PanelFileAssetStatus.Active));
+        Assert.Equal(5, reimported.Assets.Count(x => x.Status == LedSupBot.Domain.PanelFiles.PanelFileAssetStatus.Active));
     }
 
     [Theory]
-    [InlineData("P2.5-1065AP+1012", "P2.5-1065AP-1012")]
     [InlineData("P2.5+1065s+2012", "P2.5-1065S-2012")]
-    public async Task Folder_import_accepts_safe_separator_and_case_variants(string folderName, string canonical)
+    [InlineData("P4+2038S+2012", "P4-2038S-2012")]
+    [InlineData("P1.86+FM6126A+138", "P1.86-FM6126A-138")]
+    public async Task Folder_import_accepts_plus_separator_and_case_variants(string folderName, string canonical)
     {
         var client = fixture.CreateAdminClient();
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
@@ -63,18 +114,44 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
     }
 
     [Theory]
-    [InlineData(1)]
-    [InlineData(4)]
-    public async Task Folder_import_rejects_file_counts_outside_two_to_three(int count)
+    [InlineData()]
+    [InlineData("only.bin")]
+    public async Task Folder_import_rejects_fewer_than_two_files(params string[] names)
     {
         var client = fixture.CreateAdminClient();
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
         using var form = new MultipartFormDataContent();
         form.Add(new StringContent($"P2.5+{Random.Shared.Next(100000, 999999)}S+2012"), "folderName");
-        for (var i = 0; i < count; i++) form.Add(new ByteArrayContent([(byte)i]), "files", $"file-{i}.bin");
+        for (var i = 0; i < names.Length; i++) form.Add(new ByteArrayContent([(byte)(i + 1)]), "files", names[i]);
         var response = await client.PostAsync("/api/admin/panel-file-packages/import-folder", form);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Contains("2 veya 3 dosya", await response.Content.ReadAsStringAsync());
+        Assert.Contains("en az 2 dosya", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Folder_import_accepts_two_three_and_five_arbitrary_files()
+    {
+        foreach (var count in new[] { 2, 3, 5 })
+        {
+            var client = fixture.CreateAdminClient();
+            Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
+            using var form = new MultipartFormDataContent();
+            form.Add(new StringContent($"P2.5+{Random.Shared.Next(100000, 999999)}S+2012"), "folderName");
+            for (var i = 0; i < count; i++) form.Add(new ByteArrayContent([(byte)(i + 1)]), "files", $"opaque-{i}.data{i}");
+            var response = await client.PostAsync("/api/admin/panel-file-packages/import-folder", form);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(count, JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement
+                .GetProperty("assets").EnumerateArray().Count(x => x.GetProperty("status").GetString() == "Active"));
+        }
+    }
+
+    [Fact]
+    public async Task Folder_import_rejects_non_plus_package_separator()
+    {
+        var client = fixture.CreateAdminClient();
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
+        using var form = FolderForm("P2.5-1065S-2012");
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsync("/api/admin/panel-file-packages/import-folder", form)).StatusCode);
     }
 
     [Fact]
@@ -87,6 +164,57 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
         form.Add(new ByteArrayContent([1]), "files", "nested/a.hex");
         form.Add(new ByteArrayContent([2]), "files", "b.rcvbp");
         Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsync("/api/admin/panel-file-packages/import-folder", form)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Folder_import_second_storage_failure_cleans_first_asset_and_exposes_no_package()
+    {
+        var storage = new FailSecondPanelFolderStorage();
+        await using var factory = fixture.Factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<IMediaStorage>();
+            services.AddSingleton<IMediaStorage>(storage);
+        }));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
+        var code = $"{Random.Shared.Next(100000, 999999)}S";
+        using var form = FolderForm($"P2.5+{code}+2012");
+
+        var response = await client.PostAsync("/api/admin/panel-file-packages/import-folder", form);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Empty(storage.StoredKeys);
+        await using var db = fixture.CreateDb();
+        Assert.False(await db.PanelFilePackages.AnyAsync(x => x.CanonicalKey == $"P2.5-{code}-2012"));
+    }
+
+    [Fact]
+    public async Task Folder_import_database_failure_removes_both_private_files_and_exposes_no_package()
+    {
+        var filesBefore = Directory.Exists(fixture.MediaRoot)
+            ? Directory.GetFiles(fixture.MediaRoot, "*", SearchOption.AllDirectories).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : [];
+        await using var factory = fixture.Factory.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<ApplicationDbContext>();
+            services.RemoveAll<DbContextOptions<ApplicationDbContext>>();
+            services.RemoveAll<IApplicationDbContext>();
+            services.AddDbContext<ApplicationDbContext>(options =>
+                options.UseNpgsql(fixture.ConnectionString).AddInterceptors(new FailPanelAssetSaveInterceptor()));
+            services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<ApplicationDbContext>());
+        }));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true });
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
+        var code = $"{Random.Shared.Next(100000, 999999)}S";
+        using var form = FolderForm($"P2.5+{code}+2012");
+
+        var response = await client.PostAsync("/api/admin/panel-file-packages/import-folder", form);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        await using var db = fixture.CreateDb();
+        Assert.False(await db.PanelFilePackages.AnyAsync(x => x.CanonicalKey == $"P2.5-{code}-2012"));
+        var filesAfter = Directory.GetFiles(fixture.MediaRoot, "*", SearchOption.AllDirectories).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert.True(filesBefore.SetEquals(filesAfter));
     }
 
     [Fact]
@@ -214,6 +342,32 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
     {
         var form = new MultipartFormDataContent(); form.Add(new ByteArrayContent(bytes), "file", name); return form;
     }
+
+    private static MultipartFormDataContent FolderForm(string folderName)
+    {
+        var form = new MultipartFormDataContent();
+        form.Add(new StringContent(folderName), "folderName");
+        form.Add(new ByteArrayContent("hex"u8.ToArray()), "files", "unrelated-name.hex");
+        form.Add(new ByteArrayContent("cfg"u8.ToArray()), "files", "other-random-name.rcvbp");
+        return form;
+    }
+}
+
+internal sealed class FailSecondPanelFolderStorage : IMediaStorage
+{
+    private int _calls;
+    public HashSet<string> StoredKeys { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public async Task<StoredMediaReference> StoreAsync(Stream content, string contentType, MediaStoreRequest request, CancellationToken cancellationToken = default)
+    {
+        if (Interlocked.Increment(ref _calls) == 2) throw new IOException("simulated_second_storage_failure");
+        await content.CopyToAsync(Stream.Null, cancellationToken);
+        var key = $"private/panel-packages/{Guid.NewGuid():N}{request.FileExtension}";
+        StoredKeys.Add(key);
+        return new StoredMediaReference(key, contentType, content.CanSeek ? content.Length : 1);
+    }
+    public Task<Stream> OpenReadAsync(string storageKey, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    public Task DeleteAsync(string storageKey, CancellationToken cancellationToken = default) { StoredKeys.Remove(storageKey); return Task.CompletedTask; }
+    public bool Exists(string storageKey) => StoredKeys.Contains(storageKey);
 }
 
 internal sealed class ThrowingMediaStorage : IMediaStorage

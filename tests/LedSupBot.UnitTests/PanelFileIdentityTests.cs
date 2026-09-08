@@ -8,6 +8,25 @@ public sealed class PanelFileIdentityTests
     private readonly PanelIdentityNormalizer _normalizer = new();
 
     [Theory]
+    [InlineData("P2.5+1065S+2012", "P2.5", "1065S", "2012")]
+    [InlineData("P4+2038S+2012", "P4", "2038S", "2012")]
+    [InlineData("P1.86+FM6126A+138", "P1.86", "FM6126A", "138")]
+    [InlineData("p2.5+1065ap+1012", "p2.5", "1065ap", "1012")]
+    public void Folder_package_name_parser_preserves_exact_plus_parts(string value, string pitch, string chipset, string decoder)
+    {
+        var parsed = PanelFolderPackageNameParser.Parse(value);
+        Assert.Equal(value, parsed.OriginalName);
+        Assert.Equal((pitch, chipset, decoder), (parsed.PixelPitch, parsed.PanelCode, parsed.SecondaryCode));
+    }
+
+    [Theory]
+    [InlineData("P2.5-1065S-2012")]
+    [InlineData("P2.5+1065S")]
+    [InlineData("P2.5+1065S+2012+EXTRA")]
+    public void Folder_package_name_parser_requires_exact_plus_structure(string value) =>
+        Assert.Throws<InvalidDataException>(() => PanelFolderPackageNameParser.Parse(value));
+
+    [Theory]
     [InlineData("P2.5+1065S+2012")]
     [InlineData("p2.5 + 1065s + 2012")]
     [InlineData("P2.5-1065S-2012")]

@@ -62,7 +62,67 @@ public sealed class PanelFilePackageOptions
     public long MaxReceiverConfigFileSizeBytes { get; set; } = 8 * 1024 * 1024;
     public long MaxImportedFileSizeBytes { get; set; } = 25 * 1024 * 1024;
     public int MinImportedFileCount { get; set; } = 2;
-    public int MaxImportedFileCount { get; set; } = 3;
+}
+
+public sealed record PanelFolderPackageName(string OriginalName, string PixelPitch, string PanelCode, string SecondaryCode);
+
+public static class PanelFolderPackageNameParser
+{
+    public static PanelFolderPackageName Parse(string? folderName)
+    {
+        var value = (folderName ?? string.Empty).Trim();
+        if (value.Length is 0 or > 255 || value.IndexOfAny(['/', '\\', ':']) >= 0)
+            throw new InvalidDataException("Bu klasör adı beklenen P+Chipset+Decoder formatında değil.");
+
+        var parts = value.Split('+', StringSplitOptions.TrimEntries);
+        if (parts.Length != 3 || parts.Any(string.IsNullOrWhiteSpace) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(parts[0], @"(?i)^P\d+(?:[.,]\d{1,3})?$") ||
+            !System.Text.RegularExpressions.Regex.IsMatch(parts[1], @"(?i)^[A-Z0-9]{2,32}$") ||
+            !System.Text.RegularExpressions.Regex.IsMatch(parts[2], @"(?i)^[A-Z0-9]{2,32}$"))
+            throw new InvalidDataException("Bu klasör adı beklenen P+Chipset+Decoder formatında değil.");
+
+        return new(value, parts[0], parts[1], parts[2]);
+    }
+}
+
+public static class PanelFolderImportMultipartFactory
+{
+    public static MultipartFormDataContent Create(string folderPath)
+    {
+        var root = Path.GetFullPath(folderPath);
+        var packageName = PanelFolderPackageNameParser.Parse(Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar)));
+        var files = Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly)
+            .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        ValidateMinimumAssets(files.Select(path => Path.GetFileName(path)!).ToList());
+
+        var content = new MultipartFormDataContent();
+        try
+        {
+            content.Add(new StringContent(packageName.OriginalName), "folderName");
+            foreach (var path in files)
+            {
+                var info = new FileInfo(path);
+                if ((info.Attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException("Bağlantı/reparse dosyaları içe aktarılamaz.");
+                var part = new StreamContent(File.OpenRead(path));
+                part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+                content.Add(part, "files", Path.GetFileName(path));
+            }
+            return content;
+        }
+        catch
+        {
+            content.Dispose();
+            throw;
+        }
+    }
+
+    public static void ValidateMinimumAssets(IReadOnlyList<string> fileNames)
+    {
+        if (fileNames.Count < 2)
+            throw new InvalidDataException("Pakette en az 2 dosya olmalı.");
+    }
 }
 
 public sealed record PanelFolderImportFile(string RelativePath, string FileName, string ContentType, Stream Content);
