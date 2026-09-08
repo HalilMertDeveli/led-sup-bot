@@ -1624,26 +1624,22 @@ public sealed class MainViewModel : ViewModelBase
         }
         catch (Exception ex) { ErrorMessage = MapApiError(ex); return; }
 
-        var valid = candidates.Where(x => x.Status is "READY" or "REIMPORT").ToList();
-        var preview = string.Join(Environment.NewLine, candidates.Take(80).Select(x =>
-            $"{x.FolderName} — {x.FileCount} dosya — {x.Status}"));
-        if (candidates.Count > 80) preview += $"{Environment.NewLine}… ve {candidates.Count - 80} klasör daha";
-        var confirm = System.Windows.MessageBox.Show(
-            $"Bulunan: {candidates.Count}\nGeçerli: {valid.Count}\n\n{preview}\n\nGeçerlileri içe aktarmak istiyor musunuz?",
-            "Toplu klasör içe aktarma önizlemesi", System.Windows.MessageBoxButton.YesNo,
-            System.Windows.MessageBoxImage.Question, System.Windows.MessageBoxResult.No);
-        if (confirm != System.Windows.MessageBoxResult.Yes) return;
+        var previewWindow = new PanelBulkImportWindow(candidates) { Owner = System.Windows.Application.Current.MainWindow };
+        if (previewWindow.ShowDialog() != true) return;
+        var selected = previewWindow.SelectedCandidates;
 
         IsLoadingPanelPackages = true; var imported = 0; var failed = 0;
+        var results = new List<string>();
         try
         {
-            foreach (var item in valid)
+            foreach (var item in selected)
             {
-                try { await _api.ImportPanelFolderAsync(item.FolderPath); imported++; }
-                catch (Exception ex) { failed++; DesktopLog.Error("BulkImportPanelFolder", ex); }
+                try { await _api.ImportPanelFolderAsync(item.FolderPath); imported++; results.Add($"{item.FolderName}: BAŞARILI"); }
+                catch (Exception ex) { failed++; results.Add($"{item.FolderName}: BAŞARISIZ — {MapApiError(ex)}"); DesktopLog.Error("BulkImportPanelFolder", ex); }
             }
             await LoadPanelPackagesAsync();
-            System.Windows.MessageBox.Show($"Bulunan: {candidates.Count}\nİçe aktarılan: {imported}\nAtlanan: {candidates.Count - valid.Count}\nBaşarısız: {failed}",
+            var details = string.Join(Environment.NewLine, results.Take(80));
+            System.Windows.MessageBox.Show($"Seçilen: {selected.Count}\nBaşarılı: {imported}\nBaşarısız: {failed}\nGeçersiz: {candidates.Count(x => x.Status == "INVALID")}\n\n{details}",
                 "Toplu içe aktarma sonucu", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
         }
         finally { IsLoadingPanelPackages = false; }

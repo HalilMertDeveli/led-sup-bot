@@ -9,6 +9,7 @@ public sealed class PanelBulkImportUiWiringTests
         var mainWindow = File.ReadAllText(Path.Combine(root, "src", "LedSupBot.Desktop", "MainWindow.xaml"));
         var panelView = File.ReadAllText(Path.Combine(root, "src", "LedSupBot.Desktop", "Views", "PanelFilesView.xaml"));
         var viewModel = File.ReadAllText(Path.Combine(root, "src", "LedSupBot.Desktop", "ViewModels", "MainViewModel.cs"));
+        var previewWindow = File.ReadAllText(Path.Combine(root, "src", "LedSupBot.Desktop", "Views", "PanelBulkImportWindow.cs"));
 
         Assert.Contains("<views:PanelFilesView", mainWindow, StringComparison.Ordinal);
         Assert.Contains("Content=\"TOPLU KLASÖR İÇE AKTAR\"", panelView, StringComparison.Ordinal);
@@ -16,6 +17,13 @@ public sealed class PanelBulkImportUiWiringTests
         Assert.Contains("public ICommand BulkImportPanelFoldersCommand { get; }", viewModel, StringComparison.Ordinal);
         Assert.Contains("BulkImportPanelFoldersCommand = new AsyncRelayCommand(BulkImportPanelFoldersAsync, () => !IsLoadingPanelPackages);",
             viewModel, StringComparison.Ordinal);
+        Assert.Contains("new PanelBulkImportWindow(candidates)", viewModel, StringComparison.Ordinal);
+        Assert.Contains("previewWindow.SelectedCandidates", viewModel, StringComparison.Ordinal);
+        Assert.Contains("TÜMÜNÜ SEÇ", previewWindow, StringComparison.Ordinal);
+        Assert.Contains("SEÇİMİ TEMİZLE", previewWindow, StringComparison.Ordinal);
+        Assert.Contains("SADECE GEÇERLİLERİ SEÇ", previewWindow, StringComparison.Ordinal);
+        Assert.Contains("SEÇİLENLERİ İÇE AKTAR", previewWindow, StringComparison.Ordinal);
+        Assert.Contains("x.IsSelected && x.CanSelect", previewWindow, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()
