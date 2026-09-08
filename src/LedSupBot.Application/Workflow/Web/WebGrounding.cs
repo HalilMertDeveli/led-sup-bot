@@ -48,11 +48,17 @@ public static partial class InformationSourceRoutingPolicy
         var text = Normalize(message);
         if (ConversationSemantics.IsWaitAcknowledgement(message) || intent == ConversationIntent.Acknowledgement)
             return InformationSourceRoute.NoSearch;
+        if (intent == ConversationIntent.CasualConversation)
+            return InformationSourceRoute.NoSearch;
         if (intent == ConversationIntent.QuestionAboutCurrentStep)
             return InformationSourceRoute.NoSearch;
 
         var cardQuestion = TechnicalCardQuestionRegex().IsMatch(text);
         var requiresCurrent = CurrentInformationRegex().IsMatch(text) || ExplicitSearchRegex().IsMatch(text);
+        if (intent == ConversationIntent.LedTroubleshooting &&
+            !ExplicitSearchRegex().IsMatch(text) &&
+            !CurrentProductStateRegex().IsMatch(text))
+            return InformationSourceRoute.NoSearch;
         // Exact verified internal product knowledge remains authoritative unless the
         // customer explicitly asks for changing/current external information.
         if (rag.Level == GroundingLevel.GroundedExact && !CurrentProductStateRegex().IsMatch(text))

@@ -254,7 +254,7 @@ public sealed partial class TechnicalKnowledgeGroundingService
         return builder.ToString()[..Math.Min(builder.Length, MaxContextCharacters)];
     }
 
-    [GeneratedRegex(@"(?i)\b(?:X\d+[a-z]?|Z\d+(?:\s+Pro(?:\s+G\d+)?)?|S\d+[a-z]?|E\d+|5A-?75E)\b")]
+    [GeneratedRegex(@"(?i)\b(?:A\d+[a-z]?|X\d+[a-z]?|Z\d+(?:\s+Pro(?:\s+G\d+)?)?|S\d+[a-z]?|E\d+|5A-?75E)\b")]
     private static partial Regex ModelTokenRegex();
     [GeneratedRegex(@"(?i)\b\d[\d.,]*\s*(?:piksel|pixel|hz|bit|fps|port|gbps|mbps|w|v|a)\b")]
     private static partial Regex ExactValueRegex();
@@ -291,9 +291,9 @@ public static partial class TechnicalRetrievalPolicy
     private static partial Regex QuestionOrSymptomRegex();
     [GeneratedRegex(@"(?i)\b(led|ekran\w*|receiver\w*|alıcı kart\w*|alici kart\w*|processor\w*|işlemci\w*|islemci\w*|controller\w*|kontrol kart\w*|hdmi|firmware|piksel\w*|port\w*)\b")]
     private static partial Regex LedDomainRegex();
-    [GeneratedRegex(@"(?i)\b(?:X\d+[a-z]?|Z\d+(?:\s+Pro(?:\s+G\d+)?)?|S\d+[a-z]?|E\d+|5A-?75E)\b")]
+    [GeneratedRegex(@"(?i)\b(?:A\d+[a-z]?|X\d+[a-z]?|Z\d+(?:\s+Pro(?:\s+G\d+)?)?|S\d+[a-z]?|E\d+|5A-?75E)\b")]
     private static partial Regex ProductModelRegex();
-    [GeneratedRegex(@"(?i)\b(maksimum|kapasite|kaç piksel|kac piksel|hangi giriş|hangi giris|giriş format|giris format|çıkış format|cikis format|port|firmware|çözünürlük|cozunurluk|yenileme|kare hızı|kare hizi|renk derinliği|renk derinligi|uyumluluk|kablo eşleme|kablo esleme|çalışma limiti|calisma limiti)\b")]
+    [GeneratedRegex(@"(?i)\b(maksimum|kapasite|kaç piksel|kac piksel|hangi giriş|hangi giris|giriş format|giris format|çıkış format|cikis format|port\w*|firmware|çözünürlük|cozunurluk|yenileme|kare hızı|kare hizi|renk derinliği|renk derinligi|uyumluluk|kablo eşleme|kablo esleme|çalışma limiti|calisma limiti)\b")]
     private static partial Regex ExactClaimRegex();
     [GeneratedRegex(@"(?i)\b(receiver|alıcı kart|alici kart|E\d+|5A-?75E)\b")]
     private static partial Regex ReceiverRegex();

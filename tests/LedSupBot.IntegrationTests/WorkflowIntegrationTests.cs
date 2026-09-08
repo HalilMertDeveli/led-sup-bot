@@ -357,6 +357,104 @@ public sealed class WorkflowIntegrationTests
     public WorkflowIntegrationTests(WorkflowFixture fixture) => _fixture = fixture;
 
     [Fact]
+    public async Task CONV01_Casual_question_wins_and_screen_checkpoint_stays_silent()
+    {
+        var (conversation, customer) = await _fixture.SeedConversationAsync();
+        _fixture.Planner.Reset();
+        _fixture.Web.Reset();
+        _fixture.WhatsApp.SentTexts.Clear();
+        _fixture.Planner.NextResponse = new AiResponsePlanRaw(
+            "casual_conversation", "İyiyim, teşekkür ederim. Siz nasılsınız?", null, false, null,
+            ShouldAnswerQuestion: true, ShouldContinueWorkflowNow: false);
+
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"conv01-{Guid.NewGuid():N}",
+            MessageType.Text, "Bugün nasılsın?");
+
+        var reply = Assert.Single(_fixture.WhatsApp.SentTexts);
+        Assert.Contains("İyiyim", reply);
+        Assert.DoesNotContain("ekran ölç", reply, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("yatay", reply, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ConversationStage.AskScreenSize, (await _fixture.LoadConversationAsync(conversation.Id)).CurrentStage);
+        Assert.Null((await _fixture.LoadCaseAsync(conversation.Id))!.ScreenInformation);
+    }
+
+    [Fact]
+    public async Task CONV02_General_question_wins_and_receiver_checkpoint_is_preserved()
+    {
+        var (conversation, customer) = await SeedPendingReceiverAsync();
+        _fixture.Planner.Reset();
+        _fixture.Web.Reset();
+        _fixture.WhatsApp.SentTexts.Clear();
+        _fixture.Planner.NextResponse = new AiResponsePlanRaw(
+            "general_knowledge", "DNS, alan adlarını IP adreslerine çeviren sistemdir.", null, false, null,
+            ShouldAnswerQuestion: true, ShouldContinueWorkflowNow: false);
+
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"conv02-{Guid.NewGuid():N}",
+            MessageType.Text, "DNS ne?");
+
+        var reply = Assert.Single(_fixture.WhatsApp.SentTexts);
+        Assert.Contains("alan adlarını", reply);
+        Assert.DoesNotContain("kaç tane receiver", reply, StringComparison.OrdinalIgnoreCase);
+        Assert.Null((await _fixture.LoadCaseAsync(conversation.Id))!.ReceiverInformation);
+        Assert.Equal(ConversationStage.AskReceiverCount, (await _fixture.LoadConversationAsync(conversation.Id)).CurrentStage);
+    }
+
+    [Fact]
+    public async Task CONV03_A35_question_uses_exact_rag_before_web_while_anydesk_stays_pending()
+    {
+        var (conversation, customer) = await SeedPendingAnyDeskAsync();
+        _fixture.Knowledge.Reset();
+        _fixture.Knowledge.Results = query => query.Model == "A35"
+            ? [new("A35 has 1 port and supports 655000 pixels.", .97,
+                "A35 Specification V3.4.pdf", "A35", 4, 4, "Hardware interface and capacity", "Specification", "V3.4")]
+            : [];
+        _fixture.Planner.Reset();
+        _fixture.Planner.NextResponse = TechnicalPlan("A35 1 portludur ve Spec'e göre 655.000 piksele kadar destekler.");
+        _fixture.Web.Reset();
+        _fixture.WhatsApp.SentTexts.Clear();
+
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"conv03-{Guid.NewGuid():N}",
+            MessageType.Text, "A35 kaç portludur ve ne kadar pixel destekler?");
+
+        Assert.Equal("A35", Assert.Single(_fixture.Knowledge.Queries).Model);
+        Assert.Equal(GroundingLevel.GroundedExact, _fixture.Planner.LastContext!.KnowledgeGrounding!.Level);
+        Assert.Equal(0, _fixture.Web.CallCount);
+        var reply = Assert.Single(_fixture.WhatsApp.SentTexts);
+        Assert.Contains("1 port", reply);
+        Assert.Contains("655.000", reply);
+        Assert.DoesNotContain("AnyDesk", reply, StringComparison.OrdinalIgnoreCase);
+        Assert.Null((await _fixture.LoadCaseAsync(conversation.Id))!.AnyDeskInformation);
+        Assert.Equal(ConversationStage.AskAnyDesk, (await _fixture.LoadConversationAsync(conversation.Id)).CurrentStage);
+    }
+
+    [Fact]
+    public async Task CONV04_05_Repeated_casual_turns_do_not_repeat_workflow_and_explicit_resume_uses_checkpoint()
+    {
+        var (conversation, customer) = await _fixture.SeedConversationAsync();
+        _fixture.Planner.Reset();
+        _fixture.WhatsApp.SentTexts.Clear();
+        _fixture.Planner.NextResponse = new AiResponsePlanRaw(
+            "casual_conversation", "İyiyim, sağ olun.", null, false, null,
+            ShouldAnswerQuestion: true, ShouldContinueWorkflowNow: false);
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"conv04a-{Guid.NewGuid():N}", MessageType.Text, "Nasılsın?");
+
+        _fixture.Planner.NextResponse = new AiResponsePlanRaw(
+            "casual_conversation", "Bugün işler sakin gidiyor.", null, false, null,
+            ShouldAnswerQuestion: true, ShouldContinueWorkflowNow: false);
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"conv04b-{Guid.NewGuid():N}", MessageType.Text, "Bugün nasıl gidiyor?");
+
+        Assert.Equal(2, _fixture.WhatsApp.SentTexts.Count);
+        Assert.DoesNotContain(_fixture.WhatsApp.SentTexts,
+            text => text.Contains("ekran ölç", StringComparison.OrdinalIgnoreCase) || text.Contains("yatay", StringComparison.OrdinalIgnoreCase));
+
+        _fixture.WhatsApp.SentTexts.Clear();
+        await _fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"conv05-{Guid.NewGuid():N}", MessageType.Text, "devam");
+        Assert.Contains(_fixture.WhatsApp.SentTexts,
+            text => text.Contains("ekran", StringComparison.OrdinalIgnoreCase) && text.Contains("yatay", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ConversationStage.AskScreenSize, (await _fixture.LoadConversationAsync(conversation.Id)).CurrentStage);
+    }
+
+    [Fact]
     public async Task CM1_Resolved_case_alone_never_creates_memory()
     {
         var (conversation, _) = await _fixture.SeedConversationAsync();
@@ -417,7 +515,7 @@ public sealed class WorkflowIntegrationTests
     }
 
     [Fact]
-    public async Task GI1_General_interruption_answers_then_resumes_persisted_receiver_fact()
+    public async Task GI1_General_interruption_answers_and_keeps_persisted_receiver_fact_silent()
     {
         var (conversation, customer) = await SeedPendingReceiverAsync();
         _fixture.Web.Reset(); _fixture.Planner.Reset(); _fixture.WhatsApp.SentTexts.Clear();
@@ -427,7 +525,7 @@ public sealed class WorkflowIntegrationTests
 
         var reply = Assert.Single(_fixture.WhatsApp.SentTexts);
         Assert.Contains("DNS", reply);
-        Assert.Contains("receiver tarafında kalmıştık", reply);
+        Assert.DoesNotContain("receiver tarafında kalmıştık", reply, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, _fixture.Web.CallCount);
         Assert.Null((await _fixture.LoadCaseAsync(conversation.Id))!.ReceiverInformation);
         Assert.Equal(ConversationStage.AskReceiverCount, (await _fixture.LoadConversationAsync(conversation.Id)).CurrentStage);
@@ -1792,6 +1890,59 @@ public sealed class WorkflowIntegrationTests
         return pair;
     }
 
+    private async Task<(Conversation Conversation, Customer Customer)> SeedPendingAnyDeskAsync()
+    {
+        var pair = await _fixture.SeedConversationAsync();
+        await using var scope = _fixture.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var supportCase = new TechnicalSupportCase
+        {
+            ConversationId = pair.Conversation.Id,
+            Status = SupportCaseStatus.CollectingInformation,
+            PlayerType = PlayerType.Playbox,
+        };
+        db.TechnicalSupportCases.Add(supportCase);
+        db.ScreenInformations.Add(new ScreenInformation
+        {
+            TechnicalSupportCaseId = supportCase.Id,
+            Width = 320,
+            Height = 160,
+        });
+        db.PanelLabelPhotos.Add(new PanelLabelPhoto
+        {
+            TechnicalSupportCaseId = supportCase.Id,
+            StorageKey = $"cases/{supportCase.Id:N}/label.png",
+            ContentType = "image/png",
+            SizeBytes = 10,
+        });
+        db.ReceiverInformations.Add(new ReceiverInformation
+        {
+            TechnicalSupportCaseId = supportCase.Id,
+            Count = 4,
+            ReceiverModel = ReceiverModel.E120,
+        });
+        db.ConfigConnections.Add(new ConfigConnectionInfo
+        {
+            TechnicalSupportCaseId = supportCase.Id,
+            Status = ConfigConnectionStatus.Confirmed,
+            StatusChangedAt = DateTimeOffset.UtcNow,
+        });
+        var trackedConversation = await db.Conversations.SingleAsync(x => x.Id == pair.Conversation.Id);
+        trackedConversation.CurrentStage = ConversationStage.AskAnyDesk;
+        db.Messages.Add(new Message
+        {
+            ConversationId = pair.Conversation.Id,
+            Direction = MessageDirection.Outbound,
+            MessageType = MessageType.Text,
+            SentBy = MessageSender.Bot,
+            Content = WorkflowPrompts.AskAnyDesk,
+            DeliveryStatus = DeliveryStatus.Sent,
+            ExternalMessageId = $"anydesk-prompt-{Guid.NewGuid():N}",
+        });
+        await db.SaveChangesAsync();
+        return pair;
+    }
+
     private async Task<(Conversation Conversation, Customer Customer)> SeedPendingReceiverModelAsync()
     {
         var pair = await SeedPendingReceiverAsync();
@@ -2202,7 +2353,7 @@ public sealed class PanelIdentityTextWorkflowIntegrationTests(WorkflowFixture fi
         var (conversation, customer) = await fixture.SeedConversationAsync();
         fixture.WhatsApp.SentTexts.Clear();
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf3-{Guid.NewGuid():N}", MessageType.Text,
-            $"Etikette P2.5 + {code.ToLowerInvariant()} + 2012 yazıyor.");
+            $"P2.5+{code}+2012 dosyalarını gönder.");
         var reply = Assert.Single(fixture.WhatsApp.SentTexts);
         Assert.Contains($"P2.5 + {code} + 2012", reply);
         Assert.DoesNotContain("gönderildi", reply, StringComparison.OrdinalIgnoreCase);
@@ -2239,14 +2390,15 @@ public sealed class PanelIdentityTextWorkflowIntegrationTests(WorkflowFixture fi
         fixture.WhatsApp.SentTexts.Clear();
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf3b-{Guid.NewGuid():N}", MessageType.Text, $"{code}+2012");
         var completed = Assert.Single(fixture.WhatsApp.SentTexts);
-        Assert.Contains($"P2.5 + {code} + 2012", completed);
-        Assert.Contains("bulamadım", completed);
+        Assert.Contains($"P2.5+{code}+2012", completed);
 
         fixture.WhatsApp.SentTexts.Clear();
         await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf3c-{Guid.NewGuid():N}", MessageType.Text, "Hayır son kod 2013.");
         var corrected = Assert.Single(fixture.WhatsApp.SentTexts);
-        Assert.Contains($"P2.5 + {code} + 2013", corrected);
-        Assert.Contains("bulamadım", corrected);
+        Assert.Contains($"P2.5+{code}+2013", corrected);
+        fixture.WhatsApp.SentTexts.Clear();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, $"pf3d-{Guid.NewGuid():N}", MessageType.Text, $"P2.5+{code}+2013");
+        Assert.Contains("bulamadım", Assert.Single(fixture.WhatsApp.SentTexts));
 
         await using var scope = fixture.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();

@@ -11,9 +11,11 @@ public static class WorkflowInterruptionPolicy
         ConversationIntent intent,
         ConversationResponseAction action,
         DiagnosticState diagnosticState,
-        string? message)
+        string? message,
+        bool aiRequestedWorkflowResume = false)
     {
-        if (action != ConversationResponseAction.AnswerOnly ||
+        if (!aiRequestedWorkflowResume ||
+            action != ConversationResponseAction.AnswerOnly ||
             intent is not (ConversationIntent.GeneralKnowledge or ConversationIntent.CasualConversation) ||
             context.PendingFact == PendingWorkflowFact.None ||
             ConversationSemantics.IsWaitAcknowledgement(message)) return false;

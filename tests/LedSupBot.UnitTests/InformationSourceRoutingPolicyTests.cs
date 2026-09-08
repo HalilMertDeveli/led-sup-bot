@@ -27,6 +27,14 @@ public sealed class InformationSourceRoutingPolicyTests
         Assert.Equal(InformationSourceRoute.NoSearch,
             InformationSourceRoutingPolicy.Decide("DNS nedir?", ConversationIntent.GeneralKnowledge, NoRag, Options));
 
+    [Theory]
+    [InlineData("Bugün nasılsın?", ConversationIntent.CasualConversation)]
+    [InlineData("Şu an ekran çalışmıyor.", ConversationIntent.LedTroubleshooting)]
+    [InlineData("Şimdi düzeldi.", ConversationIntent.LedTroubleshooting)]
+    public void Conversational_or_live_symptom_phrasing_does_not_trigger_web(string message, ConversationIntent intent) =>
+        Assert.Equal(InformationSourceRoute.NoSearch,
+            InformationSourceRoutingPolicy.Decide(message, intent, NoRag, Options));
+
     [Fact]
     public void Exact_rag_fact_remains_authoritative()
     {
@@ -76,7 +84,7 @@ public sealed class InformationSourceRoutingPolicyTests
     }
 
     [Fact]
-    public void Isolated_general_interruption_resumes_real_pending_fact()
+    public void General_interruption_keeps_pending_fact_silent_without_ai_resume_decision()
     {
         var context = new ConversationContext
         {
@@ -87,8 +95,26 @@ public sealed class InformationSourceRoutingPolicyTests
                 new("customer", "DNS nedir?", DateTimeOffset.UtcNow),
             ],
         };
-        Assert.True(WorkflowInterruptionPolicy.ShouldResume(context, ConversationIntent.GeneralKnowledge,
+        Assert.False(WorkflowInterruptionPolicy.ShouldResume(context, ConversationIntent.GeneralKnowledge,
             ConversationResponseAction.AnswerOnly, new DiagnosticState(), "DNS nedir?"));
+        Assert.Equal(PendingWorkflowFact.ReceiverCount, context.PendingFact);
+    }
+
+    [Fact]
+    public void Ai_can_explicitly_resume_the_authoritative_pending_fact()
+    {
+        var context = new ConversationContext
+        {
+            PendingFact = PendingWorkflowFact.ReceiverCount,
+            RecentMessages =
+            [
+                new("bot", "Kaç receiver kullanıyorsunuz?", DateTimeOffset.UtcNow.AddSeconds(-2)),
+                new("customer", "DNS nedir?", DateTimeOffset.UtcNow),
+            ],
+        };
+
+        Assert.True(WorkflowInterruptionPolicy.ShouldResume(context, ConversationIntent.GeneralKnowledge,
+            ConversationResponseAction.AnswerOnly, new DiagnosticState(), "DNS nedir?", aiRequestedWorkflowResume: true));
         Assert.Contains("Kaç tane", WorkflowInterruptionPolicy.BuildReturn(context.PendingFact));
     }
 

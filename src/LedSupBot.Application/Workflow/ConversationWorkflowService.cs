@@ -365,7 +365,8 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         }
         configExampleImagePath = composed.ConfigExampleImagePath ?? configExampleImagePath;
 
-        if (WorkflowInterruptionPolicy.ShouldResume(context, effectiveIntent, responseAction, diagnosticTurn.State, inbound.TextContent) &&
+        if (WorkflowInterruptionPolicy.ShouldResume(context, effectiveIntent, responseAction, diagnosticTurn.State,
+                inbound.TextContent, aiPlan?.ShouldContinueWorkflowNow == true) &&
             outboundTexts.Count > 0)
         {
             var resume = WorkflowInterruptionPolicy.BuildReturn(WorkflowStageResolver.ResolvePendingFact(effectiveStage));
