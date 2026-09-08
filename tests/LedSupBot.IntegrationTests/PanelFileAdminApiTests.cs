@@ -17,6 +17,45 @@ namespace LedSupBot.IntegrationTests;
 public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
 {
     [Fact]
+    public async Task Bulk_import_persists_valid_children_independently_and_survives_new_db_context()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ledsup-bulk-api", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            CreateBulkFolder(root, "P1.53+FM6126A+138", ["random.hex", "scan.rcvbp", "extra.bin"]);
+            CreateBulkFolder(root, "P3.33+3265S+32020", ["a.hex", "b.rcvbp"]);
+            CreateBulkFolder(root, "invalid-folder", ["a.bin", "b.bin"]);
+            CreateBulkFolder(root, "P4+LS9930CS+2020", ["only.hex"]);
+
+            var client = fixture.CreateAdminClient();
+            Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login",
+                new { password = fixture.AdminPassword })).StatusCode);
+            var response = await client.PostAsJsonAsync("/api/admin/panel-file-packages/bulk-import/run",
+                new { parentFolder = root });
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+            Assert.Equal(4, result.GetProperty("found").GetInt32());
+            Assert.Equal(2, result.GetProperty("imported").GetInt32());
+            Assert.Equal(2, result.GetProperty("skipped").GetInt32());
+            Assert.Equal(0, result.GetProperty("failed").GetInt32());
+
+            await using var reloaded = fixture.CreateDb();
+            var first = await reloaded.PanelFilePackages.Include(x => x.Assets).AsNoTracking()
+                .SingleAsync(x => x.CanonicalKey == "P1.53-FM6126A-138");
+            var second = await reloaded.PanelFilePackages.Include(x => x.Assets).AsNoTracking()
+                .SingleAsync(x => x.CanonicalKey == "P3.33-3265S-32020");
+            Assert.Equal(3, first.Assets.Count(x => x.Status == PanelFileAssetStatus.Active));
+            Assert.Equal(2, second.Assets.Count(x => x.Status == PanelFileAssetStatus.Active));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Exact_real_P186_numeric_chipset_folder_import_succeeds_through_desktop_request_shape()
     {
         var client = fixture.CreateAdminClient();
@@ -387,6 +426,12 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
         Assert.Equal(1, restored.Version);
         Assert.Equal(2, restored.Assets.Count(x => x.Version == 1 && x.Status == PanelFileAssetStatus.Active));
         Assert.Equal(2, restored.Assets.Count(x => x.Version == 2 && x.Status == PanelFileAssetStatus.Archived));
+    }
+
+    private static void CreateBulkFolder(string root, string name, IReadOnlyList<string> fileNames)
+    {
+        var folder = Directory.CreateDirectory(Path.Combine(root, name)).FullName;
+        foreach (var fileName in fileNames) File.WriteAllBytes(Path.Combine(folder, fileName), [1, 2, 3]);
     }
 
     private static MultipartFormDataContent FileForm(string name, byte[] bytes)
