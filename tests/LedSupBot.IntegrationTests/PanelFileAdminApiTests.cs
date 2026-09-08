@@ -16,17 +16,15 @@ namespace LedSupBot.IntegrationTests;
 public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
 {
     [Fact]
-    public async Task Folder_import_uses_real_desktop_request_shape_and_persists_every_asset_after_source_deletion()
+    public async Task Exact_real_P186_numeric_chipset_folder_import_succeeds_through_desktop_request_shape()
     {
         var client = fixture.CreateAdminClient();
         Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
-        var code = Random.Shared.Next(100000, 999999) + "s";
-        var originalFolderName = $"P2.5+{code}+2012";
+        const string originalFolderName = "P1.86+1065+2018";
         var desktopRoot = Path.Combine(Path.GetTempPath(), "ledsup-desktop-import-tests", Guid.NewGuid().ToString("N"), originalFolderName);
         Directory.CreateDirectory(desktopRoot);
-        await File.WriteAllBytesAsync(Path.Combine(desktopRoot, "random1.bin"), "bin"u8.ToArray());
-        await File.WriteAllBytesAsync(Path.Combine(desktopRoot, "random2.rcvbp"), "cfg"u8.ToArray());
-        await File.WriteAllBytesAsync(Path.Combine(desktopRoot, "random3.hex"), "hex"u8.ToArray());
+        await File.WriteAllBytesAsync(Path.Combine(desktopRoot, "3.38.hex"), "hex"u8.ToArray());
+        await File.WriteAllBytesAsync(Path.Combine(desktopRoot, "P1.86-1065-2018-43S-Flex-E410.rcvbp"), "cfg"u8.ToArray());
         Guid id;
         try
         {
@@ -36,16 +34,19 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
             Assert.Equal("folderName", parts[0].Headers.ContentDisposition!.Name);
             Assert.Equal(originalFolderName, await parts[0].ReadAsStringAsync());
             Assert.All(parts.Skip(1), part => Assert.Equal("files", part.Headers.ContentDisposition!.Name));
-            Assert.Equal(new[] { "random1.bin", "random2.rcvbp", "random3.hex" },
+            Assert.Equal(new[] { "3.38.hex", "P1.86-1065-2018-43S-Flex-E410.rcvbp" },
                 parts.Skip(1).Select(part => part.Headers.ContentDisposition!.FileName));
             var imported = await client.PostAsync("/api/admin/panel-file-packages/import-folder", first);
             Assert.Equal(HttpStatusCode.OK, imported.StatusCode);
             var body = JsonDocument.Parse(await imported.Content.ReadAsStringAsync()).RootElement;
             id = body.GetProperty("id").GetGuid();
             Assert.Equal(originalFolderName, body.GetProperty("originalFolderName").GetString());
-            Assert.Equal($"P2.5-{code.ToUpperInvariant()}-2012", body.GetProperty("canonicalKey").GetString());
+            Assert.Equal("P1.86-1065-2018", body.GetProperty("canonicalKey").GetString());
+            Assert.Equal("P1.86", body.GetProperty("pixelPitch").GetString());
+            Assert.Equal("1065", body.GetProperty("panelCode").GetString());
+            Assert.Equal("2018", body.GetProperty("secondaryCode").GetString());
             Assert.Equal("READY", body.GetProperty("readiness").GetString());
-            Assert.Equal(3, body.GetProperty("assets").EnumerateArray().Count(x => x.GetProperty("status").GetString() == "Active"));
+            Assert.Equal(2, body.GetProperty("assets").EnumerateArray().Count(x => x.GetProperty("status").GetString() == "Active"));
         }
         finally
         {
@@ -56,21 +57,22 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
         {
             var persisted = await verificationDb.PanelFilePackages.AsNoTracking().Include(x => x.Assets).SingleAsync(x => x.Id == id);
             Assert.Equal(originalFolderName, persisted.OriginalFolderName);
-            Assert.Equal($"P2.5-{code.ToUpperInvariant()}-2012", persisted.CanonicalKey);
+            Assert.Equal("P1.86", persisted.PixelPitch);
+            Assert.Equal("1065", persisted.PanelCode);
+            Assert.Equal("2018", persisted.SecondaryCode);
+            Assert.Equal("P1.86-1065-2018", persisted.CanonicalKey);
             var active = persisted.Assets.Where(x => x.Status == LedSupBot.Domain.PanelFiles.PanelFileAssetStatus.Active).ToList();
-            Assert.Equal(3, active.Count);
-            Assert.Contains(active, x => x.AssetType == LedSupBot.Domain.PanelFiles.PanelFileAssetType.PackageFile && x.OriginalFileName == "random1.bin");
-            Assert.Contains(active, x => x.AssetType == LedSupBot.Domain.PanelFiles.PanelFileAssetType.ReceiverConfigRcvbp && x.OriginalFileName == "random2.rcvbp");
-            Assert.Contains(active, x => x.AssetType == LedSupBot.Domain.PanelFiles.PanelFileAssetType.FirmwareHex && x.OriginalFileName == "random3.hex");
+            Assert.Equal(2, active.Count);
+            Assert.Contains(active, x => x.AssetType == LedSupBot.Domain.PanelFiles.PanelFileAssetType.FirmwareHex && x.OriginalFileName == "3.38.hex");
+            Assert.Contains(active, x => x.AssetType == LedSupBot.Domain.PanelFiles.PanelFileAssetType.ReceiverConfigRcvbp && x.OriginalFileName == "P1.86-1065-2018-43S-Flex-E410.rcvbp");
             Assert.All(active, x => Assert.Contains("panel-packages", x.StorageKey, StringComparison.OrdinalIgnoreCase));
             using var storageScope = fixture.Factory.Services.CreateScope();
             var storage = storageScope.ServiceProvider.GetRequiredService<IMediaStorage>();
             Assert.All(active, x => Assert.True(storage.Exists(x.StorageKey)));
             var expectedBytes = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
             {
-                ["random1.bin"] = "bin"u8.ToArray(),
-                ["random2.rcvbp"] = "cfg"u8.ToArray(),
-                ["random3.hex"] = "hex"u8.ToArray()
+                ["3.38.hex"] = "hex"u8.ToArray(),
+                ["P1.86-1065-2018-43S-Flex-E410.rcvbp"] = "cfg"u8.ToArray()
             };
             foreach (var asset in active)
             {
@@ -83,7 +85,7 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
 
         await using var scope = fixture.Factory.Services.CreateAsyncScope();
         var reimported = await scope.ServiceProvider.GetRequiredService<IPanelFolderImportService>().ImportAsync(
-            $"P2.5+{code.ToUpperInvariant()}+2012",
+            originalFolderName,
             [
                 new PanelFolderImportFile("one.dat", "one.dat", "application/octet-stream", new MemoryStream("replacement-1"u8.ToArray())),
                 new PanelFolderImportFile("two.cfg", "two.cfg", "application/octet-stream", new MemoryStream("replacement-2"u8.ToArray())),

@@ -35,11 +35,6 @@ public sealed class WhatsAppWebhookFixture : IAsyncLifetime
         await _postgres.StartAsync();
         MediaRoot = Path.Combine(Path.GetTempPath(), "led-sup-bot-admin-media", Guid.NewGuid().ToString("N"));
 
-        await using (var db = CreateDb())
-        {
-            await db.Database.MigrateAsync();
-        }
-
         Factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("Database:ConnectionString", ConnectionString);
@@ -60,6 +55,12 @@ public sealed class WhatsAppWebhookFixture : IAsyncLifetime
                 services.AddSingleton<IWhatsAppClient>(sp => sp.GetRequiredService<RecordingWhatsAppClient>());
             });
         });
+
+        // Starting the real API host must bring an existing or empty database to the current schema.
+        using var startupClient = Factory.CreateClient();
+        await using var db = CreateDb();
+        if ((await db.Database.GetPendingMigrationsAsync()).Any())
+            throw new InvalidOperationException("API startup left pending database migrations.");
     }
 
     public async Task DisposeAsync()

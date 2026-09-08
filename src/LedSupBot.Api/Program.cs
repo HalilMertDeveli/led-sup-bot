@@ -12,9 +12,11 @@ using LedSupBot.Domain.Enums;
 using LedSupBot.Infrastructure;
 using LedSupBot.Infrastructure.Configuration;
 using LedSupBot.Infrastructure.Gemini;
+using LedSupBot.Infrastructure.Persistence;
 using LedSupBot.Api.Admin;
 using LedSupBot.Api.Middleware;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 
@@ -81,6 +83,32 @@ startupLogger.LogInformation(
     !string.IsNullOrWhiteSpace(connectorOptionsAtStartup.SharedSecret),
     app.Services.GetRequiredService<IOptions<WhatsAppTestModeOptions>>().Value.Enabled);
 
+if (!string.IsNullOrWhiteSpace(databaseOptions.ConnectionString))
+{
+    using var migrationScope = app.Services.CreateScope();
+    var database = migrationScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    try
+    {
+        var pendingMigrations = (await database.Database.GetPendingMigrationsAsync()).ToArray();
+        if (pendingMigrations.Length > 0)
+        {
+            startupLogger.LogInformation(
+                "Applying {PendingMigrationCount} pending database migration(s). First={FirstMigration}",
+                pendingMigrations.Length,
+                pendingMigrations[0]);
+            await database.Database.MigrateAsync();
+            startupLogger.LogInformation("Database migrations completed successfully.");
+        }
+    }
+    catch (Exception ex)
+    {
+        startupLogger.LogCritical(
+            "Database migration failed. ExceptionType={ExceptionType}",
+            ex.GetType().Name);
+        throw;
+    }
+}
+
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
 if (app.Environment.IsDevelopment())
@@ -124,7 +152,7 @@ app.MapGet("/", () => Results.Ok(new
     aiIntegration = aiStatus,
     openAiIntegration = openAiStatus,
     databaseSchema = "ef_core_postgresql",
-    autoMigrateOnStartup = false,
+    autoMigrateOnStartup = true,
     autoCustomerReplies = false
 }));
 

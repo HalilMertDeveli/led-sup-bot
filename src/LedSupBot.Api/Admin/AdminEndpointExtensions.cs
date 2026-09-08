@@ -12,6 +12,7 @@ using LedSupBot.Domain.PanelFiles;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace LedSupBot.Api.Admin;
 
@@ -435,6 +436,7 @@ public static class AdminEndpointExtensions
         catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
         catch (IOException) { return Results.Json(new { error = "panel_folder_storage_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
         catch (DbUpdateException) { return Results.Json(new { error = "panel_folder_persistence_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
+        catch (NpgsqlException) { return Results.Json(new { error = "panel_folder_persistence_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
         catch (UnauthorizedAccessException) { return Results.Json(new { error = "panel_folder_storage_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
     }
 

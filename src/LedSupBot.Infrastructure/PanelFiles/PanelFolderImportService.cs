@@ -5,7 +5,9 @@ using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.PanelFiles;
 using LedSupBot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace LedSupBot.Infrastructure.PanelFiles;
 
@@ -13,25 +15,37 @@ public sealed class PanelFolderImportService(
     ApplicationDbContext db,
     IPanelIdentityNormalizer normalizer,
     IMediaStorage storage,
-    IOptions<PanelFilePackageOptions> options) : IPanelFolderImportService
+    IOptions<PanelFilePackageOptions> options,
+    ILogger<PanelFolderImportService> logger) : IPanelFolderImportService
 {
     public async Task<PanelFilePackage> ImportAsync(string folderName, IReadOnlyList<PanelFolderImportFile> files,
         CancellationToken cancellationToken = default)
     {
-        var identity = ParseFolderName(folderName);
-        if (files.Count < options.Value.MinImportedFileCount)
-            throw new InvalidDataException("Pakette en az 2 dosya olmalı.");
-
-        var safeFiles = files.Select(ValidateFile).ToList();
-        PanelFolderImportMultipartFactory.ValidateMinimumAssets(safeFiles.Select(x => x.FileName).ToList());
-        var duplicateOutgoingName = safeFiles.GroupBy(x => x.FileName, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault(x => x.Count() > 1);
-        if (duplicateOutgoingName is not null)
-            throw new InvalidDataException($"Aynı gönderim adına sahip birden fazla dosya var: {duplicateOutgoingName.Key}");
-
+        var failureStage = "parse";
+        string? packageKey = null;
         var stored = new List<(PanelFolderImportFile File, StoredMediaReference Stored, string Hash)>();
         try
         {
+            var identity = ParseFolderName(folderName);
+            packageKey = identity.CanonicalKey;
+            failureStage = "validation";
+            if (files.Count < options.Value.MinImportedFileCount)
+                throw new InvalidDataException("Pakette en az 2 dosya olmalı.");
+
+            var safeFiles = files.Select(ValidateFile).ToList();
+            PanelFolderImportMultipartFactory.ValidateMinimumAssets(safeFiles.Select(x => x.FileName).ToList());
+            var duplicateOutgoingName = safeFiles.GroupBy(x => x.FileName, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault(x => x.Count() > 1);
+            if (duplicateOutgoingName is not null)
+                throw new InvalidDataException($"Aynı gönderim adına sahip birden fazla dosya var: {duplicateOutgoingName.Key}");
+
+            var extensions = string.Join(',', safeFiles.Select(x => Path.GetExtension(x.FileName).ToLowerInvariant())
+                .Distinct(StringComparer.OrdinalIgnoreCase).Take(10));
+            logger.LogInformation(
+                "Panel folder import started. PackageKey={PackageKey} FileCount={FileCount} Extensions={Extensions}",
+                packageKey, safeFiles.Count, extensions);
+
+            failureStage = "private-storage";
             foreach (var file in safeFiles)
             {
                 await using var buffer = new MemoryStream();
@@ -44,6 +58,7 @@ public sealed class PanelFolderImportService(
                 stored.Add((file, saved, hash));
             }
 
+            failureStage = "database-transaction";
             await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
             var package = await db.PanelFilePackages.Include(x => x.Assets)
                 .SingleOrDefaultAsync(x => x.CanonicalKey == identity.CanonicalKey, cancellationToken);
@@ -84,12 +99,28 @@ public sealed class PanelFolderImportService(
             }
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            logger.LogInformation(
+                "Panel folder import completed. PackageKey={PackageKey} FileCount={FileCount} Version={Version}",
+                packageKey, safeFiles.Count, package.Version);
             return package;
         }
-        catch
+        catch (Exception ex)
         {
             foreach (var item in stored)
                 try { await storage.DeleteAsync(item.Stored.StorageKey, CancellationToken.None); } catch { }
+            if (ex is PostgresException postgres)
+            {
+                logger.LogError(
+                    "Panel folder import failed. PackageKey={PackageKey} FileCount={FileCount} FailureStage={FailureStage} ExceptionType={ExceptionType} SqlState={SqlState} Constraint={Constraint}",
+                    packageKey ?? "unparsed", files.Count, failureStage, ex.GetType().Name,
+                    postgres.SqlState, postgres.ConstraintName ?? "none");
+            }
+            else
+            {
+                logger.LogError(
+                    "Panel folder import failed. PackageKey={PackageKey} FileCount={FileCount} FailureStage={FailureStage} ExceptionType={ExceptionType}",
+                    packageKey ?? "unparsed", files.Count, failureStage, ex.GetType().Name);
+            }
             throw;
         }
     }
