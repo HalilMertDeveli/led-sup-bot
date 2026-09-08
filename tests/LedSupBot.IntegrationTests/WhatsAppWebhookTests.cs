@@ -448,7 +448,9 @@ public sealed class WhatsAppWebhookTests
         }
     }
 
-    private async Task<WebApplicationFactory<Program>> CreateAutoReplyFactoryAsync()
+    private async Task<WebApplicationFactory<Program>> CreateAutoReplyFactoryAsync(
+        bool testModeEnabled = false,
+        string allowedPhone = "")
     {
         _fixture.WhatsApp.SentTexts.Clear();
 
@@ -463,7 +465,12 @@ public sealed class WhatsAppWebhookTests
             builder.UseSetting("Workflow:AutoReplyEnabled", "true");
             builder.UseSetting("Workflow:InboundCoalescing:Enabled", "false");
             builder.UseSetting("Workflow:NaturalTiming:Enabled", "false");
-            builder.UseSetting("WhatsAppTestMode:Enabled", "false");
+            builder.UseSetting("WhatsAppTestMode:Enabled", testModeEnabled.ToString());
+            if (testModeEnabled && !string.IsNullOrWhiteSpace(allowedPhone))
+            {
+                builder.UseSetting("WhatsAppTestMode:AllowedPhoneNumber", allowedPhone);
+            }
+
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IWhatsAppClient>();
@@ -507,5 +514,99 @@ public sealed class WhatsAppWebhookTests
         var message = await db.Messages.SingleAsync(m => m.ExternalMessageId == externalId);
         Assert.Equal(MessageType.Image, message.MessageType);
         Assert.Equal(MessageSender.Customer, message.SentBy);
+    }
+
+    // ======================= BOT RUNTIME PIPELINE (BOT-03..07, BOT-12) =======
+
+    [Fact]
+    public async Task BOT_03_authorized_test_mode_customer_allowed()
+    {
+        await using var factory = await CreateAutoReplyFactoryAsync(testModeEnabled: true, allowedPhone: "905555000201");
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Connector-Secret", _fixture.SharedSecret);
+
+        var response = await client.PostAsJsonAsync("/internal/whatsapp/events", new
+        {
+            eventType = "IncomingMessage",
+            externalMessageId = $"wamid.bot03.{Guid.NewGuid():N}",
+            remotePhoneNumber = "905555000201",
+            fromMe = false,
+            botOriginated = false,
+            messageType = "Text",
+            textContent = "BOT-03-HELLO",
+            textPresent = true,
+            timestamp = DateTimeOffset.UtcNow
+        });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await WaitForSentTextAsync();
+        Assert.NotEmpty(_fixture.WhatsApp.SentTexts);
+    }
+
+    [Fact]
+    public async Task BOT_04_same_customer_via_lid_passes_trusted_allowlist()
+    {
+        await using var factory = await CreateAutoReplyFactoryAsync(testModeEnabled: true, allowedPhone: "905555000202");
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Connector-Secret", _fixture.SharedSecret);
+
+        var lidAddress = "261040956571702@lid";
+        var phone = "905555000202";
+
+        // Pre-create the customer with a trusted LID link (as WhatsAppTestMode store learns it).
+        await using (var db = _fixture.CreateDb())
+        {
+            var customer = new Domain.Entities.Customer
+            {
+                PhoneNumber = phone,
+                LinkedWhatsAppLid = lidAddress,
+            };
+            db.Customers.Add(customer);
+            await db.SaveChangesAsync();
+        }
+
+        var response = await client.PostAsJsonAsync("/internal/whatsapp/events", new
+        {
+            eventType = "IncomingMessage",
+            externalMessageId = $"wamid.bot04.{Guid.NewGuid():N}",
+            remoteJid = lidAddress,
+            remotePhoneNumber = (string?)null,
+            fromMe = false,
+            botOriginated = false,
+            messageType = "Text",
+            textContent = "BOT-04-HELLO",
+            textPresent = true,
+            timestamp = DateTimeOffset.UtcNow
+        });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await WaitForSentTextAsync();
+        Assert.NotEmpty(_fixture.WhatsApp.SentTexts);
+    }
+
+    [Fact]
+    public async Task BOT_05_unapproved_customer_blocked_in_test_mode()
+    {
+        await using var factory = await CreateAutoReplyFactoryAsync(testModeEnabled: true, allowedPhone: "905555000203");
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Connector-Secret", _fixture.SharedSecret);
+
+        _fixture.WhatsApp.SentTexts.Clear();
+        var response = await client.PostAsJsonAsync("/internal/whatsapp/events", new
+        {
+            eventType = "IncomingMessage",
+            externalMessageId = $"wamid.bot05.{Guid.NewGuid():N}",
+            remotePhoneNumber = "905559990888",
+            fromMe = false,
+            botOriginated = false,
+            messageType = "Text",
+            textContent = "BOT-05-STRANGER",
+            textPresent = true,
+            timestamp = DateTimeOffset.UtcNow
+        });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        Assert.Empty(_fixture.WhatsApp.SentTexts);
     }
 }

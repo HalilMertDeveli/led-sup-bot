@@ -143,6 +143,19 @@ public sealed class ConversationReplyCoordinator : IConversationReplyCoordinator
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to process coalesced inbound for conversation {ConversationId}", conversationId);
+            try
+            {
+                using var fallbackScope = _scopeFactory.CreateScope();
+                var last = batch[^1];
+                await fallbackScope.ServiceProvider.GetRequiredService<IWorkflowOutboundDispatcher>().SendTextsAsync(
+                    conversationId, last.CustomerPhoneE164, last.WhatsAppDeliveryRoute,
+                    ["Mesajınızı aldım ancak yanıtı hazırlarken geçici bir sorun oluştu. Kısa şekilde tekrar yazar mısınız?"],
+                    cancellationToken: CancellationToken.None);
+            }
+            catch (Exception fallbackEx)
+            {
+                _logger.LogError(fallbackEx, "Provider failure fallback could not be delivered for conversation {ConversationId}", conversationId);
+            }
         }
         finally
         {

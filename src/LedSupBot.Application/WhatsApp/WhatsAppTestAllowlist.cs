@@ -119,6 +119,23 @@ public sealed class WhatsAppTestAllowlist : IWhatsAppTestAllowlist
             return true;
         }
 
+        // LID routes: an authorized test customer must not be rejected merely
+        // because the active WhatsApp route is @lid and the inbound event does
+        // not carry a sender phone (Baileys often omits sender PN on LID chats).
+        // Ask the database whether this LID belongs to the configured allowed
+        // identity. This is bounded to already-linked identities only, so it
+        // does NOT weaken test-mode security.
+        if (TryResolveAllowedLidFromDatabase(customerAddress, allowedCanonical))
+        {
+            RememberAllowedIdentity(customerAddress, customer);
+            if (logMismatch)
+            {
+                _logger.LogInformation("Test allowlist matched via persisted LID link=true");
+            }
+
+            return true;
+        }
+
         if (logMismatch)
         {
             if (WhatsAppEventMapper.IsLidJid(inbound?.RemoteJid) &&
@@ -130,6 +147,52 @@ public sealed class WhatsAppTestAllowlist : IWhatsAppTestAllowlist
             {
                 _logger.LogInformation("Test allowlist matched=false");
             }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Bounded database check for LID-routed identities: a customer already
+    /// linked to the allowed phone number (either directly through
+    /// <see cref="Customer.LinkedWhatsAppLid"/> or because the customer row
+    /// itself IS the allowed number) may only be considered allowed when the
+    /// persisted canonical phone equals the configured test identity.
+    /// </summary>
+    private bool TryResolveAllowedLidFromDatabase(string customerAddress, string allowedCanonical)
+    {
+        if (!WhatsAppEventMapper.IsLidJid(customerAddress))
+        {
+            return false;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetService<IApplicationDbContext>();
+        if (db is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var address = customerAddress.Trim();
+            foreach (var row in db.Customers.AsNoTracking()
+                .Where(c => c.LinkedWhatsAppLid == address || c.PhoneNumber == address)
+                .Select(c => new { c.Id, c.PhoneNumber, c.LinkedWhatsAppLid })
+                .ToList())
+            {
+                var canonical = PhoneNumberNormalizer.TryNormalizeToCanonicalDigits(row.PhoneNumber);
+                if (canonical is not null && canonical == allowedCanonical)
+                {
+                    _allowedLidAddresses.TryAdd(address, 0);
+                    _allowedCustomerIds.TryAdd(row.Id, 0);
+                    return true;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Test allowlist LID database resolution unavailable");
         }
 
         return false;

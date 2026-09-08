@@ -750,6 +750,18 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
             return;
         }
 
+        // Merge any historical LID-only customer row into the canonical
+        // identity so a @lid route never creates a duplicate support customer
+        // or silently splits the conversation history.
+        var lidOnly = await db.Customers.FirstOrDefaultAsync(
+            x => x.PhoneNumber == lidAddress && x.Id != customer.Id, cancellationToken);
+        if (lidOnly is not null)
+        {
+            await db.Conversations.Where(x => x.CustomerId == lidOnly.Id)
+                .ExecuteUpdateAsync(x => x.SetProperty(c => c.CustomerId, customer.Id), cancellationToken);
+            db.Customers.Remove(lidOnly);
+        }
+
         await PersistTrustedLidLinkAsync(db, customer, lidAddress, cancellationToken);
         _logger.LogInformation("WhatsApp LID/PN mapping persisted for trusted customer channel");
     }
