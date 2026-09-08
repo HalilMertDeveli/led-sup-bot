@@ -1935,6 +1935,7 @@ public sealed class MainViewModel : ViewModelBase
     {
         "CONNECTING" => "Bağlanıyor",
         "AUTHENTICATION_REQUIRED" => "QR gerekli",
+        "DEGRADED_SESSION" => "Oturum bozuk — yeniden bağlayın",
         "ERROR" => "Hata",
         _ => "Bağlantı Yok",
     };

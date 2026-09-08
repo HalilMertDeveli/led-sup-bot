@@ -10,6 +10,23 @@ const counters = {
 };
 
 let installed = false;
+const failureListeners = new Set();
+
+export function onSignalDecryptionFailure(listener) {
+  failureListeners.add(listener);
+  return () => failureListeners.delete(listener);
+}
+
+export function shouldMarkSessionDegraded(snapshot) {
+  return (snapshot?.badMac ?? 0) >= 10 || (snapshot?.decryptFailed ?? 0) >= 5;
+}
+
+function notifyFailure(kind) {
+  const snapshot = getSignalDiagnosticCounters();
+  for (const listener of failureListeners) {
+    try { listener(kind, snapshot); } catch { /* diagnostics must never break message processing */ }
+  }
+}
 
 export function installSafeSignalDiagnostics() {
   if (installed) return;
@@ -23,11 +40,13 @@ export function installSafeSignalDiagnostics() {
     if (text.includes("Bad MAC")) {
       counters.badMac += 1;
       originalError(`[signal] decrypt_failed class=BadMAC count=${counters.badMac}`);
+      notifyFailure("BadMAC");
       return;
     }
     if (text.includes("Failed to decrypt message with any known session")) {
       counters.decryptFailed += 1;
       originalError(`[signal] decrypt_failed class=NoMatchingSession count=${counters.decryptFailed}`);
+      notifyFailure("NoMatchingSession");
       return;
     }
     originalError(...args.map(redactNonPrimitive));

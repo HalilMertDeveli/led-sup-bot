@@ -1,4 +1,4 @@
-import "./safeSignalDiagnostics.js";
+import { onSignalDecryptionFailure, shouldMarkSessionDegraded } from "./safeSignalDiagnostics.js";
 import {
   DisconnectReason,
   downloadMediaMessage,
@@ -55,6 +55,13 @@ function setStatus(next) {
     timestamp: new Date().toISOString(),
   });
 }
+
+onSignalDecryptionFailure((failureClass, counters) => {
+  if (!shouldMarkSessionDegraded(counters) || status === "DEGRADED_SESSION") return;
+  logger.error({ event: "WHATSAPP_SESSION_DEGRADED", failureClass, counters },
+    "WhatsApp encryption session is unhealthy; linked-device reauthentication required");
+  setStatus("DEGRADED_SESSION");
+});
 
 function ensureSessionDir() {
   fs.mkdirSync(config.sessionDir, { recursive: true, mode: 0o700 });
