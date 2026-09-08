@@ -159,16 +159,38 @@ public sealed class PanelFilePackageRegistry(
         CancellationToken cancellationToken = default)
     {
         var package = await db.PanelFilePackages.Include(x => x.Assets).SingleOrDefaultAsync(x => x.Id == packageId, cancellationToken);
-        if (package is null || package.Status != PanelFilePackageStatus.Draft || package.Assets.Any() || package.Version != version) return null;
+        if (package is null || package.Status == PanelFilePackageStatus.Archived || package.Version != version) return null;
         var result = normalizer.Normalize(pixelPitch, panelCode, secondaryCode);
         if (result.Status != PanelIdentityNormalizationStatus.Valid || result.Identity?.CanonicalKey is null) return null;
         if (await db.PanelFilePackages.AnyAsync(x => x.Id != packageId && x.CanonicalKey == result.Identity.CanonicalKey, cancellationToken))
             throw new InvalidOperationException("A package with this canonical identity already exists.");
         package.PixelPitch = result.Identity.PixelPitch!; package.PanelCode = result.Identity.PanelCode!;
         package.SecondaryCode = result.Identity.SecondaryCode!; package.CanonicalKey = result.Identity.CanonicalKey;
+        if (package.OriginalFolderName is not null)
+            package.OriginalFolderName = $"{result.Identity.PixelPitch}+{result.Identity.PanelCode}+{result.Identity.SecondaryCode}";
         package.DisplayName = string.IsNullOrWhiteSpace(displayName) ? package.CanonicalKey : displayName.Trim();
         package.Manufacturer = Trim(manufacturer, 128); package.Description = Trim(description, 2000); package.Notes = Trim(notes, 2000);
-        package.Version++; await db.SaveChangesAsync(cancellationToken); return package;
+        await db.SaveChangesAsync(cancellationToken); return package;
+    }
+
+    public async Task<PanelFilePackage?> RollbackAsync(Guid packageId, CancellationToken cancellationToken = default)
+    {
+        var package = await db.PanelFilePackages.Include(x => x.Assets)
+            .SingleOrDefaultAsync(x => x.Id == packageId, cancellationToken);
+        if (package is null || package.Version <= 1) return null;
+        var previousVersion = package.Version - 1;
+        var previous = package.Assets.Where(x => x.Version == previousVersion).ToList();
+        if (previous.Count < 2 || previous.Any(x => !storage.Exists(x.StorageKey))) return null;
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        foreach (var asset in package.Assets.Where(x => x.Status == PanelFileAssetStatus.Active))
+            asset.Status = PanelFileAssetStatus.Archived;
+        await db.SaveChangesAsync(cancellationToken);
+        foreach (var asset in previous) asset.Status = PanelFileAssetStatus.Active;
+        package.Version = previousVersion;
+        package.Status = PanelFilePackageStatus.Active;
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return package;
     }
 
     private static string? Trim(string? value, int max) => string.IsNullOrWhiteSpace(value) ? null : value.Trim()[..Math.Min(value.Trim().Length, max)];

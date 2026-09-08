@@ -95,6 +95,7 @@ public static class DependencyInjection
             services.AddScoped<IPanelFilePackageRegistry, PanelFilePackageRegistry>();
             services.AddScoped<IPanelFilePackageAdminQuery, PanelFilePackageAdminQuery>();
             services.AddScoped<IPanelFolderImportService, PanelFolderImportService>();
+            services.AddScoped<IPanelBulkFolderImportService, PanelBulkFolderImportService>();
             services.AddSingleton<IRemoteSupportAvailabilityPolicy, TurkeyRemoteSupportAvailabilityPolicy>();
             services.AddSingleton(TimeProvider.System);
             services.Configure<VoiceOptions>(configuration.GetSection(VoiceOptions.SectionName));

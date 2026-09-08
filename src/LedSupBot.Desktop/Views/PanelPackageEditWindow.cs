@@ -31,7 +31,7 @@ public sealed class PanelPackageEditWindow : Window
 
     public PanelPackageEditWindow(PanelPackageDto package)
     {
-        Title = "Taslak Paketi Düzenle";
+        Title = "Paketi Düzenle";
         Width = 520;
         Height = 610;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;

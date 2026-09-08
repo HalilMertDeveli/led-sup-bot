@@ -268,7 +268,7 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
         {
             pixelPitch = "P2.5", panelCode = code, secondaryCode = "2013", version = 1
         });
-        Assert.Equal(HttpStatusCode.Conflict, activeRewrite.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, activeRewrite.StatusCode);
 
         using (var replacement = FileForm("firmware-v2.hex", "abcd"u8.ToArray()))
             Assert.Equal(HttpStatusCode.OK, (await client.PostAsync($"/api/admin/panel-file-packages/{id}/assets/firmware", replacement)).StatusCode);
@@ -290,7 +290,7 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
         Assert.Equal("NOT_DELIVERY_ELIGIBLE", JsonDocument.Parse(await archived.Content.ReadAsStringAsync()).RootElement.GetProperty("readiness").GetString());
 
         var reloaded = await client.GetFromJsonAsync<JsonElement>($"/api/admin/panel-file-packages/{id}");
-        Assert.Equal($"P2.5-{code}-2012", reloaded.GetProperty("canonicalKey").GetString());
+        Assert.Equal($"P2.5-{code}-2013", reloaded.GetProperty("canonicalKey").GetString());
         Assert.Equal(3, reloaded.GetProperty("assets").GetArrayLength());
 
         var defaultList = await client.GetFromJsonAsync<JsonElement>($"/api/admin/panel-file-packages?search={code}");
@@ -364,6 +364,29 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
         Assert.False(await db.PanelFilePackageAssets.AnyAsync(x => x.PanelFilePackageId == id));
         var filesAfter = Directory.GetFiles(fixture.MediaRoot, "*", SearchOption.AllDirectories).ToHashSet(StringComparer.OrdinalIgnoreCase);
         Assert.True(filesBefore.SetEquals(filesAfter));
+    }
+
+    [Fact]
+    public async Task UNDO_01_04_reimport_can_restore_previous_assets_without_deleting_history()
+    {
+        var client = fixture.CreateAdminClient();
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
+        var code = $"{Random.Shared.Next(100000, 999999)}S";
+        using (var first = FolderForm($"P2.5+{code}+2012"))
+            Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/admin/panel-file-packages/import-folder", first)).StatusCode);
+        using (var second = FolderForm($"P2.5+{code}+2012"))
+            Assert.Equal(HttpStatusCode.OK, (await client.PostAsync("/api/admin/panel-file-packages/import-folder", second)).StatusCode);
+
+        await using var beforeDb = fixture.CreateDb();
+        var package = await beforeDb.PanelFilePackages.AsNoTracking().SingleAsync(x => x.PanelCode == code);
+        Assert.Equal(2, package.Version);
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsync($"/api/admin/panel-file-packages/{package.Id}/rollback", null)).StatusCode);
+
+        await using var afterDb = fixture.CreateDb();
+        var restored = await afterDb.PanelFilePackages.Include(x => x.Assets).AsNoTracking().SingleAsync(x => x.Id == package.Id);
+        Assert.Equal(1, restored.Version);
+        Assert.Equal(2, restored.Assets.Count(x => x.Version == 1 && x.Status == PanelFileAssetStatus.Active));
+        Assert.Equal(2, restored.Assets.Count(x => x.Version == 2 && x.Status == PanelFileAssetStatus.Archived));
     }
 
     private static MultipartFormDataContent FileForm(string name, byte[] bytes)

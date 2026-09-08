@@ -8,6 +8,7 @@
    <StackPanel><TextBlock Text="PANEL DOSYALARI" Foreground="{StaticResource TextBrush}" FontSize="18" FontWeight="Bold"/>
     <TextBlock Text="Yetkili panel firmware ve receiver konfigürasyon paketleri" Foreground="{StaticResource CardMutedBrush}"/></StackPanel>
    <StackPanel Grid.Column="1" Orientation="Horizontal">
+    <Button Content="TOPLU KLASÖR İÇE AKTAR" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" Command="{Binding BulkImportPanelFoldersCommand}"/>
     <Button Content="KLASÖR İÇE AKTAR" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" Command="{Binding ImportPanelFolderCommand}"/>
     <Button Content="YENİLE" Style="{StaticResource SecondaryButton}" Command="{Binding RefreshPanelPackagesCommand}"/>
    </StackPanel>
@@ -51,7 +52,8 @@
     <TextBlock Text="{Binding SelectedPanelPackage.Readiness, StringFormat=Hazırlık: {0}}" FontWeight="Bold" Margin="0,0,0,10"/>
     <TextBlock Text="Firmware" FontWeight="SemiBold"/><TextBlock Text="{Binding SelectedPanelPackage.FirmwareLabel}" TextWrapping="Wrap" FontSize="11" Margin="0,2,0,8"/>
     <TextBlock Text="Receiver config" FontWeight="SemiBold"/><TextBlock Text="{Binding SelectedPanelPackage.ReceiverConfigLabel}" TextWrapping="Wrap" FontSize="11" Margin="0,2,0,12"/>
-    <Button Content="TASLAĞI DÜZENLE" Style="{StaticResource SecondaryButton}" Command="{Binding EditPanelPackageCommand}" Margin="0,0,0,6"/>
+    <Button Content="DÜZENLE" Style="{StaticResource SecondaryButton}" Command="{Binding EditPanelPackageCommand}" Margin="0,0,0,6"/>
+    <Button Content="GERİ AL" Style="{StaticResource SecondaryButton}" Command="{Binding RollbackPanelPackageCommand}" Margin="0,0,0,6"/>
     <Button Content=".HEX YÜKLE / DEĞİŞTİR" Style="{StaticResource SecondaryButton}" Command="{Binding UploadFirmwareCommand}" Margin="0,0,0,6"/>
     <Button Content=".RCVBP YÜKLE / DEĞİŞTİR" Style="{StaticResource SecondaryButton}" Command="{Binding UploadReceiverConfigCommand}" Margin="0,0,0,6"/>
     <Button Content="AKTİFLEŞTİR" Style="{StaticResource PrimaryButton}" Command="{Binding ActivatePanelPackageCommand}" Margin="0,0,0,6"/>

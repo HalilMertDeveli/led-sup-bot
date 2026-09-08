@@ -54,11 +54,16 @@ public static class AdminEndpointExtensions
         group.MapMethods("/panel-file-packages/{id:guid}", ["PUT", "PATCH"], UpdatePanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapPost("/panel-file-packages/{id:guid}/activate", ActivatePanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapPost("/panel-file-packages/{id:guid}/archive", ArchivePanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPost("/panel-file-packages/{id:guid}/rollback", RollbackPanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapDelete("/panel-file-packages/{id:guid}", DeletePanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapPost("/panel-file-packages/{id:guid}/assets/{slot}", UploadPanelAssetAsync)
             .DisableAntiforgery().AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapPost("/panel-file-packages/import-folder", ImportPanelFolderAsync)
             .DisableAntiforgery().AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPost("/panel-file-packages/bulk-import/preview", BulkImportPreviewAsync)
+            .AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPost("/panel-file-packages/bulk-import/run", BulkImportRunAsync)
+            .AddEndpointFilter(AdminAuthFilter.InvokeAsync);
 
         return group;
     }
@@ -381,7 +386,7 @@ public static class AdminEndpointExtensions
         {
             var updated = await registry.UpdateDraftAsync(id, request.PixelPitch, request.PanelCode, request.SecondaryCode,
                 request.DisplayName, request.Manufacturer, request.Description, request.Notes, request.Version, ct);
-            if (updated is null) return Results.Conflict(new { error = "Yalnızca boş Draft paket düzenlenebilir." });
+            if (updated is null) return Results.Conflict(new { error = "Paket düzenlenemedi; sürüm değişmiş veya paket arşivlenmiş olabilir." });
             await notifier.NotifyPanelPackagesChangedAsync(id, "updated", ct);
             return Results.Ok(await query.GetAsync(id, ct));
         }
@@ -401,6 +406,15 @@ public static class AdminEndpointExtensions
     {
         if (!await registry.ArchiveAsync(id, ct)) return Results.NotFound();
         await notifier.NotifyPanelPackagesChangedAsync(id, "archived", ct);
+        return Results.Ok(await query.GetAsync(id, ct));
+    }
+
+    private static async Task<IResult> RollbackPanelPackageAsync(Guid id, [FromServices] IPanelFilePackageRegistry registry,
+        [FromServices] IPanelFilePackageAdminQuery query, [FromServices] IAdminEventNotifier notifier, CancellationToken ct)
+    {
+        if (await registry.RollbackAsync(id, ct) is null)
+            return Results.Conflict(new { error = "Önceki geçerli sürüm bulunmuyor." });
+        await notifier.NotifyPanelPackagesChangedAsync(id, "rolled-back", ct);
         return Results.Ok(await query.GetAsync(id, ct));
     }
 
@@ -432,6 +446,65 @@ public static class AdminEndpointExtensions
         catch (KeyNotFoundException) { return Results.NotFound(new { error = "package_not_found" }); }
         catch (IOException) { return Results.Json(new { error = "panel_file_storage_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
         catch (DbUpdateException) { return Results.Json(new { error = "panel_file_persistence_failed" }, statusCode: StatusCodes.Status503ServiceUnavailable); }
+    }
+
+    private static async Task<IResult> BulkImportPreviewAsync([FromBody] PanelBulkImportRequest request,
+        [FromServices] IPanelFilePackageAdminQuery query, CancellationToken ct)
+    {
+        try
+        {
+            var existing = await LoadExistingCanonicalKeysAsync(query, ct);
+            var items = PanelBulkFolderDiscovery.Discover(request.ParentFolder, existing);
+            return Results.Ok(new { items });
+        }
+        catch (DirectoryNotFoundException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (UnauthorizedAccessException ex) { return Results.Problem(detail: ex.Message, statusCode: StatusCodes.Status403Forbidden); }
+    }
+
+    private static async Task<IResult> BulkImportRunAsync([FromBody] PanelBulkImportRequest request,
+        [FromServices] IPanelBulkFolderImportService bulkImporter, [FromServices] IPanelFilePackageAdminQuery query,
+        [FromServices] IAdminEventNotifier notifier, CancellationToken ct)
+    {
+        try
+        {
+            var result = await bulkImporter.ImportAllAsync(request.ParentFolder, ct);
+            var refreshed = await query.ListAsync(null, null, null, null, null, 1_000_000, ct);
+            foreach (var item in result.Results)
+            {
+                if (item.Status != "Imported" || item.CanonicalKey is null)
+                {
+                    continue;
+                }
+
+                var found = refreshed.Items.FirstOrDefault(x => x.CanonicalKey is not null &&
+                    string.Equals(x.CanonicalKey, item.CanonicalKey, StringComparison.OrdinalIgnoreCase));
+                if (found is not null)
+                {
+                    await notifier.NotifyPanelPackagesChangedAsync(found.Id, "imported", ct);
+                }
+            }
+
+            return Results.Ok(result);
+        }
+        catch (DirectoryNotFoundException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        catch (UnauthorizedAccessException ex) { return Results.Problem(detail: ex.Message, statusCode: StatusCodes.Status403Forbidden); }
+    }
+
+    private static async Task<HashSet<string>> LoadExistingCanonicalKeysAsync(IPanelFilePackageAdminQuery query, CancellationToken ct)
+    {
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var list = await query.ListAsync(null, null, null, null, null, 1_000_000, ct);
+        foreach (var item in list.Items)
+        {
+            if (!string.IsNullOrWhiteSpace(item.CanonicalKey))
+            {
+                existing.Add(item.CanonicalKey);
+            }
+        }
+
+        return existing;
     }
 
     private static async Task<IResult> ImportPanelFolderAsync(HttpRequest request,
@@ -477,6 +550,7 @@ public static class AdminEndpointExtensions
     }
 
     internal sealed record LoginRequest(string Password);
+    internal sealed record PanelBulkImportRequest(string ParentFolder);
     internal sealed record PanelPackageWriteRequest(string PixelPitch, string PanelCode, string SecondaryCode,
         string? DisplayName, string? Manufacturer, string? Description, string? Notes, int Version = 1);
 }

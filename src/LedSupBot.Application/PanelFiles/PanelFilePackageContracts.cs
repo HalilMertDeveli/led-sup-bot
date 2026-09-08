@@ -53,6 +53,7 @@ public interface IPanelFilePackageRegistry
     Task<PanelFilePackage?> UpdateDraftAsync(Guid packageId, string pixelPitch, string panelCode, string secondaryCode,
         string? displayName, string? manufacturer, string? description, string? notes, int version,
         CancellationToken cancellationToken = default);
+    Task<PanelFilePackage?> RollbackAsync(Guid packageId, CancellationToken cancellationToken = default);
 }
 
 public sealed class PanelFilePackageOptions
@@ -126,10 +127,62 @@ public static class PanelFolderImportMultipartFactory
 }
 
 public sealed record PanelFolderImportFile(string RelativePath, string FileName, string ContentType, Stream Content);
+
+public sealed record PanelBulkFolderCandidate(string FolderPath, string FolderName, string? CanonicalKey,
+    int FileCount, string Status, string? Error = null);
+
+public static class PanelBulkFolderDiscovery
+{
+    public static IReadOnlyList<PanelBulkFolderCandidate> Discover(string parentFolder,
+        IReadOnlySet<string>? existingCanonicalKeys = null)
+    {
+        var root = Path.GetFullPath(parentFolder);
+        if (!Directory.Exists(root)) throw new DirectoryNotFoundException("Üst klasör bulunamadı.");
+        return Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly)
+            .OrderBy(x => Path.GetFileName(x), StringComparer.OrdinalIgnoreCase)
+            .Select(path => Build(path, existingCanonicalKeys)).ToList();
+    }
+
+    private static PanelBulkFolderCandidate Build(string path, IReadOnlySet<string>? existing)
+    {
+        var name = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar));
+        try
+        {
+            var parsed = PanelFolderPackageNameParser.Parse(name);
+            var files = Directory.EnumerateFiles(path, "*", SearchOption.TopDirectoryOnly)
+                .Count(file => (File.GetAttributes(file) & FileAttributes.ReparsePoint) == 0);
+            if (files < 2) return new(path, name, null, files, "INVALID", "En az 2 dosya gerekli.");
+            var canonical = $"{parsed.PixelPitch.ToUpperInvariant().Replace(',', '.')}" +
+                            $"-{parsed.PanelCode.ToUpperInvariant()}-{parsed.SecondaryCode.ToUpperInvariant()}";
+            return new(path, name, canonical, files,
+                existing?.Contains(canonical) == true ? "REIMPORT" : "READY");
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            return new(path, name, null, 0, "INVALID", ex.Message);
+        }
+    }
+}
 public interface IPanelFolderImportService
 {
     Task<PanelFilePackage> ImportAsync(string folderName, IReadOnlyList<PanelFolderImportFile> files,
         CancellationToken cancellationToken = default);
+}
+
+public sealed record PanelBulkImportItemResult(string FolderName, string? CanonicalKey, string Status, string? Error = null);
+
+public sealed record PanelBulkImportResult(int Found, int Imported, int Skipped, int Failed,
+    IReadOnlyList<PanelBulkImportItemResult> Results);
+
+/// <summary>
+/// Bulk folder import. Discovers first-level child folders and reuses the
+/// SAME authoritative single-folder import service (<see cref="IPanelFolderImportService"/>)
+/// for every candidate. Each package import remains atomic; invalid folders are
+/// skipped without blocking valid ones.
+/// </summary>
+public interface IPanelBulkFolderImportService
+{
+    Task<PanelBulkImportResult> ImportAllAsync(string parentFolder, CancellationToken cancellationToken = default);
 }
 
 public sealed record PanelFileAssetAdminDto(Guid Id, PanelFileAssetType AssetType, string OriginalFileName,

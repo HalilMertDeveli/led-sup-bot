@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
+using LedSupBot.Application.PanelFiles;
 using LedSupBot.Desktop.Models;
 using LedSupBot.Desktop.Services;
 using LedSupBot.Desktop.Views;
@@ -129,12 +130,14 @@ public sealed class MainViewModel : ViewModelBase
         RefreshPanelPackagesCommand = new AsyncRelayCommand(LoadPanelPackagesAsync, () => !IsLoadingPanelPackages);
         CreatePanelPackageCommand = new AsyncRelayCommand(CreatePanelPackageAsync, () => !IsLoadingPanelPackages && !string.IsNullOrWhiteSpace(NewPanelPitch) && !string.IsNullOrWhiteSpace(NewPanelCode) && !string.IsNullOrWhiteSpace(NewSecondaryCode));
         ImportPanelFolderCommand = new AsyncRelayCommand(ImportPanelFolderAsync, () => !IsLoadingPanelPackages);
-        EditPanelPackageCommand = new AsyncRelayCommand(EditPanelPackageAsync, () => SelectedPanelPackage?.Status == "Draft");
+        BulkImportPanelFoldersCommand = new AsyncRelayCommand(BulkImportPanelFoldersAsync, () => !IsLoadingPanelPackages);
+        EditPanelPackageCommand = new AsyncRelayCommand(EditPanelPackageAsync, () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
         UploadFirmwareCommand = new AsyncRelayCommand(() => UploadPanelAssetAsync("firmware", ".hex"), () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
         UploadReceiverConfigCommand = new AsyncRelayCommand(() => UploadPanelAssetAsync("receiver-config", ".rcvbp"), () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
         ActivatePanelPackageCommand = new AsyncRelayCommand(ActivatePanelPackageAsync, () => SelectedPanelPackage?.Status == "Draft");
         ArchivePanelPackageCommand = new AsyncRelayCommand(ArchivePanelPackageAsync, () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
         DeletePanelPackageCommand = new AsyncRelayCommand(DeletePanelPackageAsync, () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
+        RollbackPanelPackageCommand = new AsyncRelayCommand(RollbackPanelPackageAsync, () => SelectedPanelPackage?.Version > 1);
 
         _signalR.ConnectionStateChanged += (state, label) =>
         {
@@ -231,12 +234,14 @@ public sealed class MainViewModel : ViewModelBase
     public ICommand RefreshPanelPackagesCommand { get; }
     public ICommand CreatePanelPackageCommand { get; }
     public ICommand ImportPanelFolderCommand { get; }
+    public ICommand BulkImportPanelFoldersCommand { get; }
     public ICommand EditPanelPackageCommand { get; }
     public ICommand UploadFirmwareCommand { get; }
     public ICommand UploadReceiverConfigCommand { get; }
     public ICommand ActivatePanelPackageCommand { get; }
     public ICommand ArchivePanelPackageCommand { get; }
     public ICommand DeletePanelPackageCommand { get; }
+    public ICommand RollbackPanelPackageCommand { get; }
     public ICommand AddCaseMemoryCommand { get; }
 
     #endregion
@@ -1607,6 +1612,43 @@ public sealed class MainViewModel : ViewModelBase
         finally { IsLoadingPanelPackages = false; }
     }
 
+    private async Task BulkImportPanelFoldersAsync()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Panel paketlerinin bulunduğu üst klasörü seçin" };
+        if (dialog.ShowDialog() != true) return;
+        IReadOnlyList<PanelBulkFolderCandidate> candidates;
+        try
+        {
+            var existing = PanelPackages.Select(x => x.CanonicalKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            candidates = PanelBulkFolderDiscovery.Discover(dialog.FolderName, existing);
+        }
+        catch (Exception ex) { ErrorMessage = MapApiError(ex); return; }
+
+        var valid = candidates.Where(x => x.Status is "READY" or "REIMPORT").ToList();
+        var preview = string.Join(Environment.NewLine, candidates.Take(80).Select(x =>
+            $"{x.FolderName} — {x.FileCount} dosya — {x.Status}"));
+        if (candidates.Count > 80) preview += $"{Environment.NewLine}… ve {candidates.Count - 80} klasör daha";
+        var confirm = System.Windows.MessageBox.Show(
+            $"Bulunan: {candidates.Count}\nGeçerli: {valid.Count}\n\n{preview}\n\nGeçerlileri içe aktarmak istiyor musunuz?",
+            "Toplu klasör içe aktarma önizlemesi", System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Question, System.Windows.MessageBoxResult.No);
+        if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
+        IsLoadingPanelPackages = true; var imported = 0; var failed = 0;
+        try
+        {
+            foreach (var item in valid)
+            {
+                try { await _api.ImportPanelFolderAsync(item.FolderPath); imported++; }
+                catch (Exception ex) { failed++; DesktopLog.Error("BulkImportPanelFolder", ex); }
+            }
+            await LoadPanelPackagesAsync();
+            System.Windows.MessageBox.Show($"Bulunan: {candidates.Count}\nİçe aktarılan: {imported}\nAtlanan: {candidates.Count - valid.Count}\nBaşarısız: {failed}",
+                "Toplu içe aktarma sonucu", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+        }
+        finally { IsLoadingPanelPackages = false; }
+    }
+
     private async Task UploadPanelAssetAsync(string slot, string extension)
     {
         if (SelectedPanelPackage is null) return;
@@ -1658,6 +1700,20 @@ public sealed class MainViewModel : ViewModelBase
             await _api.DeletePanelPackageAsync(selected.Id);
             await LoadPanelPackagesAsync();
         }
+        catch (Exception ex) { ErrorMessage = MapApiError(ex); }
+    }
+
+    private async Task RollbackPanelPackageAsync()
+    {
+        if (SelectedPanelPackage is null) return;
+        var selected = SelectedPanelPackage;
+        if (selected.Version <= 1) { ErrorMessage = "Önceki sürüm bulunmuyor."; return; }
+        var confirmation = System.Windows.MessageBox.Show(
+            $"{selected.CanonicalKey} paketini bir önceki geçerli sürüme geri almak istiyor musunuz?",
+            "Paket sürümünü geri al", System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning, System.Windows.MessageBoxResult.No);
+        if (confirmation != System.Windows.MessageBoxResult.Yes) return;
+        try { await _api.RollbackPanelPackageAsync(selected.Id); await LoadPanelPackagesAsync(); }
         catch (Exception ex) { ErrorMessage = MapApiError(ex); }
     }
 
