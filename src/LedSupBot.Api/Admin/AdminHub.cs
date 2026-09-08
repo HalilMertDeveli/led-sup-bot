@@ -81,6 +81,19 @@ public sealed class SignalRAdminEventNotifier : IAdminEventNotifier
         }
     }
 
+    public async Task NotifyPanelPackagesChangedAsync(Guid packageId, string change, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _hub.Clients.All.SendAsync("PanelPackagesChanged",
+                new PanelPackagesChangedEventPayload { PackageId = packageId, Change = change }, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast panel package {Change} for {PackageId}", change, packageId);
+        }
+    }
+
     public async Task NotifyAnyDeskReadyForHandoffAsync(AnyDeskReadyNotification notification, CancellationToken cancellationToken = default)
     {
         try

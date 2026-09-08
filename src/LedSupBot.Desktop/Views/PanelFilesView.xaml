@@ -55,7 +55,8 @@
     <Button Content=".HEX YÜKLE / DEĞİŞTİR" Style="{StaticResource SecondaryButton}" Command="{Binding UploadFirmwareCommand}" Margin="0,0,0,6"/>
     <Button Content=".RCVBP YÜKLE / DEĞİŞTİR" Style="{StaticResource SecondaryButton}" Command="{Binding UploadReceiverConfigCommand}" Margin="0,0,0,6"/>
     <Button Content="AKTİFLEŞTİR" Style="{StaticResource PrimaryButton}" Command="{Binding ActivatePanelPackageCommand}" Margin="0,0,0,6"/>
-    <Button Content="ARŞİVLE" Style="{StaticResource SecondaryButton}" Command="{Binding ArchivePanelPackageCommand}"/>
+    <Button Content="ARŞİVLE" Style="{StaticResource SecondaryButton}" Command="{Binding ArchivePanelPackageCommand}" Margin="0,0,0,6"/>
+    <Button Content="PAKETİ SİL" Background="#B91C1C" Foreground="White" Command="{Binding DeletePanelPackageCommand}"/>
    </StackPanel></ScrollViewer></Border>
   </Grid>
  </Grid>

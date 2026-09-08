@@ -134,6 +134,7 @@ public sealed class MainViewModel : ViewModelBase
         UploadReceiverConfigCommand = new AsyncRelayCommand(() => UploadPanelAssetAsync("receiver-config", ".rcvbp"), () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
         ActivatePanelPackageCommand = new AsyncRelayCommand(ActivatePanelPackageAsync, () => SelectedPanelPackage?.Status == "Draft");
         ArchivePanelPackageCommand = new AsyncRelayCommand(ArchivePanelPackageAsync, () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
+        DeletePanelPackageCommand = new AsyncRelayCommand(DeletePanelPackageAsync, () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
 
         _signalR.ConnectionStateChanged += (state, label) =>
         {
@@ -163,6 +164,11 @@ public sealed class MainViewModel : ViewModelBase
         _signalR.MessageReceived += (_, _) =>
         {
             ScheduleCoalescedRefresh(TimeSpan.FromMilliseconds(250));
+        };
+
+        _signalR.PanelPackagesChanged += (_, _) =>
+        {
+            if (IsPanelFilesViewVisible) RunOnUi(() => _ = LoadPanelPackagesAsync());
         };
 
         _signalR.WhatsAppStatusChanged += status =>
@@ -230,6 +236,7 @@ public sealed class MainViewModel : ViewModelBase
     public ICommand UploadReceiverConfigCommand { get; }
     public ICommand ActivatePanelPackageCommand { get; }
     public ICommand ArchivePanelPackageCommand { get; }
+    public ICommand DeletePanelPackageCommand { get; }
     public ICommand AddCaseMemoryCommand { get; }
 
     #endregion
@@ -1635,6 +1642,22 @@ public sealed class MainViewModel : ViewModelBase
     {
         if (SelectedPanelPackage is null) return;
         try { await _api.ArchivePanelPackageAsync(SelectedPanelPackage.Id); await LoadPanelPackagesAsync(); }
+        catch (Exception ex) { ErrorMessage = MapApiError(ex); }
+    }
+
+    private async Task DeletePanelPackageAsync()
+    {
+        if (SelectedPanelPackage is null) return;
+        var selected = SelectedPanelPackage;
+        var confirmation = System.Windows.MessageBox.Show(
+            $"{selected.CanonicalKey} paketini silmek istediğinize emin misiniz?\n\nPaket yeni gönderimler için kapatılacak; geçmiş teslimat kayıtları korunacaktır.",
+            "Panel paketini sil", System.Windows.MessageBoxButton.YesNo, System.Windows.MessageBoxImage.Warning, System.Windows.MessageBoxResult.No);
+        if (confirmation != System.Windows.MessageBoxResult.Yes) return;
+        try
+        {
+            await _api.DeletePanelPackageAsync(selected.Id);
+            await LoadPanelPackagesAsync();
+        }
         catch (Exception ex) { ErrorMessage = MapApiError(ex); }
     }
 

@@ -54,6 +54,7 @@ public static class AdminEndpointExtensions
         group.MapMethods("/panel-file-packages/{id:guid}", ["PUT", "PATCH"], UpdatePanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapPost("/panel-file-packages/{id:guid}/activate", ActivatePanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapPost("/panel-file-packages/{id:guid}/archive", ArchivePanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapDelete("/panel-file-packages/{id:guid}", DeletePanelPackageAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapPost("/panel-file-packages/{id:guid}/assets/{slot}", UploadPanelAssetAsync)
             .DisableAntiforgery().AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapPost("/panel-file-packages/import-folder", ImportPanelFolderAsync)
@@ -355,7 +356,8 @@ public static class AdminEndpointExtensions
         await query.GetAsync(id, ct) is { } package ? Results.Ok(package) : Results.NotFound(new { error = "package_not_found" });
 
     private static async Task<IResult> CreatePanelPackageAsync([FromBody] PanelPackageWriteRequest request,
-        [FromServices] IPanelFilePackageRegistry registry, [FromServices] IPanelFilePackageAdminQuery query, CancellationToken ct)
+        [FromServices] IPanelFilePackageRegistry registry, [FromServices] IPanelFilePackageAdminQuery query,
+        [FromServices] IAdminEventNotifier notifier, CancellationToken ct)
     {
         try
         {
@@ -363,6 +365,7 @@ public static class AdminEndpointExtensions
             if (request.Version > 1 || request.Manufacturer is not null || request.Description is not null || request.Notes is not null)
                 package = await registry.UpdateDraftAsync(package.Id, package.PixelPitch, package.PanelCode, package.SecondaryCode,
                     request.DisplayName, request.Manufacturer, request.Description, request.Notes, package.Version, ct) ?? package;
+            await notifier.NotifyPanelPackagesChangedAsync(package.Id, "created", ct);
             return Results.Created($"/api/admin/panel-file-packages/{package.Id}", await query.GetAsync(package.Id, ct));
         }
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
@@ -371,28 +374,47 @@ public static class AdminEndpointExtensions
     }
 
     private static async Task<IResult> UpdatePanelPackageAsync(Guid id, [FromBody] PanelPackageWriteRequest request,
-        [FromServices] IPanelFilePackageRegistry registry, [FromServices] IPanelFilePackageAdminQuery query, CancellationToken ct)
+        [FromServices] IPanelFilePackageRegistry registry, [FromServices] IPanelFilePackageAdminQuery query,
+        [FromServices] IAdminEventNotifier notifier, CancellationToken ct)
     {
         try
         {
             var updated = await registry.UpdateDraftAsync(id, request.PixelPitch, request.PanelCode, request.SecondaryCode,
                 request.DisplayName, request.Manufacturer, request.Description, request.Notes, request.Version, ct);
-            return updated is null ? Results.Conflict(new { error = "Yalnızca boş Draft paket düzenlenebilir." }) : Results.Ok(await query.GetAsync(id, ct));
+            if (updated is null) return Results.Conflict(new { error = "Yalnızca boş Draft paket düzenlenebilir." });
+            await notifier.NotifyPanelPackagesChangedAsync(id, "updated", ct);
+            return Results.Ok(await query.GetAsync(id, ct));
         }
         catch (InvalidOperationException) { return Results.Conflict(new { error = "Bu paket zaten mevcut." }); }
     }
 
     private static async Task<IResult> ActivatePanelPackageAsync(Guid id, [FromServices] IPanelFilePackageRegistry registry,
-        [FromServices] IPanelFilePackageAdminQuery query, CancellationToken ct) =>
-        await registry.ActivateAsync(id, ct) ? Results.Ok(await query.GetAsync(id, ct)) : Results.Conflict(new { error = ".hex ve .rcvbp dosyaları tamamlanmadan paket aktifleştirilemez." });
+        [FromServices] IPanelFilePackageAdminQuery query, [FromServices] IAdminEventNotifier notifier, CancellationToken ct)
+    {
+        if (!await registry.ActivateAsync(id, ct)) return Results.Conflict(new { error = ".hex ve .rcvbp dosyaları tamamlanmadan paket aktifleştirilemez." });
+        await notifier.NotifyPanelPackagesChangedAsync(id, "activated", ct);
+        return Results.Ok(await query.GetAsync(id, ct));
+    }
 
     private static async Task<IResult> ArchivePanelPackageAsync(Guid id, [FromServices] IPanelFilePackageRegistry registry,
-        [FromServices] IPanelFilePackageAdminQuery query, CancellationToken ct) =>
-        await registry.ArchiveAsync(id, ct) ? Results.Ok(await query.GetAsync(id, ct)) : Results.NotFound();
+        [FromServices] IPanelFilePackageAdminQuery query, [FromServices] IAdminEventNotifier notifier, CancellationToken ct)
+    {
+        if (!await registry.ArchiveAsync(id, ct)) return Results.NotFound();
+        await notifier.NotifyPanelPackagesChangedAsync(id, "archived", ct);
+        return Results.Ok(await query.GetAsync(id, ct));
+    }
+
+    private static async Task<IResult> DeletePanelPackageAsync(Guid id, [FromServices] IPanelFilePackageRegistry registry,
+        [FromServices] IAdminEventNotifier notifier, CancellationToken ct)
+    {
+        if (!await registry.ArchiveAsync(id, ct)) return Results.NotFound(new { error = "package_not_found" });
+        await notifier.NotifyPanelPackagesChangedAsync(id, "deleted", ct);
+        return Results.NoContent();
+    }
 
     private static async Task<IResult> UploadPanelAssetAsync(Guid id, string slot, IFormFile file,
         [FromServices] IPanelFileAssetRegistry registry, [FromServices] IPanelFilePackageAdminQuery query,
-        [FromServices] IOptions<PanelFilePackageOptions> options, CancellationToken ct)
+        [FromServices] IOptions<PanelFilePackageOptions> options, [FromServices] IAdminEventNotifier notifier, CancellationToken ct)
     {
         var type = slot.ToLowerInvariant() switch { "firmware" => PanelFileAssetType.FirmwareHex, "receiver-config" => PanelFileAssetType.ReceiverConfigRcvbp, _ => (PanelFileAssetType?)null };
         if (type is null) return Results.BadRequest(new { error = "Geçersiz dosya yuvası." });
@@ -401,6 +423,7 @@ public static class AdminEndpointExtensions
         {
             await using var stream = file.OpenReadStream();
             await registry.StoreAsync(id, type.Value, file.FileName, stream, max, ct);
+            await notifier.NotifyPanelPackagesChangedAsync(id, "asset-updated", ct);
             return Results.Ok(await query.GetAsync(id, ct));
         }
         catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
@@ -413,7 +436,7 @@ public static class AdminEndpointExtensions
 
     private static async Task<IResult> ImportPanelFolderAsync(HttpRequest request,
         [FromServices] IPanelFolderImportService importer, [FromServices] IPanelFilePackageAdminQuery query,
-        CancellationToken ct)
+        [FromServices] IAdminEventNotifier notifier, CancellationToken ct)
     {
         try
         {
@@ -425,6 +448,7 @@ public static class AdminEndpointExtensions
             try
             {
                 var package = await importer.ImportAsync(folderName, files, ct);
+                await notifier.NotifyPanelPackagesChangedAsync(package.Id, "imported", ct);
                 return Results.Ok(await query.GetAsync(package.Id, ct));
             }
             finally

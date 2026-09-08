@@ -16,6 +16,7 @@ public sealed class AdminSignalRService : IAsyncDisposable
     public event Action? StateChanged;
     public event Action<Guid?>? ConversationUpdated;
     public event Action<Guid?, Guid?>? MessageReceived;
+    public event Action<Guid?, string?>? PanelPackagesChanged;
     public event Action<string?>? WhatsAppStatusChanged;
     public event Action<AnyDeskAlertEvent>? AnyDeskReady;
     public event Action? Reconnected;
@@ -130,6 +131,12 @@ public sealed class AdminSignalRService : IAsyncDisposable
         _connection.On<WhatsAppStatusEventPayload>("WhatsAppStatusChanged", payload =>
         {
             WhatsAppStatusChanged?.Invoke(payload?.Status);
+            StateChanged?.Invoke();
+        });
+
+        _connection.On<PanelPackagesChangedEventPayload>("PanelPackagesChanged", payload =>
+        {
+            PanelPackagesChanged?.Invoke(payload?.PackageId, payload?.Change);
             StateChanged?.Invoke();
         });
 

@@ -16,4 +16,7 @@ public sealed class NullAdminEventNotifier : IAdminEventNotifier
 
     public Task NotifyOperatorStateChangedAsync(Guid? conversationId = null, CancellationToken cancellationToken = default) =>
         Task.CompletedTask;
+
+    public Task NotifyPanelPackagesChangedAsync(Guid packageId, string change, CancellationToken cancellationToken = default) =>
+        Task.CompletedTask;
 }

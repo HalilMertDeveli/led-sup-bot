@@ -47,6 +47,14 @@ public sealed class RealtimeSignalRSyncTests
         Assert.Equal(msgId, opDeserialized.MessageId);
         Assert.Equal("Connected", opDeserialized.Status);
 
+        var packageId = Guid.NewGuid();
+        var packagePayload = new PanelPackagesChangedEventPayload { PackageId = packageId, Change = "deleted" };
+        var packageJson = JsonSerializer.Serialize(packagePayload);
+        var packageDeserialized = JsonSerializer.Deserialize<PanelPackagesChangedEventPayload>(packageJson);
+        Assert.NotNull(packageDeserialized);
+        Assert.Equal(packageId, packageDeserialized!.PackageId);
+        Assert.Equal("deleted", packageDeserialized.Change);
+
         var anyDeskPayload = new AnyDeskAlertEvent
         {
             ConversationId = convId,
@@ -77,6 +85,7 @@ public sealed class RealtimeSignalRSyncTests
         await notifier.NotifyMessageReceivedAsync(convId, msgId);
         await notifier.NotifyWhatsAppStatusChangedAsync("Connected");
         await notifier.NotifyOperatorStateChangedAsync(convId);
+        await notifier.NotifyPanelPackagesChangedAsync(Guid.NewGuid(), "imported");
         await notifier.NotifyAnyDeskReadyForHandoffAsync(new AnyDeskReadyNotification(
             convId, "Test", "Summary", "Screen", "Receiver", "Panel", "Config", "AnyDesk"));
 
@@ -153,5 +162,8 @@ public sealed class RealtimeSignalRSyncTests
             OperatorStateChanges.Add(conversationId);
             return Task.CompletedTask;
         }
+
+        public Task NotifyPanelPackagesChangedAsync(Guid packageId, string change, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
     }
 }

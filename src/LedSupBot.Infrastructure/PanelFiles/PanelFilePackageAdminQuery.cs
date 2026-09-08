@@ -21,6 +21,7 @@ public sealed class PanelFilePackageAdminQuery(ApplicationDbContext db, IMediaSt
         if (!string.IsNullOrWhiteSpace(pitch)) query = query.Where(x => x.PixelPitch == pitch.Trim().ToUpper());
         if (!string.IsNullOrWhiteSpace(code)) query = query.Where(x => x.PanelCode == code.Trim().ToUpper());
         if (status is not null) query = query.Where(x => x.Status == status);
+        else query = query.Where(x => x.Status != PanelFilePackageStatus.Archived);
         var boundedLimit = Math.Clamp(limit, 1, 200);
         if (string.IsNullOrWhiteSpace(readiness))
         {

@@ -698,6 +698,12 @@ public sealed class OperatorStateEventPayload
     public string? Status { get; set; }
 }
 
+public sealed class PanelPackagesChangedEventPayload
+{
+    public Guid PackageId { get; set; }
+    public string? Change { get; set; }
+}
+
 public sealed class AnyDeskAlertEvent
 {
     [JsonPropertyName("conversationId")]

@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.PanelFiles;
+using LedSupBot.Domain.PanelFiles;
 using LedSupBot.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -227,6 +228,7 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsJsonAsync("/api/admin/panel-file-packages", body)).StatusCode);
         using var form = FileForm("a.hex", [1]);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsync($"/api/admin/panel-file-packages/{Guid.NewGuid()}/assets/firmware", form)).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await client.DeleteAsync($"/api/admin/panel-file-packages/{Guid.NewGuid()}")).StatusCode);
     }
 
     [Fact]
@@ -290,6 +292,30 @@ public sealed class PanelFileAdminApiTests(WhatsAppWebhookFixture fixture)
         var reloaded = await client.GetFromJsonAsync<JsonElement>($"/api/admin/panel-file-packages/{id}");
         Assert.Equal($"P2.5-{code}-2012", reloaded.GetProperty("canonicalKey").GetString());
         Assert.Equal(3, reloaded.GetProperty("assets").GetArrayLength());
+
+        var defaultList = await client.GetFromJsonAsync<JsonElement>($"/api/admin/panel-file-packages?search={code}");
+        Assert.DoesNotContain(defaultList.GetProperty("items").EnumerateArray(), x => x.GetProperty("id").GetGuid() == id);
+        var archivedList = await client.GetFromJsonAsync<JsonElement>($"/api/admin/panel-file-packages?search={code}&status=Archived");
+        Assert.Contains(archivedList.GetProperty("items").EnumerateArray(), x => x.GetProperty("id").GetGuid() == id);
+    }
+
+    [Fact]
+    public async Task PF2_Admin_delete_soft_deletes_and_preserves_audit_record()
+    {
+        var client = fixture.CreateAdminClient();
+        Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/admin/auth/login", new { password = fixture.AdminPassword })).StatusCode);
+        var code = $"{Random.Shared.Next(100000, 999999)}D";
+        var create = await client.PostAsJsonAsync("/api/admin/panel-file-packages", new { pixelPitch = "P2.5", panelCode = code, secondaryCode = "2012" });
+        var id = JsonDocument.Parse(await create.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetGuid();
+
+        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync($"/api/admin/panel-file-packages/{id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync($"/api/admin/panel-file-packages/{Guid.NewGuid()}")).StatusCode);
+
+        await using var db = fixture.CreateDb();
+        var package = await db.PanelFilePackages.SingleAsync(x => x.Id == id);
+        Assert.Equal(PanelFilePackageStatus.Archived, package.Status);
+        var list = await client.GetFromJsonAsync<JsonElement>($"/api/admin/panel-file-packages?search={code}");
+        Assert.Empty(list.GetProperty("items").EnumerateArray());
     }
 
     [Fact]

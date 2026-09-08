@@ -145,6 +145,11 @@ public sealed class LedSupBotApiClient : IDisposable
     public Task<PanelPackageDto?> UpdatePanelPackageAsync(Guid id, PanelPackageWriteRequest body, CancellationToken ct = default) => SendPanelAsync(HttpMethod.Put, $"api/admin/panel-file-packages/{id:D}", body, ct);
     public Task<PanelPackageDto?> ActivatePanelPackageAsync(Guid id, CancellationToken ct = default) => SendPanelAsync(HttpMethod.Post, $"api/admin/panel-file-packages/{id:D}/activate", null, ct);
     public Task<PanelPackageDto?> ArchivePanelPackageAsync(Guid id, CancellationToken ct = default) => SendPanelAsync(HttpMethod.Post, $"api/admin/panel-file-packages/{id:D}/archive", null, ct);
+    public async Task DeletePanelPackageAsync(Guid id, CancellationToken ct = default)
+    {
+        using var response = await _http.DeleteAsync($"api/admin/panel-file-packages/{id:D}", ct);
+        if (!response.IsSuccessStatusCode) throw new LedSupBotApiException("Panel paketi silinemedi.", (int)response.StatusCode);
+    }
     public async Task<PanelPackageDto?> UploadPanelAssetAsync(Guid id, string slot, string filePath, CancellationToken ct = default)
     {
         await using var file = File.OpenRead(filePath); using var content = new MultipartFormDataContent();

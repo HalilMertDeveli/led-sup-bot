@@ -11,6 +11,8 @@ public interface IAdminEventNotifier
     Task NotifyWhatsAppStatusChangedAsync(string status, CancellationToken cancellationToken = default);
 
     Task NotifyOperatorStateChangedAsync(Guid? conversationId = null, CancellationToken cancellationToken = default);
+
+    Task NotifyPanelPackagesChangedAsync(Guid packageId, string change, CancellationToken cancellationToken = default);
 }
 
 public sealed record AnyDeskReadyNotification(
@@ -44,6 +46,12 @@ public sealed class OperatorStateEventPayload
     public Guid? ConversationId { get; set; }
     public Guid? MessageId { get; set; }
     public string? Status { get; set; }
+}
+
+public sealed class PanelPackagesChangedEventPayload
+{
+    public Guid PackageId { get; set; }
+    public string? Change { get; set; }
 }
 
 public sealed class AnyDeskAlertEvent
