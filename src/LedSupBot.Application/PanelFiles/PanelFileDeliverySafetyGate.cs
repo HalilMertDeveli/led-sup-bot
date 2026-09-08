@@ -251,7 +251,13 @@ public sealed partial class PanelFileDeliverySafetyGate(
     private static bool IsNegative(string? text) => NegativeRegex().IsMatch(text ?? "");
     private static bool IsUncertain(string? text) => UncertainRegex().IsMatch(text ?? "");
     private static bool IsResume(string? text) => ResumeRegex().IsMatch(text ?? "");
-    private static bool IsExplicitPackageRequest(string? text) => ExplicitPackageRequestRegex().IsMatch(text ?? "");
+    private static bool IsExplicitPackageRequest(string? text)
+    {
+        var value = text?.Trim() ?? "";
+        var token = ExplicitPackageTokenRegex().Match(value);
+        if (!token.Success) return false;
+        return token.Length == value.Length || PackageDeliveryIntentRegex().IsMatch(value);
+    }
     private static PanelIdentityCaseState? DeserializeIdentity(string? json) { try { return string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<PanelIdentityCaseState>(json, JsonOptions); } catch (JsonException) { return null; } }
     private static PanelFileDeliveryConfirmationState? DeserializeConfirmation(string? json) { try { return string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<PanelFileDeliveryConfirmationState>(json, JsonOptions); } catch (JsonException) { return null; } }
     private static JsonSerializerOptions CreateOptions() { var options = new JsonSerializerOptions(JsonSerializerDefaults.Web); options.Converters.Add(new JsonStringEnumConverter()); return options; }
@@ -260,5 +266,6 @@ public sealed partial class PanelFileDeliverySafetyGate(
     [GeneratedRegex(@"^\s*(?:hayır|hayir)\s*[.!]?\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)] private static partial Regex NegativeRegex();
     [GeneratedRegex(@"^\s*bilmiyorum\s*[.!]?\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)] private static partial Regex UncertainRegex();
     [GeneratedRegex(@"\bnerede\s+kalm[ıi]şt[ıi]k\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)] private static partial Regex ResumeRegex();
-    [GeneratedRegex(@"^\s*P\s*\d+(?:[.,]\d+)?\s*\+\s*[A-Z0-9-]+\s*\+\s*[A-Z0-9-]+\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)] private static partial Regex ExplicitPackageRequestRegex();
+    [GeneratedRegex(@"(?<![A-Z0-9])P\d+(?:[.,]\d+)?\+[A-Z0-9-]+\+[A-Z0-9-]+(?![A-Z0-9])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)] private static partial Regex ExplicitPackageTokenRegex();
+    [GeneratedRegex(@"\b(?:dosya(?:lar(?:ı|i|ını|ini)?)?|tarama(?:sı|si|sını|sini)?|gönder(?:ir\s*misin(?:iz)?|ebilir\s*misin(?:iz)?|in)?|gonder(?:ir\s*misin(?:iz)?|ebilir\s*misin(?:iz)?|in)?|at(?:ar\s*mısın(?:ız)?|ar\s*misin(?:iz)?)?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking)] private static partial Regex PackageDeliveryIntentRegex();
 }

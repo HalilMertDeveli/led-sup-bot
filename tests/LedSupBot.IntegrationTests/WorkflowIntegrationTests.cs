@@ -2444,6 +2444,7 @@ public sealed class RecordingWhatsAppClient : IWhatsAppClient
 {
     public List<string> SentTexts { get; } = [];
     public List<(string FileName, string ContentType, byte[] Content)> SentDocuments { get; } = [];
+    public List<string> SentDocumentDestinations { get; } = [];
     public int? FailDocumentCall { get; set; }
     public Action? BeforeDocumentSend { get; set; }
     private readonly Dictionary<string, (string Mime, byte[] Content)> _downloads = new(StringComparer.Ordinal);
@@ -2489,6 +2490,7 @@ public sealed class RecordingWhatsAppClient : IWhatsAppClient
         using var memory = new MemoryStream();
         await document.CopyToAsync(memory, cancellationToken);
         SentDocuments.Add((fileName, contentType, memory.ToArray()));
+        SentDocumentDestinations.Add(toPhoneE164);
         return $"fake-doc-{Guid.NewGuid():N}";
     }
 

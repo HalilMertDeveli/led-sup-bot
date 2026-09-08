@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.PanelFiles;
 using LedSupBot.Application.WhatsApp;
 using LedSupBot.Domain.Enums;
 using LedSupBot.Domain.Entities;
@@ -608,5 +609,49 @@ public sealed class WhatsAppWebhookTests
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         await Task.Delay(TimeSpan.FromSeconds(1));
         Assert.Empty(_fixture.WhatsApp.SentTexts);
+    }
+
+    [Fact]
+    public async Task Exact_package_request_through_webhook_sends_every_asset_to_trusted_lid_route()
+    {
+        await using var factory = await CreateAutoReplyFactoryAsync();
+        var code = $"{Random.Shared.Next(100000, 999999)}S";
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IPanelFolderImportService>().ImportAsync(
+                $"P2.5+{code}+2012",
+                [
+                    new("random-a.hex", "random-a.hex", "application/octet-stream", new MemoryStream([1])),
+                    new("random-b.rcvbp", "random-b.rcvbp", "application/octet-stream", new MemoryStream([2])),
+                    new("random-c.bin", "random-c.bin", "application/octet-stream", new MemoryStream([3]))
+                ]);
+        }
+
+        _fixture.WhatsApp.SentDocuments.Clear();
+        _fixture.WhatsApp.SentDocumentDestinations.Clear();
+        var trustedLid = $"{Random.Shared.NextInt64(100000000000000, 999999999999999)}@lid";
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Connector-Secret", _fixture.SharedSecret);
+        var response = await client.PostAsJsonAsync("/internal/whatsapp/events", new
+        {
+            eventType = "IncomingMessage",
+            externalMessageId = $"wamid.package.{Guid.NewGuid():N}",
+            remoteJid = trustedLid,
+            remotePhoneNumber = "905555000299",
+            fromMe = false,
+            botOriginated = false,
+            messageType = "Text",
+            textContent = $"P2.5+{code}+2012 dosyalarını gönder.",
+            textPresent = true,
+            timestamp = DateTimeOffset.UtcNow
+        });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        for (var i = 0; i < 100 && _fixture.WhatsApp.SentDocuments.Count < 3; i++)
+            await Task.Delay(50);
+        Assert.Equal(new[] { "random-a.hex", "random-b.rcvbp", "random-c.bin" },
+            _fixture.WhatsApp.SentDocuments.Select(x => x.FileName));
+        Assert.Equal(3, _fixture.WhatsApp.SentDocumentDestinations.Count);
+        Assert.All(_fixture.WhatsApp.SentDocumentDestinations, destination => Assert.Equal(trustedLid, destination));
     }
 }
