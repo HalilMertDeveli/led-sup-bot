@@ -37,8 +37,8 @@ public sealed class LocalServiceManager : IDisposable
         }
 
         await EnsurePostgreSqlAsync(report, cancellationToken);
-        await EnsureConnectorAsync(report, cancellationToken);
         await EnsureApiAsync(report, cancellationToken);
+        await EnsureConnectorAsync(report, cancellationToken);
         await CheckWhatsAppAsync(report, cancellationToken);
     }
 

@@ -9,6 +9,9 @@ namespace LedSupBot.Desktop;
 
 public partial class App : System.Windows.Application
 {
+    private const string SingleInstanceMutexName = @"Local\LedSupBot.LedSupport.Desktop";
+    private Mutex? _singleInstanceMutex;
+    private bool _ownsSingleInstanceMutex;
     private DesktopSettings? _settings;
     private LocalServiceManager? _serviceManager;
     private LedSupBotApiClient? _apiClient;
@@ -22,6 +25,30 @@ public partial class App : System.Windows.Application
     private async void OnStartup(object sender, StartupEventArgs e)
     {
         RegisterGlobalExceptionHandlers();
+
+        // A second Desktop used to overlap the first one's shutdown: it observed
+        // Connector/API as healthy, adopted neither process, then the first
+        // instance disposed and killed the services it owned. Serialize startup
+        // so the replacement either focuses the existing app or waits until its
+        // project services have been stopped before performing fresh health checks.
+        _singleInstanceMutex = new Mutex(false, SingleInstanceMutexName);
+        try
+        {
+            _ownsSingleInstanceMutex = _singleInstanceMutex.WaitOne(TimeSpan.FromSeconds(3));
+        }
+        catch (AbandonedMutexException)
+        {
+            _ownsSingleInstanceMutex = true;
+        }
+
+        if (!_ownsSingleInstanceMutex)
+        {
+            System.Windows.MessageBox.Show(
+                "LED Support zaten çalışıyor. Sistem tepsisindeki simgeden mevcut pencereyi açabilirsiniz.",
+                "LED Support", MessageBoxButton.OK, MessageBoxImage.Information);
+            Shutdown();
+            return;
+        }
 
         try
         {
@@ -130,6 +157,11 @@ public partial class App : System.Windows.Application
         _tray?.Dispose();
         _serviceManager?.Dispose();
         _apiClient?.Dispose();
+        if (_ownsSingleInstanceMutex)
+        {
+            try { _singleInstanceMutex?.ReleaseMutex(); } catch (ApplicationException) { }
+        }
+        _singleInstanceMutex?.Dispose();
         base.OnExit(e);
     }
 
