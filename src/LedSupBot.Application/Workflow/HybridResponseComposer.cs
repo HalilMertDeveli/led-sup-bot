@@ -40,10 +40,14 @@ public sealed class HybridResponseComposer
 
         if (input.ResponseAction == ConversationResponseAction.AnswerAndHoldWorkflow)
         {
+            var exactEvidenceUnavailable = input.Context.KnowledgeGrounding?.ExactClaimNeedsModel == true &&
+                input.Context.WebGrounding?.HasOfficialSource != true;
             outbound.Add(input.Context.KnowledgeGrounding?.ConflictDetected == true
                 ? "Bu model için dokümanlarda farklı bilgi görüyorum. Cihazın tam model ve versiyonunu netleştirelim; etiketini paylaşabilir misiniz?"
-                : input.Context.KnowledgeGrounding?.ExactClaimNeedsModel == true
-                ? "Net teknik değer söylemek için cihazın tam model ve versiyon etiketini görmem lazım. Etiketini veya fotoğrafını atabilir misiniz?"
+                : exactEvidenceUnavailable
+                ? input.Context.KnowledgeGrounding?.DetectedModels.Count > 0
+                    ? "Bu model için doğrulanmış kesin teknik değeri mevcut kaynaklarda bulamadım. Resmî doküman veya ürün etiketini paylaşırsanız netleştirebilirim."
+                    : "Net teknik değer söylemek için cihazın tam model ve versiyon etiketini görmem lazım. Etiketini veya fotoğrafını atabilir misiniz?"
                 : input.AiPlan?.HasUsableReply == true
                 ? input.AiPlan.Reply!
                 : "Bu kısmı netleştirelim. Sorun hangi noktadan sonra başlıyor?");

@@ -8,7 +8,7 @@ using LedSupBot.Application.Media;
 using LedSupBot.Application.Training;
 using LedSupBot.Application.Workflow.Diagnostics;
 using LedSupBot.Application.Workflow.Web;
-using LedSupBot.Application.CaseMemory;
+using LedSupBot.Application.Workflow.TechnicalAnswers;
 using LedSupBot.Application.WhatsApp;
 using LedSupBot.Application.PanelFiles;
 using LedSupBot.Domain.Entities;
@@ -28,22 +28,20 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
     private readonly AiResponsePlanner _responsePlanner;
     private readonly IConversationContextBuilder _contextBuilder;
     private readonly HybridResponseComposer _responseComposer;
-    private readonly TechnicalKnowledgeGroundingService _knowledgeGrounding;
+    private readonly ITechnicalAnswerContextBuilder _technicalAnswerContext;
     private readonly TechnicalImageAnalysisService _imageAnalysis;
     private readonly DiagnosticStateService _diagnostics;
-    private readonly IWebGroundingService _webGrounding;
-    private readonly IVerifiedCaseMemoryService _caseMemory;
     private readonly IAdminEventNotifier _notifier;
     private readonly AiExtractionAuditWriter _aiAudit;
     private readonly WorkflowOptions _options;
     private readonly AiExtractionOptions _aiOptions;
-    private readonly WebGroundingOptions _webOptions;
     private readonly ILogger<ConversationWorkflowService> _logger;
     private readonly IPanelIdentityCoordinator _panelIdentityCoordinator;
     private readonly IPanelFileDeliverySafetyGate _panelFileDeliverySafetyGate;
     private readonly IPanelFileDeliveryService _panelFileDeliveryService;
     private readonly IRemoteSupportAvailabilityPolicy _remoteSupportAvailability;
     private readonly TimeProvider _timeProvider;
+    private readonly IWhatsAppTestAllowlist _testAllowlist;
 
     public ConversationWorkflowService(
         IApplicationDbContext db,
@@ -52,21 +50,19 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         AiResponsePlanner responsePlanner,
         IConversationContextBuilder contextBuilder,
         HybridResponseComposer responseComposer,
-        TechnicalKnowledgeGroundingService knowledgeGrounding,
+        ITechnicalAnswerContextBuilder technicalAnswerContext,
         TechnicalImageAnalysisService imageAnalysis,
         DiagnosticStateService diagnostics,
-        IWebGroundingService webGrounding,
-        IVerifiedCaseMemoryService caseMemory,
         IAdminEventNotifier notifier,
         AiExtractionAuditWriter aiAudit,
         IOptions<WorkflowOptions> options,
         IOptions<AiExtractionOptions> aiOptions,
-        IOptions<WebGroundingOptions> webOptions,
         IPanelIdentityCoordinator panelIdentityCoordinator,
         IPanelFileDeliverySafetyGate panelFileDeliverySafetyGate,
         IPanelFileDeliveryService panelFileDeliveryService,
         IRemoteSupportAvailabilityPolicy remoteSupportAvailability,
         TimeProvider timeProvider,
+        IWhatsAppTestAllowlist testAllowlist,
         ILogger<ConversationWorkflowService> logger)
     {
         _db = db;
@@ -75,21 +71,19 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         _responsePlanner = responsePlanner;
         _contextBuilder = contextBuilder;
         _responseComposer = responseComposer;
-        _knowledgeGrounding = knowledgeGrounding;
+        _technicalAnswerContext = technicalAnswerContext;
         _imageAnalysis = imageAnalysis;
         _diagnostics = diagnostics;
-        _webGrounding = webGrounding;
-        _caseMemory = caseMemory;
         _notifier = notifier;
         _aiAudit = aiAudit;
         _options = options.Value;
         _aiOptions = aiOptions.Value;
-        _webOptions = webOptions.Value;
         _panelIdentityCoordinator = panelIdentityCoordinator;
         _panelFileDeliverySafetyGate = panelFileDeliverySafetyGate;
         _panelFileDeliveryService = panelFileDeliveryService;
         _remoteSupportAvailability = remoteSupportAvailability;
         _timeProvider = timeProvider;
+        _testAllowlist = testAllowlist;
         _logger = logger;
     }
 
@@ -100,6 +94,12 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             inbound.ConversationId,
             inbound.ExternalMessageId,
             inbound.MessageType);
+
+        if (_testAllowlist.IsExcluded(inbound.CustomerPhoneE164))
+        {
+            _logger.LogInformation("Workflow safety blocked excluded customer before AI or retrieval");
+            return;
+        }
 
         var conversation = await _db.Conversations
             .AsNoTracking()
@@ -182,34 +182,24 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
         context.DiagnosticContext = DiagnosticStateService.BuildContext(diagnosticTurn.State);
         var analysisText = BuildImageAnalysisText(imageAnalysis);
         var effectiveTechnicalText = string.Join(' ', new[] { inbound.TextContent, analysisText }.Where(x => !string.IsNullOrWhiteSpace(x)));
-        var grounding = await _knowledgeGrounding.TryGroundAsync(effectiveTechnicalText, slots, context, cancellationToken);
-        context.TechnicalKnowledgeContext = grounding.Context;
-        context.KnowledgeGrounding = grounding;
-
+        var localIntent = ConversationSemantics.Detect(inbound.TextContent);
         var activeDiagnostic = diagnosticTurn.State.Issues.FirstOrDefault(x =>
             x.Id == diagnosticTurn.State.ActiveIssueId && x.Status != DiagnosticIssueStatus.Resolved);
-        if (activeDiagnostic is not null)
-        {
-            var model = slots.ReceiverModel is not null
+        var evidence = await _technicalAnswerContext.BuildAsync(new TechnicalAnswerContextRequest(
+            context,
+            slots,
+            effectiveTechnicalText,
+            localIntent,
+            activeDiagnostic?.PrimarySymptom,
+            slots.ReceiverModel is not null
                 ? ReceiverModelParser.ToDisplayString(slots.ReceiverModel.Value)
-                : supportCase.ReceiverInformation?.Model ?? grounding.DetectedModels.FirstOrDefault();
-            var completedChecks = activeDiagnostic.Steps.Select(x => x.RequestedAction).ToArray();
-            context.CaseMemory = await _caseMemory.SearchAsync(activeDiagnostic.PrimarySymptom, model, completedChecks, cancellationToken);
-            if (context.CaseMemory.Used)
-            {
-                context.CaseMemoryContext = string.Join("\n", context.CaseMemory.Memories.Select(x =>
-                    $"VERIFIED PRIOR CASE: Similar symptom={x.Symptom}; Device={x.DeviceModel ?? "generic"}; " +
-                    $"Previous verified experience={x.Resolution}; Confidence={x.Confidence:0.00}. " +
-                    "Treat as historical experience, not proof of the current root cause."));
-            }
-            _logger.LogInformation("CaseMemoryAttempted=1 CaseMemoryUsed={Used} CandidateCount={Count} SelectedMemoryIds={Ids} DeviceModel={Model}",
-                context.CaseMemory.Used ? 1 : 0, context.CaseMemory.Memories.Count,
-                string.Join(',', context.CaseMemory.Memories.Select(x => x.Id)), model);
-        }
+                : supportCase.ReceiverInformation?.Model,
+            activeDiagnostic?.Steps.Select(x => x.RequestedAction).ToArray()), cancellationToken);
+        var grounding = evidence.Spec;
+        var webResult = evidence.Web;
 
         ValidatedAiResponsePlan? aiPlan = null;
         var aiReplyWasProviderGenerated = false;
-        var localIntent = ConversationSemantics.Detect(inbound.TextContent);
         var deterministicAcknowledgement = localIntent == LedSupBot.Application.Abstractions.ConversationIntent.Acknowledgement;
         if (!panelIdentityTurn.Attempted && ((inbound.MessageType == MessageType.Text && !string.IsNullOrWhiteSpace(inbound.TextContent) && !deterministicAcknowledgement) || imageAnalysis is not null))
         {
@@ -233,6 +223,28 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                     "Gemini planner unavailable conversationId={ConversationId} fallback=deterministic",
                     conversation.Id);
             }
+            if (webResult.Attempted && webResult.Used && !string.IsNullOrWhiteSpace(webResult.Reply) &&
+                aiPlan?.HasUsableReply != true)
+            {
+                // The grounded web response is only a resilient fallback when the final
+                // planner is unavailable. A successful planner has already received the
+                // bounded web evidence and remains the final response generator.
+                aiPlan = new ValidatedAiResponsePlan(
+                    aiPlan?.Intent ?? localIntent, webResult.Reply, null, false, null,
+                    ShouldAnswerQuestion: true, ShouldContinueWorkflowNow: false,
+                    AnswerConfidence: webResult.HasOfficialSource ? 0.82 : 0.58);
+                aiReplyWasProviderGenerated = true;
+            }
+            else if (webResult.Attempted && !webResult.Used)
+            {
+                aiPlan = new ValidatedAiResponsePlan(
+                    aiPlan?.Intent ?? localIntent,
+                    "Şu an güncel bilgiyi güvenilir bir web kaynağından doğrulayamıyorum; kesin bir değer söylemem doğru olmaz.",
+                    null, false, null,
+                    ShouldAnswerQuestion: true, ShouldContinueWorkflowNow: false,
+                    AnswerConfidence: 0.2);
+                aiReplyWasProviderGenerated = false;
+            }
             if (aiPlan?.IssueSummary is not null)
             {
                 var mergedIssue = IssueSummaryMerger.Merge(supportCase.IssueSummary, aiPlan.IssueSummary);
@@ -253,7 +265,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
             var operatorSummary = BuildOperatorSummary(
                 aiPlan?.AiOperatorSummary,
-                grounding,
+                evidence,
                 geminiAttempted: true,
                 geminiSucceeded: aiPlan?.HasUsableReply == true);
             if (imageAnalysis is not null)
@@ -287,43 +299,6 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             effectiveIntent = LedSupBot.Application.Abstractions.ConversationIntent.WorkflowInformation;
         }
         var responseAction = ConversationSemantics.ResolveAction(effectiveIntent);
-
-        var webRoute = InformationSourceRoutingPolicy.Decide(inbound.TextContent, effectiveIntent, grounding, _webOptions);
-        var webResult = WebGroundingResult.NotAttempted;
-        if (webRoute != InformationSourceRoute.NoSearch)
-        {
-            var publicQuery = InformationSourceRoutingPolicy.BuildPublicQuery(inbound.TextContent ?? string.Empty);
-            _logger.LogInformation("WebSearchRequests=1 route={Route} conversationId={ConversationId}", webRoute, conversation.Id);
-            webResult = string.IsNullOrWhiteSpace(publicQuery)
-                ? WebGroundingResult.Failed
-                : await _webGrounding.SearchAsync(publicQuery, cancellationToken);
-            _logger.LogInformation("WebSearchUsed={WebSearchUsed} sourceCount={SourceCount} conversationId={ConversationId}",
-                webResult.Used ? 1 : 0, webResult.Sources.Count, conversation.Id);
-
-            var exactSpecIsAuthoritative = grounding.Level == GroundingLevel.GroundedExact && grounding.Used;
-            var exactClaimNeedsModel = grounding.ExactClaimNeedsModel;
-            var webReply = exactClaimNeedsModel
-                ? "Kesin teknik değeri doğrulayabilmem için kartın tam modelini veya etiket fotoğrafını paylaşır mısınız?"
-                : webResult.Used && !string.IsNullOrWhiteSpace(webResult.Reply)
-                    ? webResult.Reply
-                    : "Şu an güncel bilgiyi web üzerinden doğrulayamıyorum.";
-            if (exactSpecIsAuthoritative && aiPlan?.HasUsableReply == true)
-            {
-                // Web is supplemental metadata for exact specifications; it may not
-                // replace the response grounded in the verified internal Spec corpus.
-                webReply = aiPlan.Reply!;
-            }
-            aiPlan = (aiPlan ?? new ValidatedAiResponsePlan(
-                effectiveIntent, null, null, false, null)) with
-            {
-                Intent = effectiveIntent,
-                Reply = webReply,
-                ShouldAnswerQuestion = true,
-                ShouldContinueWorkflowNow = false,
-            };
-            aiReplyWasProviderGenerated = webResult.Used;
-            responseAction = ConversationResponseAction.AnswerOnly;
-        }
 
         var duplicateDiagnosticCheck = await _diagnostics.ApplyPlannerProposalAsync(supportCase.Id, inbound.MessageId, aiPlan,
             grounding.DetectedModels.FirstOrDefault(), cancellationToken);
@@ -489,17 +464,18 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                             grounding,
                             imageAnalysis);
                         if (panelIdentityTurn.Attempted) deterministicSource = AiTrainingSourceDecision.BackendState;
-                        var webSource = webResult.Attempted
-                            ? webResult.Used
-                                ? imageAnalysis is not null && grounding.Used ? AiTrainingSourceDecision.VisionRagAndWeb
-                                    : grounding.Used ? AiTrainingSourceDecision.RagAndWeb
-                                    : AiTrainingSourceDecision.WebSearch
+                        var webSource = webResult.Used
+                            ? imageAnalysis is not null && grounding.Used ? AiTrainingSourceDecision.VisionRagAndWeb
+                                : grounding.Used ? AiTrainingSourceDecision.RagAndWeb
                                 : AiTrainingSourceDecision.WebSearch
                             : (AiTrainingSourceDecision?)null;
                         var caseMemorySource = context.CaseMemory?.Used == true
                             ? webResult.Used
                                 ? grounding.Used ? AiTrainingSourceDecision.CaseMemoryRagAndWeb : AiTrainingSourceDecision.CaseMemoryAndWeb
                                 : grounding.Used ? AiTrainingSourceDecision.CaseMemoryAndRag : AiTrainingSourceDecision.CaseMemory
+                            : (AiTrainingSourceDecision?)null;
+                        var contextualSource = evidence.Training.Used || evidence.SameCustomerMemory.Used
+                            ? AiTrainingSourceDecision.Mixed
                             : (AiTrainingSourceDecision?)null;
 
                         return (AiReplySnapshotDraft?)AiReplySnapshotFactory.Create(
@@ -516,9 +492,10 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                         imageAnalysis,
                         context.DiagnosticContext,
                         providerGenerated ? _aiOptions.ModelName : null,
-                        caseMemorySource ?? webSource ?? (providerGenerated ? null : deterministicSource),
-                        webResult.Attempted ? (webResult.Used ? webRoute.ToString() : "WebSearchFailed")
-                            : providerGenerated ? null : deterministicSource.ToString(),
+                        caseMemorySource ?? webSource ?? contextualSource ?? (providerGenerated ? null : deterministicSource),
+                        providerGenerated ? BuildEvidenceReplySource(evidence)
+                            : webResult.Attempted && !webResult.Used ? "WebSearchFailed"
+                            : deterministicSource.ToString(),
                         webResult,
                         panelIdentityTurn.Attempted ? panelIdentityTurn.ContextJson : null);
                     })
@@ -603,19 +580,39 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
     private static string? BuildOperatorSummary(
         string? aiSummary,
-        KnowledgeGroundingResult grounding,
+        TechnicalAnswerEvidence evidence,
         bool geminiAttempted,
         bool geminiSucceeded)
     {
+        var grounding = evidence.Spec;
         if (!grounding.Attempted && string.IsNullOrWhiteSpace(aiSummary) && !geminiAttempted) return null;
         var replySource = geminiSucceeded
-            ? grounding.Used ? "Gemini + RAG" : "Gemini general"
+            ? string.Join(" + ", new[]
+            {
+                "Gemini",
+                grounding.Used ? "RAG" : null,
+                evidence.Training.Used ? "Training" : null,
+                evidence.SameCustomerMemory.Used ? "CustomerHistory" : null,
+                evidence.CaseMemory.Used ? "CaseMemory" : null,
+                evidence.Web.Used ? "Web" : null,
+            }.Where(x => x is not null))
             : "deterministic fallback";
         var aiTrace = $"Gemini attempted={geminiAttempted}; success={geminiSucceeded}; replySource={replySource}";
         var value = string.IsNullOrWhiteSpace(aiSummary)
-            ? $"{grounding.ToOperatorTrace()} | {aiTrace}"
-            : $"{aiSummary.Trim()} | {grounding.ToOperatorTrace()} | {aiTrace}";
+            ? $"{grounding.ToOperatorTrace()} | {evidence.ToOperatorTrace()} | {aiTrace}"
+            : $"{aiSummary.Trim()} | {grounding.ToOperatorTrace()} | {evidence.ToOperatorTrace()} | {aiTrace}";
         return value.Length <= 2000 ? value : value[..2000];
+    }
+
+    private static string BuildEvidenceReplySource(TechnicalAnswerEvidence evidence)
+    {
+        var sources = new List<string> { "Gemini" };
+        if (evidence.Spec.Used) sources.Add("SPEC");
+        if (evidence.Training.Used) sources.Add("Training");
+        if (evidence.SameCustomerMemory.Used) sources.Add("CustomerHistory");
+        if (evidence.CaseMemory.Used) sources.Add("CaseMemory");
+        if (evidence.Web.Used) sources.Add("Web");
+        return string.Join('+', sources);
     }
 
     private static bool WasPendingConfirmationSatisfied(ConversationStage priorStage, WorkflowSlotState slots) => priorStage switch

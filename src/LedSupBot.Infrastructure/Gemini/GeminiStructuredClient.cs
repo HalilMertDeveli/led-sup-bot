@@ -132,7 +132,12 @@ public sealed class GeminiStructuredClient
             var text = candidate?.Content?.Parts?.FirstOrDefault()?.Text?.Trim();
             var sources = candidate?.GroundingMetadata?.GroundingChunks?
                 .Where(x => x.Web is not null && Uri.TryCreate(x.Web.Uri, UriKind.Absolute, out _))
-                .Select(x => new WebSourceReference(x.Web!.Title?.Trim() ?? "Web source", x.Web.Uri!))
+                .Select(x => new WebSourceReference(
+                    x.Web!.Title?.Trim() ?? "Web source",
+                    x.Web.Uri!,
+                    DateTimeOffset.UtcNow,
+                    text,
+                    OfficialWebSourcePolicy.IsOfficial(x.Web.Uri!)))
                 .DistinctBy(x => x.Uri)
                 .Take(6)
                 .ToList() ?? [];

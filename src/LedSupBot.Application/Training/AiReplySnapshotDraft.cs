@@ -69,7 +69,7 @@ public sealed record AiKnowledgeSourceSnapshot(
 public static partial class AiReplySnapshotFactory
 {
     public const int SchemaVersion = 4;
-    public const string ResponsePromptVersion = "conversation-planner-v1";
+    public const string ResponsePromptVersion = "conversation-planner-v2-evidence";
     private const int MaxFactCount = 24;
     private const int MaxFactLength = 300;
     private const int MaxDiagnosticLength = 3000;
@@ -163,6 +163,10 @@ public static partial class AiReplySnapshotFactory
             {
                 title = Sanitize(x.Title, 160, out _),
                 uri = SafeWebReference(x.Uri),
+                domain = x.SafeDomain(),
+                retrievedAt = x.RetrievedAt,
+                relevantClaim = Sanitize(x.RelevantClaim, 500, out _),
+                official = x.IsOfficial,
             }), JsonOptions),
             context.CaseMemory?.Attempted == true,
             context.CaseMemory?.Used == true,

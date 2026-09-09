@@ -10,6 +10,7 @@ using LedSupBot.Application.Workflow.Ai;
 using LedSupBot.Application.Workflow.Context;
 using LedSupBot.Application.Workflow.Diagnostics;
 using LedSupBot.Application.Workflow.Web;
+using LedSupBot.Application.Workflow.TechnicalAnswers;
 using LedSupBot.Application.CaseMemory;
 using LedSupBot.Infrastructure.Configuration;
 using LedSupBot.Infrastructure.Gemini;
@@ -85,6 +86,9 @@ public static class DependencyInjection
             services.AddScoped<KnowledgeImporter>();
             services.AddScoped<ITechnicalKnowledgeRetriever, TechnicalKnowledgeRetriever>();
             services.AddScoped<IVerifiedCaseMemoryService, VerifiedCaseMemoryService>();
+            services.AddScoped<IApprovedTrainingExampleRetriever, ApprovedTrainingExampleRetriever>();
+            services.AddScoped<ISameCustomerConversationMemory, SameCustomerConversationMemory>();
+            services.AddScoped<ITechnicalAnswerContextBuilder, TechnicalAnswerContextBuilder>();
             services.AddSingleton<IPanelIdentityNormalizer, PanelIdentityNormalizer>();
             services.AddSingleton<IPanelIdentityTextParser, PanelIdentityTextParser>();
             services.AddScoped<IPanelFilePackageResolver, PanelFilePackageResolver>();
