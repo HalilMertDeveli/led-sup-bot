@@ -9,6 +9,7 @@ public sealed class PanelBulkImportUiWiringTests
         var mainWindow = File.ReadAllText(Path.Combine(root, "src", "LedSupBot.Desktop", "MainWindow.xaml"));
         var panelView = File.ReadAllText(Path.Combine(root, "src", "LedSupBot.Desktop", "Views", "PanelFilesView.xaml"));
         var viewModel = File.ReadAllText(Path.Combine(root, "src", "LedSupBot.Desktop", "ViewModels", "MainViewModel.cs"));
+        var browserWindow = File.ReadAllText(Path.Combine(root, "src", "LedSupBot.Desktop", "Views", "PanelImportBrowserWindow.cs"));
         var previewWindow = File.ReadAllText(Path.Combine(root, "src", "LedSupBot.Desktop", "Views", "PanelBulkImportWindow.cs"));
 
         Assert.Contains("<views:PanelFilesView", mainWindow, StringComparison.Ordinal);
@@ -17,13 +18,21 @@ public sealed class PanelBulkImportUiWiringTests
         Assert.Contains("public ICommand BulkImportPanelFoldersCommand { get; }", viewModel, StringComparison.Ordinal);
         Assert.Contains("BulkImportPanelFoldersCommand = new AsyncRelayCommand(BulkImportPanelFoldersAsync, () => !IsLoadingPanelPackages);",
             viewModel, StringComparison.Ordinal);
-        Assert.Contains("new PanelBulkImportWindow(candidates)", viewModel, StringComparison.Ordinal);
-        Assert.Contains("previewWindow.SelectedCandidates", viewModel, StringComparison.Ordinal);
-        Assert.Contains("TÜMÜNÜ SEÇ", previewWindow, StringComparison.Ordinal);
-        Assert.Contains("SEÇİMİ TEMİZLE", previewWindow, StringComparison.Ordinal);
-        Assert.Contains("SADECE GEÇERLİLERİ SEÇ", previewWindow, StringComparison.Ordinal);
+        Assert.Contains("new PanelImportBrowserWindow(dialog.FolderName)", viewModel, StringComparison.Ordinal);
+        Assert.Contains("PanelImportSelectionNormalizer.Normalize(browser.SelectedPaths, existing)", viewModel, StringComparison.Ordinal);
+        Assert.Contains("new PanelBulkImportWindow(plan)", viewModel, StringComparison.Ordinal);
+        Assert.Contains("previewWindow.SelectedPackages", viewModel, StringComparison.Ordinal);
+        Assert.Contains("SelectionMode = DataGridSelectionMode.Extended", browserWindow, StringComparison.Ordinal);
+        Assert.Contains("Keyboard.Modifiers.HasFlag(ModifierKeys.Control)", browserWindow, StringComparison.Ordinal);
+        Assert.Contains("_grid.SelectAll()", browserWindow, StringComparison.Ordinal);
+        Assert.Contains("GERİ", browserWindow, StringComparison.Ordinal);
+        Assert.Contains("YUKARI", browserWindow, StringComparison.Ordinal);
+        Assert.Contains("YENİLE", browserWindow, StringComparison.Ordinal);
+        Assert.Contains("SEÇİMİ TEMİZLE", browserWindow, StringComparison.Ordinal);
+        Assert.Contains("ÖNİZLE", browserWindow, StringComparison.Ordinal);
         Assert.Contains("SEÇİLENLERİ İÇE AKTAR", previewWindow, StringComparison.Ordinal);
-        Assert.Contains("x.IsSelected && x.CanSelect", previewWindow, StringComparison.Ordinal);
+        Assert.Contains("plan.ImportablePackages", previewWindow, StringComparison.Ordinal);
+        Assert.Contains("ImportPanelFilesAsync(item.FolderName, item.FilePaths)", viewModel, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

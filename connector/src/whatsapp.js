@@ -1,4 +1,4 @@
-import { onSignalDecryptionFailure, shouldMarkSessionDegraded } from "./safeSignalDiagnostics.js";
+import { onSignalDecryptionFailure, resetSignalDiagnosticCounters, shouldMarkSessionDegraded } from "./safeSignalDiagnostics.js";
 import {
   DisconnectReason,
   downloadMediaMessage,
@@ -7,7 +7,6 @@ import {
   useMultiFileAuthState,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
-import fs from "node:fs";
 import pino from "pino";
 import qrcode from "qrcode-terminal";
 import { config } from "./config.js";
@@ -19,12 +18,18 @@ import { jidDomain } from "./messageMap.js";
 import { forwardEventToAspNet } from "./webhook.js";
 import { assertNonSelfJid, isSelfJid, remoteJidType, setConnectedSelfJids } from "./selfIdentity.js";
 import { mapContactUpdate } from "./contactMap.js";
+import { archiveAndResetSessionDirectory, ensureSessionDirectory } from "./sessionStore.js";
+import { createQrMatrix } from "./qrMatrix.js";
 
 /** @type {ReturnType<typeof makeWASocket> | null} */
 let sock = null;
 let status = "DISCONNECTED";
 let reconnectTimer = null;
-let starting = false;
+let startPromise = null;
+let resetting = false;
+let lifecycleGeneration = 0;
+let sessionDegraded = false;
+let latestQrModules = [];
 /** @type {Set<string>} */
 const botSentIds = new Set();
 
@@ -57,15 +62,12 @@ function setStatus(next) {
 }
 
 onSignalDecryptionFailure((failureClass, counters) => {
-  if (!shouldMarkSessionDegraded(counters) || status === "DEGRADED_SESSION") return;
+  if (!shouldMarkSessionDegraded(counters) || sessionDegraded) return;
+  sessionDegraded = true;
   logger.error({ event: "WHATSAPP_SESSION_DEGRADED", failureClass, counters },
     "WhatsApp encryption session is unhealthy; linked-device reauthentication required");
   setStatus("DEGRADED_SESSION");
 });
-
-function ensureSessionDir() {
-  fs.mkdirSync(config.sessionDir, { recursive: true, mode: 0o700 });
-}
 
 function scheduleReconnect() {
   if (reconnectTimer) return;
@@ -80,12 +82,16 @@ function scheduleReconnect() {
   }, delayMs);
 }
 
-export async function startWhatsApp() {
-  if (starting) return;
-  starting = true;
-  try {
-    ensureSessionDir();
-    setStatus("CONNECTING");
+export function startWhatsApp() {
+  if (startPromise) return startPromise;
+  startPromise = startWhatsAppCore().finally(() => { startPromise = null; });
+  return startPromise;
+}
+
+async function startWhatsAppCore() {
+  const generation = ++lifecycleGeneration;
+  ensureSessionDirectory(config.sessionDir);
+  setStatus("CONNECTING");
 
     const { state, saveCreds } = await useMultiFileAuthState(config.sessionDir);
     const { version } = await fetchLatestBaileysVersion();
@@ -93,7 +99,9 @@ export async function startWhatsApp() {
     // Keep Baileys protocol logs quiet — they can include sensitive handshake fields.
     const baileysLogger = pino({ level: "silent" });
 
-    sock = makeWASocket({
+    if (generation !== lifecycleGeneration || resetting) return;
+
+    const activeSocket = makeWASocket({
       version,
       auth: state,
       logger: baileysLogger,
@@ -101,10 +109,19 @@ export async function startWhatsApp() {
       syncFullHistory: false,
       markOnlineOnConnect: false,
     });
+    sock = activeSocket;
 
-    sock.ev.on("creds.update", saveCreds);
+    activeSocket.ev.on("creds.update", async () => {
+      if (sock !== activeSocket || generation !== lifecycleGeneration) return;
+      try {
+        await saveCreds();
+      } catch (error) {
+        logger.error({ event: "AUTH_STATE_SAVE_FAILED", err: error?.message }, "WhatsApp credentials could not be persisted");
+      }
+    });
 
-    sock.ev.on("chats.phoneNumberShare", ({ lid, jid }) => {
+    activeSocket.ev.on("chats.phoneNumberShare", ({ lid, jid }) => {
+      if (sock !== activeSocket || generation !== lifecycleGeneration) return;
       logger.info(
         { event: "LID_PN_MAPPING", lid: redactJid(lid), pnJid: redactJid(jid) },
         "WhatsApp shared phone number for LID contact",
@@ -128,13 +145,15 @@ export async function startWhatsApp() {
       }
     };
 
-    sock.ev.on("contacts.upsert", forwardContacts);
-    sock.ev.on("contacts.update", forwardContacts);
+    activeSocket.ev.on("contacts.upsert", forwardContacts);
+    activeSocket.ev.on("contacts.update", forwardContacts);
 
-    sock.ev.on("connection.update", (update) => {
+    activeSocket.ev.on("connection.update", (update) => {
+      if (sock !== activeSocket || generation !== lifecycleGeneration) return;
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
+        latestQrModules = createQrMatrix(qr);
         setStatus("AUTHENTICATION_REQUIRED");
         if (process.stdout.isTTY) {
           console.log("\n=== WhatsApp QR (scan with Linked devices). Do not paste into chats/logs. ===\n");
@@ -146,13 +165,14 @@ export async function startWhatsApp() {
       }
 
       if (connection === "open") {
-        setStatus("CONNECTED");
-        const selfJids = [sock?.user?.id, sock?.user?.lid].filter(Boolean);
+        latestQrModules = [];
+        setStatus(sessionDegraded ? "DEGRADED_SESSION" : "CONNECTED");
+        const selfJids = [activeSocket.user?.id, activeSocket.user?.lid].filter(Boolean);
         setConnectedSelfJids(selfJids);
         void forwardEventToAspNet({
           eventType: "ConnectedIdentity",
-          selfPnJid: sock?.user?.id ? normalizeWhatsAppJid(sock.user.id) : null,
-          selfLidJid: sock?.user?.lid ? normalizeWhatsAppJid(sock.user.lid) : null,
+          selfPnJid: activeSocket.user?.id ? normalizeWhatsAppJid(activeSocket.user.id) : null,
+          selfLidJid: activeSocket.user?.lid ? normalizeWhatsAppJid(activeSocket.user.lid) : null,
           timestamp: new Date().toISOString(),
         });
       } else if (connection === "connecting") {
@@ -160,9 +180,11 @@ export async function startWhatsApp() {
       } else if (connection === "close") {
         const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
         const loggedOut = statusCode === DisconnectReason.loggedOut;
+        sock = null;
+        activeSocket.ev.removeAllListeners();
         setStatus(loggedOut ? "AUTHENTICATION_REQUIRED" : "DISCONNECTED");
 
-        if (!loggedOut) {
+        if (!loggedOut && !resetting) {
           scheduleReconnect();
         } else {
           logger.warn("session logged out; QR required again");
@@ -170,7 +192,8 @@ export async function startWhatsApp() {
       }
     });
 
-    sock.ev.on("messages.upsert", async ({ messages, type }) => {
+    activeSocket.ev.on("messages.upsert", async ({ messages, type }) => {
+      if (sock !== activeSocket || generation !== lifecycleGeneration) return;
       if (type !== "notify" && type !== "append") {
         logger.info(
           { event: "BAILEYS_UPSERT_FILTERED", upsertType: type, batchSize: messages?.length ?? 0 },
@@ -254,7 +277,8 @@ export async function startWhatsApp() {
       }
     });
 
-    sock.ev.on("messages.update", (updates) => {
+    activeSocket.ev.on("messages.update", (updates) => {
+      if (sock !== activeSocket || generation !== lifecycleGeneration) return;
       for (const update of updates) {
         const messageId = update?.key?.id;
         if (!messageId || !botSentIds.has(messageId)) {
@@ -283,9 +307,47 @@ export async function startWhatsApp() {
         });
       }
     });
+}
+
+export function getPairingQrModules() {
+  return latestQrModules.map((row) => [...row]);
+}
+
+export async function resetWhatsAppSession() {
+  if (resetting) throw new Error("session_reset_in_progress");
+  if (startPromise) await startPromise.catch(() => {});
+  resetting = true;
+  try {
+    lifecycleGeneration += 1;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
+    const previousSocket = sock;
+    sock = null;
+    latestQrModules = [];
+    if (previousSocket) {
+      previousSocket.ev.removeAllListeners();
+      try { await previousSocket.logout(); } catch { /* broken sessions may not logout cleanly */ }
+      try { previousSocket.end(new Error("session_reset")); } catch { /* already closed */ }
+    }
+
+    const reset = archiveAndResetSessionDirectory(config.sessionDir);
+    resetSignalDiagnosticCounters();
+    sessionDegraded = false;
+    setConnectedSelfJids([]);
+    setStatus("AUTHENTICATION_REQUIRED");
+    logger.warn(
+      { event: "WHATSAPP_SESSION_RESET", sessionDir: config.sessionDir, backupCreated: reset.backupCreated },
+      "Active WhatsApp auth state archived; new QR authentication required",
+    );
   } finally {
-    starting = false;
+    resetting = false;
   }
+
+  await startWhatsApp();
+  return { status: getStatus() };
 }
 
 export async function sendText(toAddress, text) {

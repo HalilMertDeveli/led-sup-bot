@@ -37,6 +37,7 @@ public static class WhatsAppEventMapper
             "CONNECTED" => WhatsAppConnectionStatus.Connected,
             "CONNECTING" => WhatsAppConnectionStatus.Connecting,
             "AUTHENTICATION_REQUIRED" => WhatsAppConnectionStatus.AuthenticationRequired,
+            "DEGRADED_SESSION" => WhatsAppConnectionStatus.DegradedSession,
             "ERROR" => WhatsAppConnectionStatus.Error,
             _ => WhatsAppConnectionStatus.Disconnected
         };

@@ -91,8 +91,18 @@ public static class PanelFolderImportMultipartFactory
     public static MultipartFormDataContent Create(string folderPath)
     {
         var root = Path.GetFullPath(folderPath);
-        var packageName = PanelFolderPackageNameParser.Parse(Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar)));
         var files = Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly)
+            .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return Create(Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar)), files);
+    }
+
+    public static MultipartFormDataContent Create(string folderName, IReadOnlyList<string> selectedFilePaths)
+    {
+        var packageName = PanelFolderPackageNameParser.Parse(folderName);
+        var files = selectedFilePaths
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
             .ToList();
         ValidateMinimumAssets(files.Select(path => Path.GetFileName(path)!).ToList());
@@ -130,6 +140,170 @@ public sealed record PanelFolderImportFile(string RelativePath, string FileName,
 
 public sealed record PanelBulkFolderCandidate(string FolderPath, string FolderName, string? CanonicalKey,
     int FileCount, string Status, string? Error = null);
+
+public sealed record PanelImportSelectionPackage(string FolderPath, string FolderName, string? CanonicalKey,
+    IReadOnlyList<string> FilePaths, IReadOnlyList<string> SelectedPaths, string Status, string? Error = null)
+{
+    public bool CanImport => Status is "READY" or "REIMPORT";
+}
+
+public sealed record PanelImportSelectionPlan(IReadOnlyList<PanelImportSelectionPackage> Packages)
+{
+    public IReadOnlyList<PanelImportSelectionPackage> ImportablePackages => Packages.Where(x => x.CanImport).ToList();
+}
+
+/// <summary>
+/// Converts an Explorer-style mixture of selected folders and files into package imports.
+/// Package identity always comes from the selected folder or a selected file's immediate
+/// parent. Paths are normalized and de-duplicated before a request is built.
+/// </summary>
+public static class PanelImportSelectionNormalizer
+{
+    public static PanelImportSelectionPlan Normalize(IEnumerable<string> selectedPaths,
+        IReadOnlySet<string>? existingCanonicalKeys = null)
+    {
+        ArgumentNullException.ThrowIfNull(selectedPaths);
+        var groups = new Dictionary<string, SelectionGroup>(StringComparer.OrdinalIgnoreCase);
+        var invalid = new List<PanelImportSelectionPackage>();
+
+        foreach (var rawPath in selectedPaths.Where(x => !string.IsNullOrWhiteSpace(x))
+                     .Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (Directory.Exists(rawPath))
+            {
+                AddDirectory(rawPath, groups, invalid);
+                continue;
+            }
+
+            if (File.Exists(rawPath))
+            {
+                AddFile(rawPath, rawPath, groups, invalid);
+                continue;
+            }
+
+            invalid.Add(new(rawPath, Path.GetFileName(rawPath), null, [], [rawPath],
+                "INVALID", "Seçilen öğe artık mevcut değil."));
+        }
+
+        var packages = groups.Values
+            .Select(group => Build(group, existingCanonicalKeys))
+            .Concat(invalid)
+            .OrderBy(x => x.FolderName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.Status, StringComparer.Ordinal)
+            .ToList();
+        return new PanelImportSelectionPlan(packages);
+    }
+
+    public static bool TryGetCanonicalKey(string directoryPath, out string canonicalKey)
+    {
+        canonicalKey = string.Empty;
+        try
+        {
+            var root = Path.GetFullPath(directoryPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var parsed = PanelFolderPackageNameParser.Parse(Path.GetFileName(root));
+            canonicalKey = $"{parsed.PixelPitch.ToUpperInvariant().Replace(',', '.')}" +
+                           $"-{parsed.PanelCode.ToUpperInvariant()}-{parsed.SecondaryCode.ToUpperInvariant()}";
+            return true;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static void AddDirectory(string directoryPath, IDictionary<string, SelectionGroup> groups,
+        ICollection<PanelImportSelectionPackage> invalid)
+    {
+        try
+        {
+            var info = new DirectoryInfo(directoryPath);
+            if ((info.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("Bağlantı/reparse klasörleri içe aktarılamaz.");
+            if (!TryGetCanonicalKey(directoryPath, out _))
+                throw new InvalidDataException("PACKAGE IDENTITY REQUIRED");
+
+            var files = Directory.EnumerateFiles(directoryPath, "*", SearchOption.TopDirectoryOnly)
+                .Select(Path.GetFullPath).ToList();
+            foreach (var filePath in files)
+            {
+                var file = new FileInfo(filePath);
+                if (!file.Exists || (file.Attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException("Bağlantı/reparse dosyaları içe aktarılamaz.");
+            }
+            var group = GetGroup(directoryPath, groups);
+            group.SelectedPaths.Add(directoryPath);
+            foreach (var filePath in files) group.FilePaths.Add(filePath);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            invalid.Add(new(directoryPath, Path.GetFileName(directoryPath), null, [], [directoryPath],
+                "NO PACKAGE", ex.Message));
+        }
+    }
+
+    private static void AddFile(string filePath, string selectedPath, IDictionary<string, SelectionGroup> groups,
+        ICollection<PanelImportSelectionPackage> invalid)
+    {
+        var parent = Path.GetDirectoryName(filePath);
+        if (string.IsNullOrWhiteSpace(parent) || !TryGetCanonicalKey(parent, out _))
+        {
+            invalid.Add(new(parent ?? filePath, Path.GetFileName(filePath), null, [filePath], [selectedPath],
+                "NO PACKAGE", "PACKAGE IDENTITY REQUIRED"));
+            return;
+        }
+
+        try
+        {
+            var group = GetGroup(parent, groups);
+            group.SelectedPaths.Add(selectedPath);
+            AddEligibleFile(filePath, group);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            invalid.Add(new(parent, Path.GetFileName(filePath), null, [filePath], [selectedPath],
+                "INVALID", ex.Message));
+        }
+    }
+
+    private static void AddEligibleFile(string filePath, SelectionGroup group)
+    {
+        var fullPath = Path.GetFullPath(filePath);
+        var info = new FileInfo(fullPath);
+        if (!info.Exists || (info.Attributes & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Bağlantı/reparse dosyaları içe aktarılamaz.");
+        group.FilePaths.Add(fullPath);
+    }
+
+    private static SelectionGroup GetGroup(string folderPath, IDictionary<string, SelectionGroup> groups)
+    {
+        var normalized = Path.GetFullPath(folderPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (!groups.TryGetValue(normalized, out var group))
+        {
+            group = new SelectionGroup(normalized);
+            groups.Add(normalized, group);
+        }
+        return group;
+    }
+
+    private static PanelImportSelectionPackage Build(SelectionGroup group, IReadOnlySet<string>? existing)
+    {
+        var folderName = Path.GetFileName(group.FolderPath);
+        _ = TryGetCanonicalKey(group.FolderPath, out var canonicalKey);
+        var files = group.FilePaths.OrderBy(x => Path.GetFileName(x), StringComparer.OrdinalIgnoreCase).ToList();
+        var selected = group.SelectedPaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+        if (files.Count < 2)
+            return new(group.FolderPath, folderName, canonicalKey, files, selected, "INVALID", "En az 2 dosya gerekli.");
+        return new(group.FolderPath, folderName, canonicalKey, files, selected,
+            existing?.Contains(canonicalKey) == true ? "REIMPORT" : "READY");
+    }
+
+    private sealed class SelectionGroup(string folderPath)
+    {
+        public string FolderPath { get; } = folderPath;
+        public HashSet<string> FilePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> SelectedPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+}
 
 public static class PanelBulkFolderDiscovery
 {

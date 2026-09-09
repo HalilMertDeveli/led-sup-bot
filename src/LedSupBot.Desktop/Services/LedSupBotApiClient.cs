@@ -54,6 +54,15 @@ public sealed class LedSupBotApiClient : IDisposable
         await GetAsync<SystemStatusResponse>("api/admin/system/status", cancellationToken)
         ?? new SystemStatusResponse();
 
+    public async Task ResetWhatsAppSessionAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.PostAsync("api/admin/system/whatsapp/reset-session", null, cancellationToken);
+        await EnsureSuccessAsync(response);
+    }
+
+    public Task<WhatsAppPairingQrResponse?> GetWhatsAppPairingQrAsync(CancellationToken cancellationToken = default) =>
+        GetAsync<WhatsAppPairingQrResponse>("api/admin/system/whatsapp/pairing-qr", cancellationToken);
+
     public async Task<string?> GetFoundationWhatsAppStatusAsync(CancellationToken cancellationToken = default)
     {
         var status = await GetFoundationStatusAsync(cancellationToken);
@@ -184,6 +193,34 @@ public sealed class LedSupBotApiClient : IDisposable
             catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
             {
                 throw new LedSupBotApiException("Klasör yükleme zaman aşımına uğradı.", inner: ex);
+            }
+        }
+    }
+    public async Task<PanelPackageDto?> ImportPanelFilesAsync(string folderName, IReadOnlyList<string> selectedFilePaths, CancellationToken ct = default)
+    {
+        MultipartFormDataContent content;
+        try
+        {
+            content = PanelFolderImportMultipartFactory.Create(folderName, selectedFilePaths);
+        }
+        catch (InvalidDataException ex)
+        {
+            throw new LedSupBotApiException(ex.Message, inner: ex);
+        }
+        using (content)
+        {
+            try
+            {
+                using var response = await _http.PostAsync("api/admin/panel-file-packages/import-folder", content, ct);
+                return await ReadPanelResponseAsync(response, ct);
+            }
+            catch (HttpRequestException ex)
+            {
+                throw new LedSupBotApiException("API bağlantısı kurulamadı.", inner: ex);
+            }
+            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+            {
+                throw new LedSupBotApiException("Seçili dosyaların yüklenmesi zaman aşımına uğradı.", inner: ex);
             }
         }
     }

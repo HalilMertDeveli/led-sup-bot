@@ -10,6 +10,7 @@
    <StackPanel Grid.Column="1" Orientation="Horizontal">
     <Button Content="TOPLU KLASÖR İÇE AKTAR" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" Command="{Binding BulkImportPanelFoldersCommand}"/>
     <Button Content="KLASÖR İÇE AKTAR" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" Command="{Binding ImportPanelFolderCommand}"/>
+    <Button Content="BİRDEN FAZLA KLASÖR EKLE" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" Command="{Binding ImportMultiplePanelFoldersCommand}"/>
     <Button Content="YENİLE" Style="{StaticResource SecondaryButton}" Command="{Binding RefreshPanelPackagesCommand}"/>
    </StackPanel>
   </Grid>

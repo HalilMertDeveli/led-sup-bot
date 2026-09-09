@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import express from "express";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
-import { getStatus, sendText, sendImage, sendDocument, sendAudio, sendPresence, startWhatsApp, downloadMediaByMessageId } from "./whatsapp.js";
+import { getPairingQrModules, getStatus, resetWhatsAppSession, sendText, sendImage, sendDocument, sendAudio, sendPresence, startWhatsApp, downloadMediaByMessageId } from "./whatsapp.js";
 import { getConnectedSelfJids } from "./selfIdentity.js";
 import { getSignalDiagnosticCounters } from "./safeSignalDiagnostics.js";
 import { documentJsonLimit, validateOutboundDocument } from "./documentPolicy.js";
@@ -34,6 +34,21 @@ app.get("/status", requireSecret, (_req, res) => {
 
 app.get("/self-jids", requireSecret, (_req, res) => {
   res.json({ jids: [...getConnectedSelfJids()] });
+});
+
+app.get("/session/qr", requireSecret, (_req, res) => {
+  const modules = getPairingQrModules();
+  res.json({ available: modules.length > 0, modules, status: getStatus() });
+});
+
+app.post("/session/reset", requireSecret, async (_req, res) => {
+  try {
+    const result = await resetWhatsAppSession();
+    return res.status(202).json({ ok: true, status: result.status });
+  } catch (error) {
+    logger.error({ event: "WHATSAPP_SESSION_RESET_FAILED", err: error?.message }, "active session reset failed");
+    return res.status(503).json({ error: "session_reset_failed" });
+  }
 });
 
 app.post("/send/text", requireSecret, async (req, res) => {
@@ -167,7 +182,7 @@ app.post("/download/media", requireSecret, async (req, res) => {
 });
 
 app.listen(config.port, "127.0.0.1", () => {
-  logger.info({ port: config.port }, "connector HTTP listening on loopback only");
+  logger.info({ port: config.port, sessionDir: config.sessionDir }, "connector HTTP listening on loopback only");
   startWhatsApp().catch((error) => {
     logger.error({ err: error?.message }, "failed to start WhatsApp session");
     // Do not crash the HTTP process; status endpoints remain available.

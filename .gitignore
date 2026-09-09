@@ -2,6 +2,8 @@
 [Bb]in/
 [Oo]bj/
 out/
+.codex*/
+.codex-*/
 *.user
 *.suo
 *.userosscache
@@ -29,6 +31,7 @@ admin/.vite/
 connector/node_modules/
 connector/.sessions/
 connector/.session-backups/
+**/.session-backups/
 connector/.env
 *.tsbuildinfo
 npm-debug.log*

@@ -131,6 +131,7 @@ public sealed class MainViewModel : ViewModelBase
         CreatePanelPackageCommand = new AsyncRelayCommand(CreatePanelPackageAsync, () => !IsLoadingPanelPackages && !string.IsNullOrWhiteSpace(NewPanelPitch) && !string.IsNullOrWhiteSpace(NewPanelCode) && !string.IsNullOrWhiteSpace(NewSecondaryCode));
         ImportPanelFolderCommand = new AsyncRelayCommand(ImportPanelFolderAsync, () => !IsLoadingPanelPackages);
         BulkImportPanelFoldersCommand = new AsyncRelayCommand(BulkImportPanelFoldersAsync, () => !IsLoadingPanelPackages);
+        ImportMultiplePanelFoldersCommand = new AsyncRelayCommand(ImportMultiplePanelFoldersAsync, () => !IsLoadingPanelPackages);
         EditPanelPackageCommand = new AsyncRelayCommand(EditPanelPackageAsync, () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
         UploadFirmwareCommand = new AsyncRelayCommand(() => UploadPanelAssetAsync("firmware", ".hex"), () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
         UploadReceiverConfigCommand = new AsyncRelayCommand(() => UploadPanelAssetAsync("receiver-config", ".rcvbp"), () => SelectedPanelPackage is not null && SelectedPanelPackage.Status != "Archived");
@@ -235,6 +236,7 @@ public sealed class MainViewModel : ViewModelBase
     public ICommand CreatePanelPackageCommand { get; }
     public ICommand ImportPanelFolderCommand { get; }
     public ICommand BulkImportPanelFoldersCommand { get; }
+    public ICommand ImportMultiplePanelFoldersCommand { get; }
     public ICommand EditPanelPackageCommand { get; }
     public ICommand UploadFirmwareCommand { get; }
     public ICommand UploadReceiverConfigCommand { get; }
@@ -1614,19 +1616,23 @@ public sealed class MainViewModel : ViewModelBase
 
     private async Task BulkImportPanelFoldersAsync()
     {
-        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Panel paketlerinin bulunduğu üst klasörü seçin" };
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Gezinmeye başlanacak klasörü seçin" };
         if (dialog.ShowDialog() != true) return;
-        IReadOnlyList<PanelBulkFolderCandidate> candidates;
+
+        var browser = new PanelImportBrowserWindow(dialog.FolderName) { Owner = System.Windows.Application.Current.MainWindow };
+        if (browser.ShowDialog() != true) return;
+
+        PanelImportSelectionPlan plan;
         try
         {
             var existing = PanelPackages.Select(x => x.CanonicalKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            candidates = PanelBulkFolderDiscovery.Discover(dialog.FolderName, existing);
+            plan = PanelImportSelectionNormalizer.Normalize(browser.SelectedPaths, existing);
         }
         catch (Exception ex) { ErrorMessage = MapApiError(ex); return; }
 
-        var previewWindow = new PanelBulkImportWindow(candidates) { Owner = System.Windows.Application.Current.MainWindow };
+        var previewWindow = new PanelBulkImportWindow(plan) { Owner = System.Windows.Application.Current.MainWindow };
         if (previewWindow.ShowDialog() != true) return;
-        var selected = previewWindow.SelectedCandidates;
+        var selected = previewWindow.SelectedPackages;
 
         IsLoadingPanelPackages = true; var imported = 0; var failed = 0;
         var results = new List<string>();
@@ -1634,15 +1640,71 @@ public sealed class MainViewModel : ViewModelBase
         {
             foreach (var item in selected)
             {
-                try { await _api.ImportPanelFolderAsync(item.FolderPath); imported++; results.Add($"{item.FolderName}: BAŞARILI"); }
-                catch (Exception ex) { failed++; results.Add($"{item.FolderName}: BAŞARISIZ — {MapApiError(ex)}"); DesktopLog.Error("BulkImportPanelFolder", ex); }
+                try { await _api.ImportPanelFilesAsync(item.FolderName, item.FilePaths); imported++; results.Add($"{item.FolderName}: BAŞARILI"); }
+                catch (Exception ex) { failed++; results.Add($"{item.FolderName}: BAŞARISIZ — {MapApiError(ex)}"); DesktopLog.Error("BulkImportPanelSelection", ex); }
             }
             await LoadPanelPackagesAsync();
             var details = string.Join(Environment.NewLine, results.Take(80));
-            System.Windows.MessageBox.Show($"Seçilen: {selected.Count}\nBaşarılı: {imported}\nBaşarısız: {failed}\nGeçersiz: {candidates.Count(x => x.Status == "INVALID")}\n\n{details}",
+            System.Windows.MessageBox.Show($"İçe aktarılabilir: {selected.Count}\nBaşarılı: {imported}\nBaşarısız: {failed}\nGeçersiz/atlanan: {plan.Packages.Count(x => !x.CanImport)}\n\n{details}",
                 "Toplu içe aktarma sonucu", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
         }
         finally { IsLoadingPanelPackages = false; }
+    }
+
+    private async Task ImportMultiplePanelFoldersAsync()
+    {
+        var seed = new Microsoft.Win32.OpenFolderDialog { Title = "Gezinmeye başlanacak klasörü seçin" };
+        if (seed.ShowDialog() != true) return;
+
+        bool confirmed;
+        IReadOnlyList<string> selectedFolders;
+        try
+        {
+            var picker = new PanelMultiFolderSelectionWindow(seed.FolderName) { Owner = System.Windows.Application.Current.MainWindow };
+            confirmed = picker.ShowDialog() == true;
+            selectedFolders = picker.SelectedPaths;
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("ImportMultiplePanelFolders", ex);
+            ErrorMessage = MapApiError(ex);
+            return;
+        }
+
+        if (!confirmed) return; // İptal: hiçbir değişiklik yapılmaz.
+        if (selectedFolders.Count == 0) return; // Boş seçim: hiçbir değişiklik yapılmaz.
+
+        PanelMultiFolderBatchResult result;
+        IsLoadingPanelPackages = true;
+        try
+        {
+            var existingCanonicalKeys = PanelPackages.Select(x => (string?)x.CanonicalKey).ToList();
+            result = await PanelMultiFolderImport.RunAsync(
+                selectedFolders,
+                existingCanonicalKeys,
+                (folderPath, token) => _api.ImportPanelFolderAsync(folderPath, token), // mevcut tek klasör hattı
+                CancellationToken.None);
+            await LoadPanelPackagesAsync();
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("ImportMultiplePanelFolders", ex);
+            ErrorMessage = MapApiError(ex);
+            return;
+        }
+        finally { IsLoadingPanelPackages = false; }
+
+        var lastAdded = result.Items.LastOrDefault(x => x.Status == PanelMultiFolderItemStatus.Added);
+        if (lastAdded is not null)
+        {
+            SelectedPanelPackage = PanelPackages.FirstOrDefault(x =>
+                string.Equals(x.OriginalFolderName, lastAdded.FolderName, StringComparison.OrdinalIgnoreCase)) ?? SelectedPanelPackage;
+        }
+
+        DesktopLog.Info("ImportMultiplePanelFolders",
+            $"selected={result.SelectedCount} added={result.AddedCount} skippedExisting={result.SkippedExistingCount} failed={result.FailedCount}");
+        System.Windows.MessageBox.Show(PanelMultiFolderImport.BuildResultMessage(result),
+            "Birden fazla klasör ekleme sonucu", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
     }
 
     private async Task UploadPanelAssetAsync(string slot, string extension)

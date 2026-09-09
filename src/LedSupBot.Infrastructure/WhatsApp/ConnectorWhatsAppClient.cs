@@ -42,6 +42,31 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
         return Task.CompletedTask;
     }
 
+    public async Task ResetSessionAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.PostAsync("session/reset", null, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Connector session reset failed: {(int)response.StatusCode}");
+        }
+        _stateStore.Set(WhatsAppConnectionStatus.AuthenticationRequired);
+    }
+
+    public async Task<WhatsAppPairingQr> GetPairingQrAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.GetAsync("session/qr", cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return new WhatsAppPairingQr(false, [], WhatsAppConnectionStatus.Error);
+        }
+
+        var payload = await response.Content.ReadFromJsonAsync<PairingQrPayload>(cancellationToken: cancellationToken);
+        return new WhatsAppPairingQr(
+            payload?.Available == true && payload.Modules is { Length: > 0 },
+            payload?.Modules ?? [],
+            MapStatus(payload?.Status));
+    }
+
     public async Task<WhatsAppConnectionStatus> GetConnectionStatusAsync(CancellationToken cancellationToken = default)
     {
         try
@@ -237,12 +262,20 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
         "CONNECTED" => WhatsAppConnectionStatus.Connected,
         "CONNECTING" => WhatsAppConnectionStatus.Connecting,
         "AUTHENTICATION_REQUIRED" => WhatsAppConnectionStatus.AuthenticationRequired,
+        "DEGRADED_SESSION" => WhatsAppConnectionStatus.DegradedSession,
         "ERROR" => WhatsAppConnectionStatus.Error,
         _ => WhatsAppConnectionStatus.Disconnected
     };
 
     private sealed class StatusPayload
     {
+        public string? Status { get; set; }
+    }
+
+    private sealed class PairingQrPayload
+    {
+        public bool Available { get; set; }
+        public bool[][]? Modules { get; set; }
         public string? Status { get; set; }
     }
 
