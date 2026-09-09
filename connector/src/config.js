@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveSessionDirectory } from "./sessionStore.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -56,6 +57,6 @@ export const config = {
     "ASPNET_WEBHOOK_URL",
     "http://127.0.0.1:5080/internal/whatsapp/events",
   ),
-  sessionDir: path.resolve(root, process.env.SESSION_DIR || ".sessions"),
+  sessionDir: resolveSessionDirectory(root, process.env.SESSION_DIR),
   logLevel: process.env.LOG_LEVEL || "info",
 };

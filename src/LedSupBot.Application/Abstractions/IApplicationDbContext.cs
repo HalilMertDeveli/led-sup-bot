@@ -28,5 +28,16 @@ public interface IApplicationDbContext
 
     DbSet<AiExtractionResult> AiExtractionResults { get; }
 
+    DbSet<BotModeChangeAudit> BotModeChangeAudits { get; }
+
+    DbSet<KnowledgeDocument> KnowledgeDocuments { get; }
+
+    DbSet<AiReplyContextSnapshot> AiReplyContextSnapshots { get; }
+
+    DbSet<AiTrainingExample> AiTrainingExamples { get; }
+    DbSet<VerifiedSupportCaseMemory> VerifiedSupportCaseMemories { get; }
+    DbSet<PanelFilePackage> PanelFilePackages { get; }
+    DbSet<PanelFilePackageAsset> PanelFilePackageAssets { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

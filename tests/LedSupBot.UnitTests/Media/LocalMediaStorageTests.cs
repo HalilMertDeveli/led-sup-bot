@@ -1,8 +1,6 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Infrastructure.Configuration;
 using LedSupBot.Infrastructure.Media;
-using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -19,7 +17,6 @@ public sealed class LocalMediaStorageTests : IDisposable
         Directory.CreateDirectory(_root);
         _storage = new LocalMediaStorage(
             Options.Create(new MediaStorageOptions { RootPath = _root }),
-            new TestHostEnvironment { ContentRootPath = _root },
             NullLogger<LocalMediaStorage>.Instance);
     }
 
@@ -43,44 +40,24 @@ public sealed class LocalMediaStorageTests : IDisposable
     }
 
     [Fact]
-    public void Rejects_Path_Traversal_Key_On_Read()
+    public async Task Rejects_Path_Traversal_Key_On_Read()
     {
-        Assert.ThrowsAny<Exception>(() => _storage.OpenReadAsync("../secret.txt").GetAwaiter().GetResult());
+        await Assert.ThrowsAnyAsync<Exception>(() => _storage.OpenReadAsync("../secret.txt"));
     }
 
     [Fact]
-    public void Rejects_Path_Traversal_Prefix_On_Store()
+    public async Task Rejects_Path_Traversal_Prefix_On_Store()
     {
-        Assert.Throws<ArgumentException>(() =>
-            LocalMediaStorage.SanitizeKeySegment("../cases/evil"));
+        await Assert.ThrowsAsync<ArgumentException>(() => _storage.StoreAsync(
+            new MemoryStream(TestImageBytes.CreatePng()),
+            "image/png",
+            new MediaStoreRequest("../cases/evil", ".png")));
     }
 
     [Fact]
-    public async Task Atomic_Write_Does_Not_Leave_Partial_File_On_Failure()
+    public async Task Exists_Returns_False_For_Missing_Key()
     {
-        var readOnlyRoot = Path.Combine(_root, "readonly");
-        Directory.CreateDirectory(readOnlyRoot);
-        var file = Path.Combine(readOnlyRoot, "blocked.txt");
-        await File.WriteAllTextAsync(file, "x");
-        File.SetAttributes(readOnlyRoot, FileAttributes.ReadOnly);
-
-        try
-        {
-            var storage = new LocalMediaStorage(
-                Options.Create(new MediaStorageOptions { RootPath = readOnlyRoot }),
-                new TestHostEnvironment { ContentRootPath = readOnlyRoot },
-                NullLogger<LocalMediaStorage>.Instance);
-
-            await using var input = new MemoryStream(TestImageBytes.CreatePng());
-            await Assert.ThrowsAnyAsync<Exception>(() => storage.StoreAsync(
-                input,
-                "image/png",
-                new MediaStoreRequest("cases/abc", ".png")));
-        }
-        finally
-        {
-            File.SetAttributes(readOnlyRoot, FileAttributes.Normal);
-        }
+        Assert.False(_storage.Exists("cases/missing/object.png"));
     }
 
     public void Dispose()
@@ -96,13 +73,5 @@ public sealed class LocalMediaStorageTests : IDisposable
         {
             // Best effort temp cleanup.
         }
-    }
-
-    private sealed class TestHostEnvironment : IHostEnvironment
-    {
-        public string EnvironmentName { get; set; } = Environments.Development;
-        public string ApplicationName { get; set; } = "Tests";
-        public string ContentRootPath { get; set; } = string.Empty;
-        public IFileProvider ContentRootFileProvider { get; set; } = null!;
     }
 }

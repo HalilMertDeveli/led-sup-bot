@@ -1,0 +1,65 @@
+<UserControl x:Class="LedSupBot.Desktop.Views.PanelFilesView"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Background="{StaticResource BgBrush}">
+ <Grid Margin="16">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+  <Grid Grid.Row="0" Margin="0,0,0,12">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+   <StackPanel><TextBlock Text="PANEL DOSYALARI" Foreground="{StaticResource TextBrush}" FontSize="18" FontWeight="Bold"/>
+    <TextBlock Text="Yetkili panel firmware ve receiver konfigürasyon paketleri" Foreground="{StaticResource CardMutedBrush}"/></StackPanel>
+   <StackPanel Grid.Column="1" Orientation="Horizontal">
+    <Button Content="TOPLU KLASÖR İÇE AKTAR" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" Command="{Binding BulkImportPanelFoldersCommand}"/>
+    <Button Content="KLASÖR İÇE AKTAR" Margin="0,0,8,0" Style="{StaticResource PrimaryButton}" Command="{Binding ImportPanelFolderCommand}"/>
+    <Button Content="YENİLE" Style="{StaticResource SecondaryButton}" Command="{Binding RefreshPanelPackagesCommand}"/>
+   </StackPanel>
+  </Grid>
+  <Border Grid.Row="1" Style="{StaticResource CardBorder}" Margin="0,0,0,12"><StackPanel>
+   <TextBlock Text="Yeni paket" Style="{StaticResource SectionTitle}"/>
+   <WrapPanel Margin="0,8,0,0">
+    <TextBox Width="100" Margin="0,0,8,0" Text="{Binding NewPanelPitch, UpdateSourceTrigger=PropertyChanged}" ToolTip="Pixel Pitch"/>
+    <TextBox Width="130" Margin="0,0,8,0" Text="{Binding NewPanelCode, UpdateSourceTrigger=PropertyChanged}" ToolTip="Panel Code"/>
+    <TextBox Width="130" Margin="0,0,8,0" Text="{Binding NewSecondaryCode, UpdateSourceTrigger=PropertyChanged}" ToolTip="Secondary Code"/>
+    <TextBlock VerticalAlignment="Center" Margin="4,0,12,0" Foreground="{StaticResource PrimaryBrush}" Text="{Binding NewPanelCanonicalPreview, StringFormat=Canonical: {0}}"/>
+    <Button Content="PAKET OLUŞTUR" Style="{StaticResource PrimaryButton}" Command="{Binding CreatePanelPackageCommand}"/>
+   </WrapPanel>
+  </StackPanel></Border>
+  <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+   <Grid Grid.Column="0"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <WrapPanel Margin="0,0,0,8">
+     <TextBox Width="180" Margin="0,0,8,0" Text="{Binding PanelPackageSearch}" ToolTip="Ara"/>
+     <TextBox Width="90" Margin="0,0,8,0" Text="{Binding PanelPitchFilter}" ToolTip="Pitch"/>
+     <TextBox Width="110" Margin="0,0,8,0" Text="{Binding PanelCodeFilter}" ToolTip="Kod"/>
+     <ComboBox Width="110" Margin="0,0,8,0" ItemsSource="{Binding PanelStatusOptions}" SelectedItem="{Binding PanelStatusFilter}"/>
+     <ComboBox Width="165" Margin="0,0,8,0" ItemsSource="{Binding PanelReadinessOptions}" SelectedItem="{Binding PanelReadinessFilter}"/>
+     <Button Content="FİLTRELE" Style="{StaticResource SecondaryButton}" Command="{Binding RefreshPanelPackagesCommand}"/>
+    </WrapPanel>
+    <DataGrid Grid.Row="1" ItemsSource="{Binding PanelPackages}" SelectedItem="{Binding SelectedPanelPackage}" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single">
+     <DataGrid.Columns>
+      <DataGridTextColumn Header="Canonical" Binding="{Binding CanonicalKey}" Width="*"/>
+      <DataGridTextColumn Header="Klasör" Binding="{Binding OriginalFolderName}" Width="*"/>
+      <DataGridTextColumn Header="Dosya" Binding="{Binding ActiveFileCount}" Width="55"/>
+      <DataGridTextColumn Header="Durum" Binding="{Binding Status}" Width="85"/>
+      <DataGridTextColumn Header="Hazırlık" Binding="{Binding Readiness}" Width="145"/>
+      <DataGridTextColumn Header="Sürüm" Binding="{Binding Version}" Width="60"/>
+      <DataGridTextColumn Header="Güncellendi" Binding="{Binding UpdatedAt, StringFormat=dd.MM.yyyy HH:mm}" Width="125"/>
+     </DataGrid.Columns>
+    </DataGrid>
+   </Grid>
+   <Border Grid.Column="2" Style="{StaticResource CardBorder}"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
+    <TextBlock Text="Paket detayı" Style="{StaticResource SectionTitle}"/>
+    <TextBlock Text="{Binding SelectedPanelPackage.CanonicalKey}" FontSize="16" FontWeight="Bold" Foreground="{StaticResource PrimaryBrush}" Margin="0,8,0,4"/>
+    <TextBlock Text="{Binding SelectedPanelPackage.Status, StringFormat=Durum: {0}}"/>
+    <TextBlock Text="{Binding SelectedPanelPackage.Readiness, StringFormat=Hazırlık: {0}}" FontWeight="Bold" Margin="0,0,0,10"/>
+    <TextBlock Text="Firmware" FontWeight="SemiBold"/><TextBlock Text="{Binding SelectedPanelPackage.FirmwareLabel}" TextWrapping="Wrap" FontSize="11" Margin="0,2,0,8"/>
+    <TextBlock Text="Receiver config" FontWeight="SemiBold"/><TextBlock Text="{Binding SelectedPanelPackage.ReceiverConfigLabel}" TextWrapping="Wrap" FontSize="11" Margin="0,2,0,12"/>
+    <Button Content="DÜZENLE" Style="{StaticResource SecondaryButton}" Command="{Binding EditPanelPackageCommand}" Margin="0,0,0,6"/>
+    <Button Content="GERİ AL" Style="{StaticResource SecondaryButton}" Command="{Binding RollbackPanelPackageCommand}" Margin="0,0,0,6"/>
+    <Button Content=".HEX YÜKLE / DEĞİŞTİR" Style="{StaticResource SecondaryButton}" Command="{Binding UploadFirmwareCommand}" Margin="0,0,0,6"/>
+    <Button Content=".RCVBP YÜKLE / DEĞİŞTİR" Style="{StaticResource SecondaryButton}" Command="{Binding UploadReceiverConfigCommand}" Margin="0,0,0,6"/>
+    <Button Content="AKTİFLEŞTİR" Style="{StaticResource PrimaryButton}" Command="{Binding ActivatePanelPackageCommand}" Margin="0,0,0,6"/>
+    <Button Content="ARŞİVLE" Style="{StaticResource SecondaryButton}" Command="{Binding ArchivePanelPackageCommand}" Margin="0,0,0,6"/>
+    <Button Content="PAKETİ SİL" Background="#B91C1C" Foreground="White" Command="{Binding DeletePanelPackageCommand}"/>
+   </StackPanel></ScrollViewer></Border>
+  </Grid>
+ </Grid>
+</UserControl>

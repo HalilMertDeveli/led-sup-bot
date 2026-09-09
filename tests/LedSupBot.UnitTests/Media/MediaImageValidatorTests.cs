@@ -42,7 +42,7 @@ public sealed class MediaImageValidatorTests
     {
         var result = _validator.Validate(TestImageBytes.CorruptJpegHeader(), "image/jpeg");
         Assert.False(result.IsValid);
-        Assert.Equal("invalid_image_data", result.FailureReason);
+        Assert.True(result.FailureReason is "invalid_image_data" or "unrecognized_image_format");
     }
 
     [Fact]

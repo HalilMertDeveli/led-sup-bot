@@ -26,10 +26,25 @@ public static class EnvironmentVariableBridge
         ("STORAGE_CONTAINER_NAME", "Storage:ContainerName"),
         ("WORKFLOW_AUTO_REPLY_ENABLED", "Workflow:AutoReplyEnabled"),
         ("WORKFLOW_CONFIG_EXAMPLE_IMAGE_PATH", "Workflow:ConfigExampleImagePath"),
+        ("WORKFLOW_NATURAL_TIMING_ENABLED", "Workflow:NaturalTiming:Enabled"),
+        ("WORKFLOW_NATURAL_TIMING_MAX_DELAY_SECONDS", "Workflow:NaturalTiming:MaxDelaySeconds"),
+        ("WORKFLOW_INBOUND_COALESCE_ENABLED", "Workflow:InboundCoalescing:Enabled"),
+        ("WORKFLOW_INBOUND_COALESCE_WINDOW_SECONDS", "Workflow:InboundCoalescing:WindowSeconds"),
         ("AI_EXTRACTION_CONFIDENCE_THRESHOLD", "AiExtraction:ConfidenceThreshold"),
+        ("AI_PROVIDER", "AI:Provider"),
+        ("GEMINI_API_KEY", "Gemini:ApiKey"),
+        ("GEMINI_MODEL", "Gemini:Model"),
+        ("KNOWLEDGE_ROOT", "Knowledge:RootPath"),
+        ("EMBEDDING_PROVIDER", "Embedding:Provider"),
+        ("EMBEDDING_MODEL", "Embedding:Model"),
+        ("EMBEDDING_DIMENSIONS", "Embedding:Dimensions"),
         ("MEDIA_STORAGE_ROOT", "MediaStorage:RootPath"),
         ("MEDIA_MAX_FILE_SIZE_BYTES", "MediaStorage:MaxFileSizeBytes"),
-        ("MEDIA_RETENTION_DAYS", "MediaStorage:RetentionDays")
+        ("MEDIA_RETENTION_DAYS", "MediaStorage:RetentionDays"),
+        ("ADMIN_DASHBOARD_PASSWORD", "Admin:DashboardPassword"),
+        ("ADMIN_SESSION_SECRET", "Admin:SessionSecret"),
+        ("WHATSAPP_TEST_MODE_ENABLED", "WhatsAppTestMode:Enabled"),
+        ("WHATSAPP_TEST_MODE_ALLOWED_PHONE", "WhatsAppTestMode:AllowedPhoneNumber")
     ];
 
     public static IConfigurationBuilder AddFlatEnvironmentVariableBridge(this IConfigurationBuilder builder)

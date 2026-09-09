@@ -1,6 +1,7 @@
 using LedSupBot.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Pgvector;
 
 namespace LedSupBot.Infrastructure.Persistence.Configurations;
 
@@ -18,6 +19,9 @@ public sealed class CustomerConfiguration : IEntityTypeConfiguration<Customer>
         builder.Property(x => x.DisplayName)
             .HasMaxLength(256);
 
+        builder.Property(x => x.LinkedWhatsAppLid)
+            .HasMaxLength(64);
+
         builder.HasIndex(x => x.PhoneNumber)
             .IsUnique()
             .HasDatabaseName("ix_customers_phone_number");
@@ -26,6 +30,93 @@ public sealed class CustomerConfiguration : IEntityTypeConfiguration<Customer>
             .WithOne(x => x.Customer)
             .HasForeignKey(x => x.CustomerId)
             .OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+public sealed class KnowledgeDocumentConfiguration : IEntityTypeConfiguration<KnowledgeDocument>
+{
+    public void Configure(EntityTypeBuilder<KnowledgeDocument> builder)
+    {
+        builder.ToTable("knowledge_documents"); builder.HasKey(x => x.Id);
+        builder.Property(x => x.Manufacturer).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.ProductType).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.ProductFamily).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.Model).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.DocumentType).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.DocumentVersion).HasMaxLength(64);
+        builder.Property(x => x.Language).HasMaxLength(16).IsRequired();
+        builder.Property(x => x.OriginalFileName).HasMaxLength(512).IsRequired();
+        builder.Property(x => x.RelativePath).HasMaxLength(1024).IsRequired();
+        builder.Property(x => x.Sha256).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.ExtractionMethod).HasMaxLength(64);
+        builder.Property(x => x.ExtractionVersion).HasMaxLength(64);
+        builder.Property(x => x.ExtractionQuality).HasConversion<string>().HasMaxLength(16);
+        builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
+        builder.HasIndex(x => x.Sha256).IsUnique().HasDatabaseName("ux_knowledge_documents_sha256");
+        builder.HasIndex(x => x.Model).HasDatabaseName("ix_knowledge_documents_model");
+        builder.HasIndex(x => x.Status).HasDatabaseName("ix_knowledge_documents_status");
+    }
+}
+
+public sealed class PanelFilePackageConfiguration : IEntityTypeConfiguration<PanelFilePackage>
+{
+    public void Configure(EntityTypeBuilder<PanelFilePackage> builder)
+    {
+        builder.ToTable("panel_file_packages", table => table.HasCheckConstraint(
+            "ck_panel_file_packages_canonical_identity",
+            "\"CanonicalKey\" = \"PixelPitch\" || '-' || \"PanelCode\" || '-' || \"SecondaryCode\""));
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.PixelPitch).HasMaxLength(32).IsRequired();
+        builder.Property(x => x.PanelCode).HasMaxLength(32).IsRequired();
+        builder.Property(x => x.SecondaryCode).HasMaxLength(32).IsRequired();
+        builder.Property(x => x.CanonicalKey).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.DisplayName).HasMaxLength(256).IsRequired();
+        builder.Property(x => x.OriginalFolderName).HasMaxLength(255);
+        builder.Property(x => x.Manufacturer).HasMaxLength(128);
+        builder.Property(x => x.Description).HasMaxLength(2000);
+        builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.Notes).HasMaxLength(2000);
+        builder.HasIndex(x => x.CanonicalKey).IsUnique().HasDatabaseName("ux_panel_file_packages_canonical_key");
+        builder.HasIndex(x => x.Status).HasDatabaseName("ix_panel_file_packages_status");
+    }
+}
+
+public sealed class PanelFilePackageAssetConfiguration : IEntityTypeConfiguration<PanelFilePackageAsset>
+{
+    public void Configure(EntityTypeBuilder<PanelFilePackageAsset> builder)
+    {
+        builder.ToTable("panel_file_package_assets"); builder.HasKey(x => x.Id);
+        builder.Property(x => x.AssetType).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.OriginalFileName).HasMaxLength(255).IsRequired();
+        builder.Property(x => x.RelativePath).HasMaxLength(512);
+        builder.Property(x => x.StorageKey).HasMaxLength(512).IsRequired();
+        builder.Property(x => x.MimeType).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.Sha256).HasMaxLength(64).IsRequired();
+        builder.HasOne(x => x.Package).WithMany(x => x.Assets).HasForeignKey(x => x.PanelFilePackageId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasIndex(x => new { x.PanelFilePackageId, x.AssetType, x.Version }).IsUnique()
+            .HasFilter("\"RelativePath\" IS NULL")
+            .HasDatabaseName("ux_panel_file_package_assets_version");
+        builder.HasIndex(x => new { x.PanelFilePackageId, x.AssetType }).IsUnique()
+            .HasFilter("\"Status\" = 'Active' AND \"RelativePath\" IS NULL").HasDatabaseName("ux_panel_file_package_assets_active_type");
+        builder.HasIndex(x => new { x.PanelFilePackageId, x.RelativePath, x.Version }).IsUnique()
+            .HasFilter("\"RelativePath\" IS NOT NULL").HasDatabaseName("ux_panel_file_package_assets_folder_version");
+        builder.HasIndex(x => new { x.PanelFilePackageId, x.RelativePath }).IsUnique()
+            .HasFilter("\"Status\" = 'Active' AND \"RelativePath\" IS NOT NULL").HasDatabaseName("ux_panel_file_package_assets_active_path");
+        builder.HasIndex(x => x.Sha256).HasDatabaseName("ix_panel_file_package_assets_sha256");
+    }
+}
+
+public sealed class KnowledgeChunkConfiguration : IEntityTypeConfiguration<KnowledgeChunk>
+{
+    public void Configure(EntityTypeBuilder<KnowledgeChunk> builder)
+    {
+        builder.ToTable("knowledge_chunks"); builder.HasKey(x => x.Id);
+        builder.Property(x => x.SectionTitle).HasMaxLength(256);
+        builder.Property(x => x.Content).HasColumnType("text").IsRequired();
+        builder.Property(x => x.Embedding).HasColumnType("vector(768)");
+        builder.HasIndex(x => new { x.DocumentId, x.ChunkIndex }).IsUnique().HasDatabaseName("ux_knowledge_chunks_document_index");
+        builder.HasOne(x => x.Document).WithMany(x => x.Chunks).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 
@@ -40,6 +131,11 @@ public sealed class ConversationConfiguration : IEntityTypeConfiguration<Convers
         builder.Property(x => x.BotMode).HasConversion<string>().HasMaxLength(32);
         builder.Property(x => x.CurrentStage).HasConversion<string>().HasMaxLength(64);
 
+        builder.Property(x => x.LastInboundWhatsAppAddress)
+            .HasMaxLength(64);
+
+        builder.Ignore(x => x.WhatsAppRouteJid);
+
         builder.HasIndex(x => x.CustomerId).HasDatabaseName("ix_conversations_customer_id");
         builder.HasIndex(x => x.Status).HasDatabaseName("ix_conversations_status");
         builder.HasIndex(x => x.UpdatedAt).HasDatabaseName("ix_conversations_updated_at");
@@ -50,9 +146,9 @@ public sealed class ConversationConfiguration : IEntityTypeConfiguration<Convers
             .HasForeignKey(x => x.ConversationId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        builder.HasOne(x => x.TechnicalSupportCase)
+        builder.HasMany(x => x.TechnicalSupportCases)
             .WithOne(x => x.Conversation)
-            .HasForeignKey<TechnicalSupportCase>(x => x.ConversationId)
+            .HasForeignKey(x => x.ConversationId)
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasMany(x => x.AiExtractionResults)
@@ -95,11 +191,48 @@ public sealed class TechnicalSupportCaseConfiguration : IEntityTypeConfiguration
 
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(64);
         builder.Property(x => x.SummaryMarkdown).HasMaxLength(16000);
+        builder.Property(x => x.IssueSummary).HasMaxLength(2000);
+        builder.Property(x => x.AiOperatorSummary).HasMaxLength(2000);
+        builder.Property(x => x.PlayerType).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.ProcessorHdmiConnected);
+        builder.Property(x => x.QuestionAttemptsJson).HasMaxLength(2000);
+        builder.Property(x => x.DiagnosticStateJson).HasColumnType("jsonb");
+        builder.Property(x => x.PanelIdentityStateJson).HasColumnType("jsonb");
+        builder.Property(x => x.PanelFileDeliveryConfirmationJson).HasColumnType("jsonb");
 
         builder.HasIndex(x => x.ConversationId)
-            .IsUnique()
             .HasDatabaseName("ix_technical_support_cases_conversation_id");
         builder.HasIndex(x => x.Status).HasDatabaseName("ix_technical_support_cases_status");
+    }
+}
+
+public sealed class VerifiedSupportCaseMemoryConfiguration : IEntityTypeConfiguration<VerifiedSupportCaseMemory>
+{
+    public void Configure(EntityTypeBuilder<VerifiedSupportCaseMemory> builder)
+    {
+        builder.ToTable("verified_support_case_memories");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.VerifiedBy).HasMaxLength(128);
+        builder.Property(x => x.PrimarySymptom).HasMaxLength(1000);
+        builder.Property(x => x.NormalizedSymptom).HasMaxLength(1000);
+        builder.Property(x => x.DeviceManufacturer).HasMaxLength(128);
+        builder.Property(x => x.DeviceModel).HasMaxLength(128);
+        builder.Property(x => x.DeviceFamily).HasMaxLength(128);
+        builder.Property(x => x.ProblemCategory).HasMaxLength(128);
+        builder.Property(x => x.DiagnosticSummary).HasMaxLength(3000);
+        builder.Property(x => x.FinalResolution).HasMaxLength(3000);
+        builder.Property(x => x.ResolutionSummary).HasMaxLength(1500);
+        builder.Property(x => x.CompletedChecks).HasColumnType("jsonb");
+        builder.Property(x => x.FailedChecks).HasColumnType("jsonb");
+        builder.Property(x => x.SuccessfulChecks).HasColumnType("jsonb");
+        builder.Property(x => x.RelevantWorkflowFacts).HasColumnType("jsonb");
+        builder.Property(x => x.RelevantDiagnosticStateSnapshot).HasColumnType("jsonb");
+        builder.Property(x => x.SourceMessageIds).HasColumnType("jsonb");
+        builder.Property(x => x.RetrievalText).HasMaxLength(6000);
+        builder.Property(x => x.Embedding).HasColumnType("vector(768)");
+        builder.HasIndex(x => x.TechnicalSupportCaseId).IsUnique();
+        builder.HasIndex(x => new { x.Status, x.DeviceModel });
     }
 }
 
@@ -135,6 +268,7 @@ public sealed class ReceiverInformationConfiguration : IEntityTypeConfiguration<
 
         builder.Property(x => x.Manufacturer).HasMaxLength(128);
         builder.Property(x => x.Model).HasMaxLength(128);
+        builder.Property(x => x.ReceiverModel).HasConversion<string>().HasMaxLength(32);
         builder.Property(x => x.Notes).HasMaxLength(2000);
         builder.Property(x => x.RawUtterance).HasMaxLength(1024);
 
@@ -233,5 +367,26 @@ public sealed class AiExtractionResultConfiguration : IEntityTypeConfiguration<A
             .WithMany(x => x.AiExtractionResults)
             .HasForeignKey(x => x.MessageId)
             .OnDelete(DeleteBehavior.SetNull);
+    }
+}
+
+public sealed class BotModeChangeAuditConfiguration : IEntityTypeConfiguration<BotModeChangeAudit>
+{
+    public void Configure(EntityTypeBuilder<BotModeChangeAudit> builder)
+    {
+        builder.ToTable("bot_mode_change_audits");
+        builder.HasKey(x => x.Id);
+
+        builder.Property(x => x.PreviousMode).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.NewMode).HasConversion<string>().HasMaxLength(32);
+        builder.Property(x => x.Source).HasConversion<string>().HasMaxLength(64);
+
+        builder.HasIndex(x => x.ConversationId).HasDatabaseName("ix_bot_mode_change_audits_conversation_id");
+        builder.HasIndex(x => x.ChangedAt).HasDatabaseName("ix_bot_mode_change_audits_changed_at");
+
+        builder.HasOne(x => x.Conversation)
+            .WithMany()
+            .HasForeignKey(x => x.ConversationId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

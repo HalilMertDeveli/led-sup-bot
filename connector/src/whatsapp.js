@@ -1,3 +1,4 @@
+import { onSignalDecryptionFailure, resetSignalDiagnosticCounters, shouldMarkSessionDegraded } from "./safeSignalDiagnostics.js";
 import {
   DisconnectReason,
   downloadMediaMessage,
@@ -6,21 +7,30 @@ import {
   useMultiFileAuthState,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
-import fs from "node:fs";
+import crypto from "node:crypto";
 import pino from "pino";
 import qrcode from "qrcode-terminal";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
-import { mapBaileysMessage } from "./messageMap.js";
+import { mapBaileysMessage, resolveOutboundJid, isGroupJid, normalizeWhatsAppJid } from "./messageMap.js";
 import { cacheMediaStub } from "./mediaCache.js";
-import { messageObservabilityFields } from "./observability.js";
+import { messageObservabilityFields, redactJid } from "./observability.js";
+import { jidDomain } from "./messageMap.js";
 import { forwardEventToAspNet } from "./webhook.js";
+import { assertNonSelfJid, isSelfJid, remoteJidType, setConnectedSelfJids } from "./selfIdentity.js";
+import { mapContactUpdate } from "./contactMap.js";
+import { archiveAndResetSessionDirectory, ensureSessionDirectory } from "./sessionStore.js";
+import { createQrMatrix } from "./qrMatrix.js";
 
 /** @type {ReturnType<typeof makeWASocket> | null} */
 let sock = null;
 let status = "DISCONNECTED";
 let reconnectTimer = null;
-let starting = false;
+let startPromise = null;
+let resetting = false;
+let lifecycleGeneration = 0;
+let sessionDegraded = false;
+let latestQrModules = [];
 /** @type {Set<string>} */
 const botSentIds = new Set();
 
@@ -52,9 +62,13 @@ function setStatus(next) {
   });
 }
 
-function ensureSessionDir() {
-  fs.mkdirSync(config.sessionDir, { recursive: true, mode: 0o700 });
-}
+onSignalDecryptionFailure((failureClass, counters) => {
+  if (!shouldMarkSessionDegraded(counters) || sessionDegraded) return;
+  sessionDegraded = true;
+  logger.error({ event: "WHATSAPP_SESSION_DEGRADED", failureClass, counters },
+    "WhatsApp encryption session is unhealthy; linked-device reauthentication required");
+  setStatus("DEGRADED_SESSION");
+});
 
 function scheduleReconnect() {
   if (reconnectTimer) return;
@@ -69,12 +83,16 @@ function scheduleReconnect() {
   }, delayMs);
 }
 
-export async function startWhatsApp() {
-  if (starting) return;
-  starting = true;
-  try {
-    ensureSessionDir();
-    setStatus("CONNECTING");
+export function startWhatsApp() {
+  if (startPromise) return startPromise;
+  startPromise = startWhatsAppCore().finally(() => { startPromise = null; });
+  return startPromise;
+}
+
+async function startWhatsAppCore() {
+  const generation = ++lifecycleGeneration;
+  ensureSessionDirectory(config.sessionDir);
+  setStatus("CONNECTING");
 
     const { state, saveCreds } = await useMultiFileAuthState(config.sessionDir);
     const { version } = await fetchLatestBaileysVersion();
@@ -82,7 +100,9 @@ export async function startWhatsApp() {
     // Keep Baileys protocol logs quiet — they can include sensitive handshake fields.
     const baileysLogger = pino({ level: "silent" });
 
-    sock = makeWASocket({
+    if (generation !== lifecycleGeneration || resetting) return;
+
+    const activeSocket = makeWASocket({
       version,
       auth: state,
       logger: baileysLogger,
@@ -91,12 +111,50 @@ export async function startWhatsApp() {
       markOnlineOnConnect: false,
     });
 
-    sock.ev.on("creds.update", saveCreds);
+    sock = activeSocket;
+    activeSocket.ev.on("creds.update", async () => {
+      if (sock !== activeSocket || generation !== lifecycleGeneration) return;
+      try {
+        await saveCreds();
+      } catch (error) {
+        logger.error({ event: "AUTH_STATE_SAVE_FAILED", failureCategory: error?.name }, "WhatsApp credentials could not be persisted");
+      }
+    });
 
-    sock.ev.on("connection.update", (update) => {
+    activeSocket.ev.on("chats.phoneNumberShare", ({ lid, jid }) => {
+      if (sock !== activeSocket || generation !== lifecycleGeneration) return;
+      logger.info(
+        { event: "LID_PN_MAPPING", lid: redactJid(lid), pnJid: redactJid(jid) },
+        "WhatsApp shared phone number for LID contact",
+      );
+      void forwardEventToAspNet({
+        eventType: "LidPhoneMapping",
+        remoteJid: lid,
+        senderPnJid: jid,
+        timestamp: new Date().toISOString(),
+      });
+    });
+
+    const forwardContacts = (contacts) => {
+      for (const contact of contacts ?? []) {
+        const mapped = mapContactUpdate(contact);
+        if (!mapped) continue;
+        void forwardEventToAspNet({
+          ...mapped,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    };
+
+    activeSocket.ev.on("contacts.upsert", forwardContacts);
+    activeSocket.ev.on("contacts.update", forwardContacts);
+
+    activeSocket.ev.on("connection.update", (update) => {
+      if (sock !== activeSocket || generation !== lifecycleGeneration) return;
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
+        latestQrModules = createQrMatrix(qr);
         setStatus("AUTHENTICATION_REQUIRED");
         if (process.stdout.isTTY) {
           console.log("\n=== WhatsApp QR (scan with Linked devices). Do not paste into chats/logs. ===\n");
@@ -108,15 +166,26 @@ export async function startWhatsApp() {
       }
 
       if (connection === "open") {
-        setStatus("CONNECTED");
+        latestQrModules = [];
+        setStatus(sessionDegraded ? "DEGRADED_SESSION" : "CONNECTED");
+        const selfJids = [activeSocket.user?.id, activeSocket.user?.lid].filter(Boolean);
+        setConnectedSelfJids(selfJids);
+        void forwardEventToAspNet({
+          eventType: "ConnectedIdentity",
+          selfPnJid: activeSocket.user?.id ? normalizeWhatsAppJid(activeSocket.user.id) : null,
+          selfLidJid: activeSocket.user?.lid ? normalizeWhatsAppJid(activeSocket.user.lid) : null,
+          timestamp: new Date().toISOString(),
+        });
       } else if (connection === "connecting") {
         setStatus("CONNECTING");
       } else if (connection === "close") {
         const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
         const loggedOut = statusCode === DisconnectReason.loggedOut;
+        sock = null;
+        activeSocket.ev.removeAllListeners();
         setStatus(loggedOut ? "AUTHENTICATION_REQUIRED" : "DISCONNECTED");
 
-        if (!loggedOut) {
+        if (!loggedOut && !resetting) {
           scheduleReconnect();
         } else {
           logger.warn("session logged out; QR required again");
@@ -124,7 +193,8 @@ export async function startWhatsApp() {
       }
     });
 
-    sock.ev.on("messages.upsert", async ({ messages, type }) => {
+    activeSocket.ev.on("messages.upsert", async ({ messages, type }) => {
+      if (sock !== activeSocket || generation !== lifecycleGeneration) return;
       if (type !== "notify" && type !== "append") {
         logger.info(
           { event: "BAILEYS_UPSERT_FILTERED", upsertType: type, batchSize: messages?.length ?? 0 },
@@ -143,20 +213,53 @@ export async function startWhatsApp() {
             logger.debug({ event: "BAILEYS_MESSAGE_SKIPPED", reason: "status_broadcast" }, "message skipped");
             continue;
           }
+          if (isGroupJid(msg.key.remoteJid)) {
+            logger.info(
+              {
+                event: "BAILEYS_MESSAGE_SKIPPED",
+                reason: "whatsapp_group",
+                remoteJid: redactJid(msg.key.remoteJid),
+              },
+              "group message skipped — no automation or persistence",
+            );
+            continue;
+          }
 
           const mapped = mapBaileysMessage(msg);
           const botOriginated = botSentIds.has(mapped.externalMessageId);
+          const selfMatch = isSelfJid(mapped.remoteJid);
 
-          cacheMediaStub(msg);
+          if (mapped.fromMe) {
+            logger.info(
+              {
+                event: "BAILEYS_MESSAGE_SKIPPED",
+                reason: botOriginated ? "bot_outbound_echo" : "from_me",
+                fromMe: true,
+                remoteJidType: remoteJidType(mapped.remoteJid),
+                selfMatch,
+                botOriginated,
+              },
+              "fromMe message skipped — no inbound automation",
+            );
+            continue;
+          }
 
+          const correlationId = crypto.randomUUID();
           logger.info(
             {
-              event: "BAILEYS_MESSAGE_RECEIVED",
+              event: "WA_UPSERT",
+              stage: "WA_DECRYPTED",
+              correlationId,
               upsertType: type,
+              fromMe: false,
+              remoteJidType: remoteJidType(mapped.remoteJid),
+              selfMatch,
               ...messageObservabilityFields(mapped, { botOriginated }),
             },
-            "messages.upsert event received",
+            "messages.upsert customer inbound",
           );
+
+          cacheMediaStub(msg);
 
           logger.info(
             {
@@ -171,29 +274,265 @@ export async function startWhatsApp() {
             ...mapped,
             botOriginated,
             upsertType: type,
+            correlationId,
           });
         } catch (error) {
           logger.error({ err: error?.message, event: "BAILEYS_MESSAGE_HANDLER_ERROR" }, "failed to handle inbound message");
         }
       }
     });
-  } finally {
-    starting = false;
-  }
+
+    activeSocket.ev.on("messages.update", (updates) => {
+      if (sock !== activeSocket || generation !== lifecycleGeneration) return;
+      for (const update of updates) {
+        const messageId = update?.key?.id;
+        if (!messageId || !botSentIds.has(messageId)) {
+          continue;
+        }
+
+        const deliveryStatus = mapBaileysDeliveryStatus(update?.update?.status);
+        if (!deliveryStatus) {
+          continue;
+        }
+
+        logger.info(
+          {
+            event: "OUTBOUND_DELIVERY_ACK",
+            messageId,
+            deliveryStatus,
+          },
+          "bot outbound delivery acknowledgement",
+        );
+
+        void forwardEventToAspNet({
+          eventType: "MessageDeliveryUpdate",
+          externalMessageId: messageId,
+          deliveryStatus,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    });
 }
 
-export async function sendText(toPhoneDigits, text) {
+export function getPairingQrModules() {
+  return latestQrModules.map((row) => [...row]);
+}
+
+export async function resetWhatsAppSession() {
+  if (resetting) throw new Error("session_reset_in_progress");
+  if (startPromise) await startPromise.catch(() => {});
+  resetting = true;
+  try {
+    lifecycleGeneration += 1;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    const previousSocket = sock;
+    sock = null;
+    latestQrModules = [];
+    if (previousSocket) {
+      previousSocket.ev.removeAllListeners();
+      try { previousSocket.end(new Error("session_reset")); } catch { /* already closed */ }
+    }
+    const reset = archiveAndResetSessionDirectory(config.sessionDir);
+    resetSignalDiagnosticCounters();
+    sessionDegraded = false;
+    setConnectedSelfJids([]);
+    setStatus("AUTHENTICATION_REQUIRED");
+    logger.warn({ event: "WHATSAPP_SESSION_RESET", sessionDir: config.sessionDir, backupCreated: reset.backupCreated },
+      "Active WhatsApp auth state archived; new QR authentication required");
+  } finally {
+    resetting = false;
+  }
+  await startWhatsApp();
+  return { status: getStatus() };
+}
+
+export async function sendText(toAddress, text) {
   if (!sock || status !== "CONNECTED") {
     throw new Error(`Connector not connected (status=${status})`);
   }
 
-  const jid = `${toPhoneDigits.replace(/\D/g, "")}@s.whatsapp.net`;
+  const jid = resolveOutboundJid(toAddress);
+  if (!jid) {
+    throw new Error("Invalid outbound destination");
+  }
+
+  try {
+    assertNonSelfJid(jid);
+  } catch (error) {
+    logger.warn(
+      {
+        event: "OUTBOUND_SEND_BLOCKED",
+        reason: "self_destination",
+        destinationType: jidDomain(jid),
+      },
+      "outbound blocked: self destination",
+    );
+    throw error;
+  }
+
+  const exactRoutePreserved = String(toAddress || "").includes("@")
+    ? normalizeWhatsAppJid(toAddress) === jid
+    : true;
+
   const result = await sock.sendMessage(jid, { text });
   const id = result?.key?.id;
   if (id) {
     markBotSent(id);
   }
-  return { externalMessageId: id || null, remoteJid: jid };
+
+  logger.info(
+    {
+      event: "OUTBOUND_SEND_COMPLETED",
+      routeSource: "conversation_live_route",
+      destinationType: jidDomain(jid),
+      exactRoutePreserved,
+      connectorRequestAccepted: true,
+      sockSendMessageCalled: true,
+      baileysMessageIdPresent: Boolean(id),
+      messageId: id || null,
+      resultRemoteJid: redactJid(result?.key?.remoteJid),
+      resultFromMe: Boolean(result?.key?.fromMe),
+    },
+    "outbound send completed",
+  );
+
+  return {
+    externalMessageId: id || null,
+    remoteJid: jid,
+    resultRemoteJid: result?.key?.remoteJid || null,
+    destinationType: jidDomain(jid),
+    exactRoutePreserved,
+  };
+}
+
+export async function sendImage(toAddress, imageBuffer, caption) {
+  if (!sock || status !== "CONNECTED") {
+    throw new Error(`Connector not connected (status=${status})`);
+  }
+
+  const jid = resolveOutboundJid(toAddress);
+  if (!jid) {
+    throw new Error("Invalid outbound destination");
+  }
+
+  try {
+    assertNonSelfJid(jid);
+  } catch (error) {
+    logger.warn(
+      {
+        event: "OUTBOUND_IMAGE_SEND_BLOCKED",
+        reason: "self_destination",
+        destinationType: jidDomain(jid),
+      },
+      "outbound blocked: self destination",
+    );
+    throw error;
+  }
+
+  const exactRoutePreserved = String(toAddress || "").includes("@")
+    ? normalizeWhatsAppJid(toAddress) === jid
+    : true;
+
+  const messagePayload = {
+    image: imageBuffer,
+    caption: caption || undefined,
+  };
+
+  const result = await sock.sendMessage(jid, messagePayload);
+  const id = result?.key?.id;
+  if (id) {
+    markBotSent(id);
+  }
+
+  logger.info(
+    {
+      event: "OUTBOUND_IMAGE_SEND_COMPLETED",
+      routeSource: "conversation_live_route",
+      destinationType: jidDomain(jid),
+      exactRoutePreserved,
+      connectorRequestAccepted: true,
+      sockSendMessageCalled: true,
+      baileysMessageIdPresent: Boolean(id),
+      messageId: id || null,
+      resultRemoteJid: redactJid(result?.key?.remoteJid),
+      resultFromMe: Boolean(result?.key?.fromMe),
+    },
+    "outbound image send completed",
+  );
+
+  return {
+    externalMessageId: id || null,
+    remoteJid: jid,
+    resultRemoteJid: result?.key?.remoteJid || null,
+    destinationType: jidDomain(jid),
+    exactRoutePreserved,
+  };
+}
+
+export async function sendDocument(toAddress, documentBuffer, contentType, fileName, caption) {
+  if (!sock || status !== "CONNECTED") throw new Error(`Connector not connected (status=${status})`);
+  const jid = resolveOutboundJid(toAddress);
+  if (!jid) throw new Error("Invalid outbound destination");
+  assertNonSelfJid(jid);
+  const exactRoutePreserved = String(toAddress || "").includes("@") ? normalizeWhatsAppJid(toAddress) === jid : true;
+  const result = await sock.sendMessage(jid, {
+    document: documentBuffer,
+    mimetype: contentType || "application/octet-stream",
+    fileName,
+    caption: caption || undefined,
+  });
+  const id = result?.key?.id;
+  if (id) markBotSent(id);
+  logger.info({ event: "OUTBOUND_DOCUMENT_SEND_COMPLETED", destinationType: jidDomain(jid),
+    exactRoutePreserved, messageId: id || null }, "outbound document send completed");
+  return { externalMessageId: id || null, remoteJid: jid, destinationType: jidDomain(jid), exactRoutePreserved };
+}
+
+export async function sendAudio(toAddress, audioBuffer, contentType, voiceNote = true) {
+  if (!sock) throw new Error("not_connected");
+  const remoteJid = resolveOutboundJid(toAddress);
+  if (!remoteJid) throw new Error("invalid_destination");
+  assertNotSelfDestination(remoteJid);
+  const sent = await sock.sendMessage(remoteJid, { audio: audioBuffer, mimetype: contentType, ptt: Boolean(voiceNote) });
+  return { externalMessageId: sent?.key?.id || null, destinationType: remoteJidType(remoteJid), exactRoutePreserved: true };
+}
+
+function mapBaileysDeliveryStatus(status) {
+  if (status === undefined || status === null) return null;
+  switch (Number(status)) {
+    case 0:
+      return "Failed";
+    case 1:
+    case 2:
+      return "Sent";
+    case 3:
+      return "Delivered";
+    case 4:
+    case 5:
+      return "Read";
+    default:
+      return null;
+  }
+}
+
+export async function sendPresence(toAddress, state) {
+  if (!sock || status !== "CONNECTED") {
+    throw new Error(`Connector not connected (status=${status})`);
+  }
+
+  const jid = resolveOutboundJid(toAddress);
+  if (!jid) {
+    throw new Error("Invalid outbound destination");
+  }
+
+  assertNonSelfJid(jid);
+
+  const presence = state === "composing" ? "composing" : "paused";
+  await sock.sendPresenceUpdate(presence, jid);
+  return { remoteJid: jid, state: presence };
 }
 
 /**

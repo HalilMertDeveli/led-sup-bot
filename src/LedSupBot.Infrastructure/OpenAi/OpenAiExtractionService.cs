@@ -1,8 +1,8 @@
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.Workflow.Parsing;
 using LedSupBot.Infrastructure.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -11,14 +11,16 @@ namespace LedSupBot.Infrastructure.OpenAi;
 
 public sealed class OpenAiExtractionService : IAiService
 {
-    public const string PromptVersion = "phase6-v1";
+    public const string PromptVersion = "phase5-v1";
+
     private readonly HttpClient _http;
     private readonly OpenAiOptions _options;
     private readonly ILogger<OpenAiExtractionService> _logger;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
@@ -32,102 +34,167 @@ public sealed class OpenAiExtractionService : IAiService
         _logger = logger;
     }
 
-    public async Task<AiStructuredExtraction> ExtractAsync(
-        AiExtractionRequest request,
-        CancellationToken cancellationToken = default)
+    public async Task<AiStructuredExtraction> ExtractAsync(AiExtractionRequest request, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(_options.ApiKey))
         {
-            throw new InvalidOperationException("OpenAI API key is not configured.");
+            _logger.LogWarning("OpenAI API key is not configured; AI extraction unavailable");
+            return new AiStructuredExtraction(
+                CustomerMessageIntent.Unknown,
+                Screen: null,
+                Receiver: null,
+                Config: null,
+                AnyDesk: null,
+                Ambiguities: ["openai_unconfigured"]);
         }
+
+        var systemPrompt = BuildSystemPrompt();
+        var userPrompt = BuildUserPrompt(request);
 
         var payload = new ChatCompletionRequest
         {
             Model = _options.Model,
-            Temperature = 0,
+            Temperature = 0.1,
             Messages =
             [
-                new ChatMessage("system", BuildSystemPrompt()),
-                new ChatMessage("user", BuildUserPrompt(request)),
+                new ChatMessage("system", systemPrompt),
+                new ChatMessage("user", userPrompt),
             ],
             ResponseFormat = new ResponseFormatWrapper
             {
                 Type = "json_schema",
                 JsonSchema = new JsonSchemaWrapper
                 {
-                    Name = "technical_extraction",
+                    Name = "led_support_slot_extraction",
                     Strict = true,
                     Schema = ExtractionJsonSchema.Document,
                 },
             },
         };
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "chat/completions")
-        {
-            Content = JsonContent.Create(payload, options: JsonOptions),
-        };
-        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
-
-        using var response = await _http.SendAsync(httpRequest, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            _logger.LogWarning("OpenAI request failed with status {StatusCode}", (int)response.StatusCode);
-            throw new InvalidOperationException($"OpenAI request failed: {(int)response.StatusCode}");
-        }
-
-        var completion = await response.Content.ReadFromJsonAsync<ChatCompletionResponse>(JsonOptions, cancellationToken);
-        var content = completion?.Choices?.FirstOrDefault()?.Message?.Content;
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            throw new InvalidOperationException("OpenAI returned empty structured content.");
-        }
-
-        OpenAiExtractionPayload? parsed;
+        HttpResponseMessage response;
         try
         {
-            parsed = JsonSerializer.Deserialize<OpenAiExtractionPayload>(content, JsonOptions);
+            using var req = new HttpRequestMessage(HttpMethod.Post, "v1/chat/completions");
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _options.ApiKey);
+            req.Content = JsonContent.Create(payload, options: JsonOptions);
+            response = await _http.SendAsync(req, cancellationToken);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("OpenAI extraction request timed out; falling back to deterministic parsers");
+            return new AiStructuredExtraction(
+                CustomerMessageIntent.Unknown,
+                Screen: null,
+                Receiver: null,
+                Config: null,
+                AnyDesk: null,
+                Ambiguities: ["openai_timeout"]);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "OpenAI extraction HTTP request failed");
+            return new AiStructuredExtraction(
+                CustomerMessageIntent.Unknown,
+                Screen: null,
+                Receiver: null,
+                Config: null,
+                AnyDesk: null,
+                Ambiguities: ["openai_http_error"]);
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("OpenAI extraction returned status {StatusCode}", (int)response.StatusCode);
+            return new AiStructuredExtraction(
+                CustomerMessageIntent.Unknown,
+                Screen: null,
+                Receiver: null,
+                Config: null,
+                AnyDesk: null,
+                Ambiguities: [$"openai_status_{(int)response.StatusCode}"]);
+        }
+
+        ChatCompletionResponse? completion;
+        try
+        {
+            completion = await response.Content.ReadFromJsonAsync<ChatCompletionResponse>(JsonOptions, cancellationToken);
         }
         catch (JsonException ex)
         {
-            _logger.LogWarning(ex, "OpenAI returned malformed structured JSON");
-            throw;
+            _logger.LogWarning(ex, "OpenAI extraction response envelope parse failed");
+            return new AiStructuredExtraction(
+                CustomerMessageIntent.Unknown,
+                Screen: null,
+                Receiver: null,
+                Config: null,
+                AnyDesk: null,
+                Ambiguities: ["openai_envelope_invalid"]);
         }
 
-        if (parsed is null)
+        var rawContent = completion?.Choices?.FirstOrDefault()?.Message?.Content;
+        if (string.IsNullOrWhiteSpace(rawContent))
         {
-            throw new InvalidOperationException("OpenAI structured payload could not be parsed.");
+            _logger.LogWarning("OpenAI extraction choice was empty");
+            return new AiStructuredExtraction(
+                CustomerMessageIntent.Unknown,
+                Screen: null,
+                Receiver: null,
+                Config: null,
+                AnyDesk: null,
+                Ambiguities: ["openai_empty_content"]);
         }
 
-        return MapToDomain(parsed);
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<OpenAiExtractionPayload>(rawContent, JsonOptions);
+            if (parsed is null)
+            {
+                return new AiStructuredExtraction(
+                    CustomerMessageIntent.Unknown,
+                    Screen: null,
+                    Receiver: null,
+                    Config: null,
+                    AnyDesk: null,
+                    Ambiguities: ["openai_deserialization_null"]);
+            }
+
+            return MapToDomain(parsed);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "OpenAI extraction content JSON deserialization failed");
+            return new AiStructuredExtraction(
+                CustomerMessageIntent.Unknown,
+                Screen: null,
+                Receiver: null,
+                Config: null,
+                AnyDesk: null,
+                Ambiguities: ["openai_json_invalid"]);
+        }
     }
 
     private static string BuildSystemPrompt() =>
         """
-        You extract LED technical support information from Turkish WhatsApp customer messages.
-        Rules:
-        - Database storage is ALWAYS centimeters (widthCm/heightCm). Never output meters in cm fields.
-        - When customer explicitly says metre/meter/m, populate widthMeters/heightMeters (not cm fields).
-        - When customer explicitly says cm, populate widthCm/heightCm.
-        - For "5x3" or "500x300" without units, set unitAmbiguous=true and leave cm/meter values null.
-        - Do not guess units when context is insufficient.
-        - Recognize receiver/reciever/reciver, yeşil kart, kart, adet, tane.
-        - Config: evet, bağladım, tamam, olur = confirmed; hayır, olmadı = rejection.
-        - AnyDesk: extract digit groups only when clearly an AnyDesk address.
-        - NEVER claim a photo/image was received — only text extraction.
-        - Return confidence 0-1 per section. Use low confidence when uncertain.
-        - List ambiguities in Turkish or English short phrases.
+        You are a highly precise technical assistant for a Turkish LED screen technical support company.
+        Your task is to extract structured slots from customer WhatsApp messages.
+        Slots to extract:
+        - Screen dimensions: width and height in centimeters (or meters if specified).
+        - Receiver information: count (integer) and model (e.g. E120, E80, 5A75E, E320 Pro).
+        - Player type: Playbox or Processor.
+        - Processor HDMI: connected (boolean) and clarification needed (boolean).
+        - Config cable connection: connected and confirmed.
+        - AnyDesk remote access: 9-10 digit address.
+        - Customer intent: greeting, technical_support, confirmation, rejection, ask_clarification, ask_technical_question, correction, acknowledgement.
+        Output ONLY valid JSON matching the schema.
         """;
 
     private static string BuildUserPrompt(AiExtractionRequest request)
     {
-        var known = request.KnownSlots.Count == 0
-            ? "none"
-            : string.Join(", ", request.KnownSlots.Select(kv => $"{kv.Key}={kv.Value ?? "missing"}"));
-
+        var known = string.Join("; ", request.KnownSlots.Select(kv => $"{kv.Key}={kv.Value ?? "unknown"}"));
         return $"""
-            Language: {request.LanguageHint ?? "tr"}
-            Already known slots: {known}
-            Customer message:
+            Known slots: {known}
+            Message:
             {request.MessageText}
             """;
     }
@@ -142,9 +209,16 @@ public sealed class OpenAiExtractionService : IAiService
                 payload.Screen.HeightMeters,
                 payload.Screen.Confidence,
                 payload.Screen.UnitAmbiguous),
-            payload.Receiver is null ? null : new ReceiverSlotCandidate(payload.Receiver.Count, payload.Receiver.Confidence),
-            payload.Config is null ? null : new ConfigSlotCandidate(payload.Config.Connected, payload.Config.Confirmed, payload.Config.Confidence),
-            payload.AnyDesk is null ? null : new AnyDeskSlotCandidate(payload.AnyDesk.Address, payload.AnyDesk.Confidence),
+            payload.Receiver is null ? null : new ReceiverSlotCandidate(
+                payload.Receiver.Count,
+                payload.Receiver.Confidence),
+            payload.Config is null ? null : new ConfigSlotCandidate(
+                payload.Config.Connected,
+                payload.Config.Confirmed,
+                payload.Config.Confidence),
+            payload.AnyDesk is null ? null : new AnyDeskSlotCandidate(
+                payload.AnyDesk.Address,
+                payload.AnyDesk.Confidence),
             payload.Ambiguities ?? []);
 
     private static CustomerMessageIntent MapIntent(string? intent) =>
@@ -152,8 +226,8 @@ public sealed class OpenAiExtractionService : IAiService
         {
             "greeting" => CustomerMessageIntent.Greeting,
             "technical_support" => CustomerMessageIntent.TechnicalSupport,
-            "confirmation" => CustomerMessageIntent.Confirmation,
-            "rejection" => CustomerMessageIntent.Rejection,
+            "confirmation" => CustomerMessageIntent.TechnicalSupport,
+            "rejection" => CustomerMessageIntent.TechnicalSupport,
             _ => CustomerMessageIntent.Unknown,
         };
 
@@ -200,6 +274,8 @@ public sealed class OpenAiExtractionService : IAiService
         public string? Intent { get; set; }
         public ScreenPayload? Screen { get; set; }
         public ReceiverPayload? Receiver { get; set; }
+        public PlayerPayload? Player { get; set; }
+        public ProcessorHdmiPayload? ProcessorHdmi { get; set; }
         public ConfigPayload? Config { get; set; }
         public AnyDeskPayload? AnyDesk { get; set; }
         public List<string>? Ambiguities { get; set; }
@@ -218,6 +294,20 @@ public sealed class OpenAiExtractionService : IAiService
     private sealed class ReceiverPayload
     {
         public int? Count { get; set; }
+        public string? Model { get; set; }
+        public double Confidence { get; set; }
+    }
+
+    private sealed class PlayerPayload
+    {
+        public string? PlayerType { get; set; }
+        public double Confidence { get; set; }
+    }
+
+    private sealed class ProcessorHdmiPayload
+    {
+        public bool? Connected { get; set; }
+        public bool? NeedsClarification { get; set; }
         public double Confidence { get; set; }
     }
 

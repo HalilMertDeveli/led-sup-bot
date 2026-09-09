@@ -5,9 +5,9 @@ namespace LedSupBot.Domain.Common;
 /// </summary>
 public abstract class Entity
 {
-    public Guid Id { get; protected set; } = Guid.NewGuid();
-    public DateTimeOffset CreatedAt { get; protected set; } = DateTimeOffset.UtcNow;
-    public DateTimeOffset UpdatedAt { get; protected set; } = DateTimeOffset.UtcNow;
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     protected void Touch() => UpdatedAt = DateTimeOffset.UtcNow;
 }

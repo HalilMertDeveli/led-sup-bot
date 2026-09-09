@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.WhatsApp;
 using LedSupBot.Infrastructure.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -30,7 +31,6 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
 
     public Task ConnectAsync(CancellationToken cancellationToken = default)
     {
-        // Connector process owns the session; ASP.NET only observes status.
         _logger.LogInformation("Connect requested — ensure the Node connector process is running");
         return Task.CompletedTask;
     }
@@ -40,6 +40,26 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
         _logger.LogInformation("Disconnect requested — stop the Node connector process to unlink session usage");
         _stateStore.Set(WhatsAppConnectionStatus.Disconnected);
         return Task.CompletedTask;
+    }
+
+    public async Task ResetSessionAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.PostAsync("session/reset", null, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Connector session reset failed: {(int)response.StatusCode}");
+        _stateStore.Set(WhatsAppConnectionStatus.AuthenticationRequired);
+    }
+
+    public async Task<WhatsAppPairingQr> GetPairingQrAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.GetAsync("session/qr", cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            return new WhatsAppPairingQr(false, [], WhatsAppConnectionStatus.Error);
+        var payload = await response.Content.ReadFromJsonAsync<PairingQrPayload>(cancellationToken: cancellationToken);
+        return new WhatsAppPairingQr(
+            payload?.Available == true && payload.Modules is { Length: > 0 },
+            payload?.Modules ?? [],
+            MapStatus(payload?.Status));
     }
 
     public async Task<WhatsAppConnectionStatus> GetConnectionStatusAsync(CancellationToken cancellationToken = default)
@@ -66,30 +86,137 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
 
     public async Task<string?> SendTextMessageAsync(string toPhoneE164, string body, CancellationToken cancellationToken = default)
     {
-        var digits = new string(toPhoneE164.Where(char.IsDigit).ToArray());
+        var destination = NormalizeDestination(toPhoneE164);
+        var destinationType = WhatsAppEventMapper.IsLidJid(destination)
+            ? "lid"
+            : WhatsAppEventMapper.IsGroupJid(destination)
+                ? "g.us"
+                : "s.whatsapp.net";
+
         using var response = await _http.PostAsJsonAsync(
             "send/text",
-            new { to = digits, text = body },
+            new { to = destination, text = body },
             cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning("Connector send failed with status {Status}", (int)response.StatusCode);
+            _logger.LogWarning(
+                "Connector send failed connectorHttp={ConnectorHttp} destinationType={DestinationType}",
+                (int)response.StatusCode,
+                destinationType);
             throw new InvalidOperationException($"Connector send failed: {(int)response.StatusCode}");
         }
 
         var payload = await response.Content.ReadFromJsonAsync<SendPayload>(cancellationToken: cancellationToken);
-        return payload?.ExternalMessageId;
+        var messageIdPresent = payload?.BaileysMessageIdPresent == true ||
+                               !string.IsNullOrWhiteSpace(payload?.ExternalMessageId);
+
+        _logger.LogInformation(
+            "Connector send accepted connectorHttp={ConnectorHttp} destinationType={DestinationType} baileysMessageIdPresent={MessageIdPresent} exactRoutePreserved={ExactRoutePreserved} sockSendMessageCalled=true",
+            (int)response.StatusCode,
+            payload?.DestinationType ?? destinationType,
+            messageIdPresent,
+            payload?.ExactRoutePreserved ?? true);
+
+        if (!messageIdPresent)
+        {
+            throw new InvalidOperationException("Connector accepted send but Baileys message id was not produced.");
+        }
+
+        return payload!.ExternalMessageId;
     }
 
-    public Task<string?> SendImageMessageAsync(
+    public async Task SendComposingAsync(string toPhoneE164, CancellationToken cancellationToken = default)
+    {
+        await SendPresenceAsync(toPhoneE164, "composing", cancellationToken);
+    }
+
+    public async Task SendPausedPresenceAsync(string toPhoneE164, CancellationToken cancellationToken = default)
+    {
+        await SendPresenceAsync(toPhoneE164, "paused", cancellationToken);
+    }
+
+    private async Task SendPresenceAsync(string toPhoneE164, string state, CancellationToken cancellationToken)
+    {
+        var destination = NormalizeDestination(toPhoneE164);
+
+        using var response = await _http.PostAsJsonAsync(
+            "send/presence",
+            new { to = destination, state },
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogDebug("Connector presence {State} failed with status {Status}", state, (int)response.StatusCode);
+        }
+    }
+
+    public async Task<string?> SendImageMessageAsync(
         string toPhoneE164,
         Stream image,
         string contentType,
         string? caption = null,
         CancellationToken cancellationToken = default)
     {
-        throw new NotSupportedException("Image send via connector is deferred to a later phase.");
+        var destination = NormalizeDestination(toPhoneE164);
+        using var ms = new MemoryStream();
+        await image.CopyToAsync(ms, cancellationToken);
+        var base64 = Convert.ToBase64String(ms.ToArray());
+
+        using var response = await _http.PostAsJsonAsync(
+            "send/image",
+            new
+            {
+                to = destination,
+                caption,
+                imageBase64 = base64
+            },
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("Connector image send failed with status {Status}", (int)response.StatusCode);
+            throw new InvalidOperationException($"Connector image send failed: {(int)response.StatusCode}");
+        }
+
+        var result = await response.Content.ReadFromJsonAsync<SendPayload>(cancellationToken: cancellationToken);
+        return result?.ExternalMessageId;
+    }
+
+    public async Task<string?> SendDocumentMessageAsync(
+        string toPhoneE164, Stream document, string contentType, string fileName,
+        string? caption = null, CancellationToken cancellationToken = default)
+    {
+        var destination = NormalizeDestination(toPhoneE164);
+        using var ms = new MemoryStream();
+        await document.CopyToAsync(ms, cancellationToken);
+        using var response = await _http.PostAsJsonAsync("send/document", new
+        {
+            to = destination,
+            caption,
+            contentType,
+            fileName = Path.GetFileName(fileName),
+            documentBase64 = Convert.ToBase64String(ms.ToArray())
+        }, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Connector document send failed: {(int)response.StatusCode}");
+        var result = await response.Content.ReadFromJsonAsync<SendPayload>(cancellationToken: cancellationToken);
+        return result?.ExternalMessageId;
+    }
+
+    public async Task<string?> SendAudioMessageAsync(string toPhoneE164, Stream audio, string contentType,
+        bool voiceNote = true, CancellationToken cancellationToken = default)
+    {
+        var destination = NormalizeDestination(toPhoneE164);
+        using var ms = new MemoryStream();
+        await audio.CopyToAsync(ms, cancellationToken);
+        using var response = await _http.PostAsJsonAsync("send/audio", new
+        {
+            to = destination, contentType, voiceNote, audioBase64 = Convert.ToBase64String(ms.ToArray())
+        }, cancellationToken);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"Connector audio send failed: {(int)response.StatusCode}");
+        var result = await response.Content.ReadFromJsonAsync<SendPayload>(cancellationToken: cancellationToken);
+        return result?.ExternalMessageId;
     }
 
     public async Task<WhatsAppMediaDownloadResult> DownloadMediaAsync(string mediaId, CancellationToken cancellationToken = default)
@@ -115,11 +242,22 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
         return new WhatsAppMediaDownloadResult(mediaId, mimeType, content);
     }
 
+    private static string NormalizeDestination(string toAddress)
+    {
+        if (toAddress.Contains('@', StringComparison.Ordinal))
+        {
+            return WhatsAppEventMapper.NormalizeWhatsAppAddress(toAddress.Trim());
+        }
+
+        return new string(toAddress.Where(char.IsDigit).ToArray());
+    }
+
     private static WhatsAppConnectionStatus MapStatus(string? status) => status?.ToUpperInvariant() switch
     {
         "CONNECTED" => WhatsAppConnectionStatus.Connected,
         "CONNECTING" => WhatsAppConnectionStatus.Connecting,
         "AUTHENTICATION_REQUIRED" => WhatsAppConnectionStatus.AuthenticationRequired,
+        "DEGRADED_SESSION" => WhatsAppConnectionStatus.DegradedSession,
         "ERROR" => WhatsAppConnectionStatus.Error,
         _ => WhatsAppConnectionStatus.Disconnected
     };
@@ -129,8 +267,25 @@ public sealed class ConnectorWhatsAppClient : IWhatsAppClient
         public string? Status { get; set; }
     }
 
+    private sealed class PairingQrPayload
+    {
+        public bool Available { get; set; }
+        public bool[][]? Modules { get; set; }
+        public string? Status { get; set; }
+    }
+
     private sealed class SendPayload
     {
+        public bool Ok { get; set; }
+
         public string? ExternalMessageId { get; set; }
+
+        public string? DestinationType { get; set; }
+
+        public bool BaileysMessageIdPresent { get; set; }
+
+        public bool ExactRoutePreserved { get; set; }
+
+        public bool SockSendMessageCalled { get; set; }
     }
 }
