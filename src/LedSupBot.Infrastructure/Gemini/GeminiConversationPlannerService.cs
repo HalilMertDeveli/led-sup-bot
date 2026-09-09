@@ -206,7 +206,7 @@ public sealed class GeminiConversationPlannerService : IAiConversationPlanner
         - If previous case is completed and customer says thanks, reply naturally: "Rica ederim, iyi çalışmalar. Bir durum olursa buradayım."
         - NEVER promise calls or human reach-out (e.g. NEVER say "teknik ekibimiz sizi arayacak", "ekibimiz sizinle iletişime geçecek").
         - Do not hallucinate fake specifications. Provide `answerConfidence` (0.0 to 1.0).
-        - Factual authority order is strict: SYSTEM/SAFETY -> BACKEND STATE -> VERIFIED TECHNICAL KNOWLEDGE -> SAFE GENERAL MODEL KNOWLEDGE -> GOLDEN STYLE.
+        - Factual authority order is strict: SYSTEM/SAFETY -> CURRENT CASE FACTS -> EXACT INTERNAL SPEC -> APPROVED TRAINING STYLE -> SAME-CUSTOMER HISTORY -> WEB EVIDENCE -> GENERAL MODEL REASONING.
         - Golden examples control presentation only. They are never evidence for a technical fact.
         - Backend diagnostic state is authoritative history. Never rewrite it, repeat a completed check without a new reason, or claim a check occurred when absent.
         - For troubleshooting, normally propose ONE useful next check in suggestedNextAction and keep the reply concise.
@@ -266,11 +266,21 @@ public sealed class GeminiConversationPlannerService : IAiConversationPlanner
             exactModelMatch: {context.KnowledgeGrounding?.ExactModelMatch.ToString() ?? "none"}
             conflictDetected: {context.KnowledgeGrounding?.ConflictDetected.ToString() ?? "none"}
             diagnosticState: {context.DiagnosticContext ?? "none"}
+            sourcePriority: CURRENT CASE FACTS > EXACT INTERNAL SPEC > APPROVED TRAINING STYLE > SAME-CUSTOMER HISTORY > WEB EVIDENCE > GENERAL REASONING
+            technicalKnowledge:
+            {context.TechnicalKnowledgeContext ?? "none"}
+            approvedTrainingExamples:
+            {context.ApprovedTrainingContext ?? "none"}
+            trainingRule: Approved examples teach style, intent handling and clarification behavior only. Never use them as authority for hardware specifications.
+            sameCustomerHistoricalMemory:
+            {context.SameCustomerMemoryContext ?? "none"}
+            historicalMemoryRule: This history belongs to the same canonical customer, but remains historical. Do not silently promote it to a current-case fact.
             verifiedPriorCases:
             {context.CaseMemoryContext ?? "none"}
             caseMemoryRule: Prior cases are historical troubleshooting evidence only. Never use them as universal product specifications, never override official RAG, and never repeat a check already completed in diagnosticState.
-            technicalKnowledge:
-            {context.TechnicalKnowledgeContext ?? "none"}
+            webEvidence:
+            {context.WebEvidenceContext ?? "none"}
+            webRule: Web is last-stage evidence. Exact internal model documentation wins unless the question explicitly requires freshness; then explain any version difference. Never invent an exact value when neither exact internal evidence nor an official grounded web source supports it.
             recentMessages:
             {history}
             latestCustomerMessage:

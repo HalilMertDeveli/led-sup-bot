@@ -12,11 +12,48 @@ public sealed class WebGroundingOptions
     public bool Enabled { get; set; } = true;
     public bool SearchOnlyWhenRequired { get; set; } = true;
     public int MaxAttemptsPerTurn { get; set; } = 1;
+    public int TimeoutSeconds { get; set; } = 20;
+    public bool PreferOfficialSources { get; set; } = true;
+    public string Provider { get; set; } = "GeminiGoogleSearch";
 }
 
 public enum InformationSourceRoute { NoSearch, WebSearch, RagAndWeb }
 
-public sealed record WebSourceReference(string Title, string Uri);
+public sealed record WebSourceReference(
+    string Title,
+    string Uri,
+    DateTimeOffset? RetrievedAt = null,
+    string? RelevantClaim = null,
+    bool IsOfficial = false)
+{
+    public string? SafeDomain()
+    {
+        if (!System.Uri.TryCreate(Uri, UriKind.Absolute, out var parsed)) return null;
+        return parsed.Host.ToLowerInvariant();
+    }
+
+    public string SafeUri()
+    {
+        if (!System.Uri.TryCreate(Uri, UriKind.Absolute, out var parsed)) return string.Empty;
+        return parsed.GetLeftPart(UriPartial.Path);
+    }
+}
+
+public static class OfficialWebSourcePolicy
+{
+    private static readonly string[] ManufacturerDomains =
+    [
+        "colorlightinside.com", "novastar.tech", "novastar-led.com", "linsn.com",
+        "huidu.cn", "onbonbx.com", "listenvision.com", "bromptontech.com"
+    ];
+
+    public static bool IsOfficial(string uri)
+    {
+        if (!System.Uri.TryCreate(uri, UriKind.Absolute, out var parsed)) return false;
+        var host = parsed.Host.ToLowerInvariant();
+        return ManufacturerDomains.Any(domain => host == domain || host.EndsWith('.' + domain, StringComparison.Ordinal));
+    }
+}
 
 public sealed record WebGroundingResult(
     bool Attempted,
@@ -25,6 +62,7 @@ public sealed record WebGroundingResult(
     string? Reply,
     IReadOnlyList<WebSourceReference> Sources)
 {
+    public bool HasOfficialSource => Sources.Any(x => x.IsOfficial);
     public static WebGroundingResult NotAttempted { get; } = new(false, false, false, null, []);
     public static WebGroundingResult Failed { get; } = new(true, false, false, null, []);
 }
@@ -48,7 +86,7 @@ public static partial class InformationSourceRoutingPolicy
         var text = Normalize(message);
         if (ConversationSemantics.IsWaitAcknowledgement(message) || intent == ConversationIntent.Acknowledgement)
             return InformationSourceRoute.NoSearch;
-        if (intent == ConversationIntent.CasualConversation)
+        if (intent == ConversationIntent.CasualConversation || CasualConversationRegex().IsMatch(text))
             return InformationSourceRoute.NoSearch;
         if (intent == ConversationIntent.QuestionAboutCurrentStep)
             return InformationSourceRoute.NoSearch;
@@ -78,6 +116,10 @@ public static partial class InformationSourceRoutingPolicy
         value = SecretRegex().Replace(value, " ");
         value = WindowsPathRegex().Replace(value, " ");
         value = PrivateIdentifierRegex().Replace(value, " ");
+        value = WhatsAppJidRegex().Replace(value, " ");
+        value = EmailRegex().Replace(value, " ");
+        value = GuidRegex().Replace(value, " ");
+        value = CustomerNameRegex().Replace(value, " ");
         value = WhitespaceRegex().Replace(value, " ").Trim();
         return value.Length <= 300 ? value : value[..300];
     }
@@ -98,6 +140,8 @@ public static partial class InformationSourceRoutingPolicy
     private static partial Regex ExplicitSearchRegex();
     [GeneratedRegex(@"\b(firmware|surum|versiyon|yeni cikan|en son|en yeni|guncel|hala satiliyor)\b", RegexOptions.CultureInvariant)]
     private static partial Regex CurrentProductStateRegex();
+    [GeneratedRegex(@"\b(nasilsin|iyi misin|ne haber|napiyorsun|ne yapiyorsun|keyifler nasil)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex CasualConversationRegex();
     [GeneratedRegex(@"^(?=.*\b(?:kart|receiver|receiving card|sender card|alici kart|verici kart|controller|kontrolcu|processor|islemci|player|playbox|e\d+|5a-?75e|x\d+[a-z]?)\b)(?=.*(?:\?|kac|kapasite|cozunurluk|piksel|pixel|port|firmware|ne ise yar|destek)).*$", RegexOptions.CultureInvariant)]
     private static partial Regex TechnicalCardQuestionRegex();
     [GeneratedRegex(@"(?<!\d)(?:\+?90\s*)?0?5\d{2}[\s.()-]*\d{3}[\s.()-]*\d{2}[\s.()-]*\d{2}(?!\d)", RegexOptions.CultureInvariant)]
@@ -110,6 +154,14 @@ public static partial class InformationSourceRoutingPolicy
     private static partial Regex WindowsPathRegex();
     [GeneratedRegex(@"(?i)\b(?:conversation|case|customer)[-_ ]?id\s*[:=]\s*[a-f0-9-]{8,}\b", RegexOptions.CultureInvariant)]
     private static partial Regex PrivateIdentifierRegex();
+    [GeneratedRegex(@"(?i)\b\d{5,}@(lid|s\.whatsapp\.net|g\.us)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex WhatsAppJidRegex();
+    [GeneratedRegex(@"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", RegexOptions.CultureInvariant)]
+    private static partial Regex EmailRegex();
+    [GeneratedRegex(@"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b", RegexOptions.CultureInvariant)]
+    private static partial Regex GuidRegex();
+    [GeneratedRegex(@"(?i)\b(?:adım|adim|ismim|müşteri adı|musteri adi)\s*[:=-]?\s*[\p{L}]{2,}(?:\s+[\p{L}]{2,})?\b", RegexOptions.CultureInvariant)]
+    private static partial Regex CustomerNameRegex();
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhitespaceRegex();
 }

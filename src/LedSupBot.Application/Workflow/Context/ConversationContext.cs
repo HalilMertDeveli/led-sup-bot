@@ -1,6 +1,8 @@
 using LedSupBot.Domain.Enums;
 using LedSupBot.Application.Workflow.Knowledge;
 using LedSupBot.Application.CaseMemory;
+using LedSupBot.Application.Workflow.TechnicalAnswers;
+using LedSupBot.Application.Workflow.Web;
 
 namespace LedSupBot.Application.Workflow.Context;
 
@@ -54,6 +56,8 @@ public enum PendingWorkflowFact
 
 public sealed class ConversationContext
 {
+    public Guid CustomerId { get; init; }
+
     public Guid ConversationId { get; init; }
 
     public ConversationStage CurrentStage { get; init; }
@@ -107,4 +111,10 @@ public sealed class ConversationContext
     public string? DiagnosticContext { get; set; }
     public CaseMemorySearchResult? CaseMemory { get; set; }
     public string? CaseMemoryContext { get; set; }
+    public ApprovedTrainingSearchResult? ApprovedTraining { get; set; }
+    public string? ApprovedTrainingContext { get; set; }
+    public SameCustomerMemoryResult? SameCustomerMemory { get; set; }
+    public string? SameCustomerMemoryContext { get; set; }
+    public WebGroundingResult? WebGrounding { get; set; }
+    public string? WebEvidenceContext { get; set; }
 }

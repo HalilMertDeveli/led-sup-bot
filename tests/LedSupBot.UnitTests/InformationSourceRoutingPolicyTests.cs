@@ -29,6 +29,7 @@ public sealed class InformationSourceRoutingPolicyTests
 
     [Theory]
     [InlineData("Bugün nasılsın?", ConversationIntent.CasualConversation)]
+    [InlineData("Şu an nasılsın?", ConversationIntent.Unclear)]
     [InlineData("Şu an ekran çalışmıyor.", ConversationIntent.LedTroubleshooting)]
     [InlineData("Şimdi düzeldi.", ConversationIntent.LedTroubleshooting)]
     public void Conversational_or_live_symptom_phrasing_does_not_trigger_web(string message, ConversationIntent intent) =>
@@ -81,6 +82,16 @@ public sealed class InformationSourceRoutingPolicyTests
         Assert.DoesNotContain("secret-value", query);
         Assert.DoesNotContain(@"C:\Users", query);
         Assert.Contains("X20 latest firmware", query);
+    }
+
+    [Fact]
+    public void Public_query_removes_explicit_customer_name()
+    {
+        var query = InformationSourceRoutingPolicy.BuildPublicQuery(
+            "Adım Halil, X4e için en güncel firmware hangisi?");
+
+        Assert.DoesNotContain("Halil", query, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("X4e", query, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

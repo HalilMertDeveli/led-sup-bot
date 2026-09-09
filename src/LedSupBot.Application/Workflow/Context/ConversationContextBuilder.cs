@@ -74,6 +74,7 @@ public sealed class ConversationContextBuilder : IConversationContextBuilder
 
         return new ConversationContext
         {
+            CustomerId = conversation.CustomerId,
             ConversationId = conversation.Id,
             CurrentStage = effectiveStage,
             StageLabel = AdminStageLabels.ToLabel(effectiveStage),

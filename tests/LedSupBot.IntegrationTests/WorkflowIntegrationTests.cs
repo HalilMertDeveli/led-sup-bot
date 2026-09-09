@@ -536,7 +536,7 @@ public sealed class WorkflowIntegrationTests
     {
         var (conversation, customer) = await SeedPendingReceiverAsync();
         _fixture.Web.Reset(); _fixture.Planner.Reset(); _fixture.WhatsApp.SentTexts.Clear();
-        _fixture.Planner.NextResponse = new("general_knowledge", "Eski bilgi kullanılmamalı.", null, false, null);
+        _fixture.Planner.NextResponse = new("general_knowledge", "Gemini'nin web kanıtından ürettiği doğrulanmış güncel kur yanıtı.", null, false, null);
         _fixture.Web.NextResult = new(true, true, true, "Doğrulanmış güncel kur yanıtı.",
             [new WebSourceReference("Resmi kur kaynağı", "https://example.com/rates")]);
 
@@ -544,7 +544,9 @@ public sealed class WorkflowIntegrationTests
 
         Assert.Equal(1, _fixture.Web.CallCount);
         Assert.Equal("Bugün dolar kaç?", _fixture.Web.LastQuery);
-        Assert.Contains("Doğrulanmış", Assert.Single(_fixture.WhatsApp.SentTexts));
+        Assert.Equal("Gemini'nin web kanıtından ürettiği doğrulanmış güncel kur yanıtı.",
+            Assert.Single(_fixture.WhatsApp.SentTexts));
+        Assert.Contains("Resmi kur kaynağı", _fixture.Planner.LastContext!.WebEvidenceContext);
         await using var scope = _fixture.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var snapshot = await db.AiReplyContextSnapshots.Where(x => x.ConversationId == conversation.Id)
