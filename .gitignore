@@ -2,6 +2,8 @@
 [Bb]in/
 [Oo]bj/
 out/
+.codex*/
+.codex-*/
 *.user
 *.suo
 *.userosscache
@@ -17,6 +19,8 @@ artifacts/
 # Test / coverage
 TestResults/
 coverage/
+.test-output/
+.runtime/
 *.coverage
 *.coveragexml
 
@@ -26,6 +30,8 @@ admin/dist/
 admin/.vite/
 connector/node_modules/
 connector/.sessions/
+connector/.session-backups/
+**/.session-backups/
 connector/.env
 *.tsbuildinfo
 npm-debug.log*
@@ -46,6 +52,7 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+appsettings.Local.json
 *.pfx
 *.p12
 *.pem
@@ -74,7 +81,11 @@ Desktop.ini
 *.db-wal
 local-storage/
 data/media/
+**/data/media/
 .tmp/
+.phase21/
+knowledge/raw/
+knowledge/cache/
 
 # Logs
 logs/

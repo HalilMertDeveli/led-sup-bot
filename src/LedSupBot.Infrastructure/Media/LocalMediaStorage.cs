@@ -1,7 +1,6 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Media;
 using LedSupBot.Infrastructure.Configuration;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -14,14 +13,13 @@ public sealed class LocalMediaStorage : IMediaStorage
 
     public LocalMediaStorage(
         IOptions<MediaStorageOptions> options,
-        IHostEnvironment environment,
         ILogger<LocalMediaStorage> logger)
     {
         _logger = logger;
         var configured = options.Value.RootPath;
         _rootPath = Path.IsPathRooted(configured)
             ? Path.GetFullPath(configured)
-            : Path.GetFullPath(Path.Combine(environment.ContentRootPath, configured));
+            : Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), configured));
 
         Directory.CreateDirectory(_rootPath);
     }
@@ -86,6 +84,18 @@ public sealed class LocalMediaStorage : IMediaStorage
         {
             return false;
         }
+    }
+
+    public Task DeleteAsync(string storageKey, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var fullPath = ResolveSafePath(storageKey);
+        if (File.Exists(fullPath))
+        {
+            File.Delete(fullPath);
+        }
+
+        return Task.CompletedTask;
     }
 
     internal string ResolveSafePath(string storageKey)

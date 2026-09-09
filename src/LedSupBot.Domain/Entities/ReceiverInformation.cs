@@ -1,4 +1,5 @@
 using LedSupBot.Domain.Common;
+using LedSupBot.Domain.Enums;
 
 namespace LedSupBot.Domain.Entities;
 
@@ -13,6 +14,8 @@ public class ReceiverInformation : Entity
     public string? Manufacturer { get; set; }
 
     public string? Model { get; set; }
+
+    public ReceiverModel? ReceiverModel { get; set; }
 
     public string? Notes { get; set; }
 

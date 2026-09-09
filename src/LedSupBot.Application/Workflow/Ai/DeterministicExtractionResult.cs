@@ -7,6 +7,9 @@ public sealed class DeterministicExtractionResult
 {
     public bool ParsedScreen { get; init; }
     public bool ParsedReceiver { get; init; }
+    public bool ParsedReceiverModel { get; init; }
+    public bool ParsedPlayerType { get; init; }
+    public bool ParsedProcessorHdmi { get; init; }
     public bool ParsedConfig { get; init; }
     public bool ParsedAnyDesk { get; init; }
     public bool ScreenNeedsConfirmation { get; init; }
@@ -17,6 +20,9 @@ public sealed class DeterministicExtractionResult
     public bool IsFullyConfident =>
         (ParsedScreen && ScreenComplete && !ScreenNeedsConfirmation && !ScreenAmbiguous) ||
         ParsedReceiver ||
+        ParsedReceiverModel ||
+        ParsedPlayerType ||
+        ParsedProcessorHdmi ||
         ParsedConfig ||
         ParsedAnyDesk;
 
@@ -25,7 +31,9 @@ public sealed class DeterministicExtractionResult
         ScreenAmbiguous ||
         ScreenPartial ||
         (!ParsedScreen && TechnicalContentHeuristic.MightContainScreenInfo(Text)) ||
-        (!ParsedReceiver && TechnicalContentHeuristic.MightContainReceiverInfo(Text)) ||
+        (!ParsedReceiver && !ParsedReceiverModel && TechnicalContentHeuristic.MightContainReceiverInfo(Text)) ||
+        (!ParsedPlayerType && TechnicalContentHeuristic.MightContainPlayerInfo(Text)) ||
+        (!ParsedProcessorHdmi && TechnicalContentHeuristic.MightContainHdmiInfo(Text)) ||
         (!ParsedConfig && TechnicalContentHeuristic.MightContainConfigInfo(Text)) ||
         (!ParsedAnyDesk && TechnicalContentHeuristic.MightContainAnyDeskInfo(Text));
 
@@ -35,6 +43,9 @@ public sealed class DeterministicExtractionResult
     {
         var screen = ScreenSizeParser.Parse(text);
         var parsedReceiver = ReceiverCountParser.TryParse(text, out _);
+        var parsedReceiverModel = ReceiverModelParser.TryParse(text, out _);
+        var parsedPlayerType = PlayerTypeParser.TryParse(text, out _);
+        var parsedProcessorHdmi = ProcessorHdmiParser.Parse(text) != ProcessorHdmiParseResult.None;
         var config = ConfigConfirmationParser.Parse(text);
         var parsedAnyDesk = AnyDeskParser.TryParse(text, out _);
 
@@ -47,6 +58,9 @@ public sealed class DeterministicExtractionResult
             Text = text,
             ParsedScreen = screen.ParsedAny,
             ParsedReceiver = parsedReceiver,
+            ParsedReceiverModel = parsedReceiverModel,
+            ParsedPlayerType = parsedPlayerType,
+            ParsedProcessorHdmi = parsedProcessorHdmi,
             ParsedConfig = config == ConfigConfirmationResult.Confirmed,
             ParsedAnyDesk = parsedAnyDesk,
             ScreenNeedsConfirmation = screen.NeedsMeterConfirmation,

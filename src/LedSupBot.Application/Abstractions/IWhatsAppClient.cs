@@ -10,6 +10,12 @@ public interface IWhatsAppClient
 
     Task DisconnectAsync(CancellationToken cancellationToken = default);
 
+    Task ResetSessionAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Session reset is not supported by this client.");
+
+    Task<WhatsAppPairingQr> GetPairingQrAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(new WhatsAppPairingQr(false, [], WhatsAppConnectionStatus.Disconnected));
+
     Task<WhatsAppConnectionStatus> GetConnectionStatusAsync(CancellationToken cancellationToken = default);
 
     Task<string?> SendTextMessageAsync(string toPhoneE164, string body, CancellationToken cancellationToken = default);
@@ -21,6 +27,19 @@ public interface IWhatsAppClient
         string? caption = null,
         CancellationToken cancellationToken = default);
 
+    Task<string?> SendDocumentMessageAsync(
+        string toPhoneE164, Stream document, string contentType, string fileName,
+        string? caption = null, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Document sending is not supported by this client.");
+
+    Task<string?> SendAudioMessageAsync(string toPhoneE164, Stream audio, string contentType,
+        bool voiceNote = true, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Audio sending is not supported by this client.");
+
+    Task SendComposingAsync(string toPhoneE164, CancellationToken cancellationToken = default);
+
+    Task SendPausedPresenceAsync(string toPhoneE164, CancellationToken cancellationToken = default);
+
     Task<WhatsAppMediaDownloadResult> DownloadMediaAsync(string mediaId, CancellationToken cancellationToken = default);
 }
 
@@ -30,8 +49,14 @@ public enum WhatsAppConnectionStatus
     Connecting = 1,
     Connected = 2,
     AuthenticationRequired = 3,
-    Error = 4
+    Error = 4,
+    DegradedSession = 5
 }
+
+public sealed record WhatsAppPairingQr(
+    bool Available,
+    bool[][] Modules,
+    WhatsAppConnectionStatus Status);
 
 public sealed record WhatsAppMediaDownloadResult(
     string MediaId,
@@ -45,9 +70,20 @@ public sealed class WhatsAppInboundEvent
 
     public string? ExternalMessageId { get; set; }
 
+    /// <summary>Privacy-safe connector-generated trace id; never contains message text or identity.</summary>
+    public string? CorrelationId { get; set; }
+
     public string? RemoteJid { get; set; }
 
     public string? RemotePhoneNumber { get; set; }
+
+    /// <summary>Baileys sender_pn JID when inbound remoteJid is @lid (optional).</summary>
+    public string? SenderPnJid { get; set; }
+
+    /// <summary>Trusted Baileys contact mapping fields from contacts.upsert/update.</summary>
+    public string? LidJid { get; set; }
+    public string? PhoneJid { get; set; }
+    public string? SavedDisplayName { get; set; }
 
     public bool FromMe { get; set; }
 
@@ -62,6 +98,15 @@ public sealed class WhatsAppInboundEvent
     public DateTimeOffset? Timestamp { get; set; }
 
     public string? Status { get; set; }
+
+    /// <summary>Connector/Baileys delivery ack: Sent, Delivered, Read, Failed.</summary>
+    public string? DeliveryStatus { get; set; }
+
+    /// <summary>Connected business account PN JID (ConnectedIdentity event).</summary>
+    public string? SelfPnJid { get; set; }
+
+    /// <summary>Connected business account LID JID (ConnectedIdentity event).</summary>
+    public string? SelfLidJid { get; set; }
 
     public WhatsAppMediaMetadata? Media { get; set; }
 }

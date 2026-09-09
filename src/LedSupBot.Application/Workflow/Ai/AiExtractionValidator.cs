@@ -1,5 +1,6 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Workflow.Parsing;
+using LedSupBot.Domain.Enums;
 using Microsoft.Extensions.Options;
 
 namespace LedSupBot.Application.Workflow.Ai;
@@ -20,7 +21,12 @@ public sealed class AiExtractionValidator
         var prompts = new List<string>();
         ScreenValidation? screen = null;
         int? receiverCount = null;
+        ReceiverModel? receiverModel = null;
+        PlayerType? playerType = null;
+        bool? processorHdmiConnected = null;
+        bool? processorHdmiNeedsClarification = null;
         bool? configConfirmed = null;
+        bool configClarificationRequested = false;
         string? anyDeskAddress = null;
 
         if (extraction.Screen is not null)
@@ -28,14 +34,50 @@ public sealed class AiExtractionValidator
             screen = ValidateScreen(extraction.Screen, prompts);
         }
 
-        if (extraction.Receiver is { Count: > 0 } receiver &&
-            receiver.Confidence >= _options.ConfidenceThreshold)
+        if (extraction.Receiver is not null && extraction.Receiver.Confidence >= _options.ConfidenceThreshold)
         {
-            receiverCount = receiver.Count;
+            if (extraction.Receiver.Count is > 0)
+            {
+                receiverCount = extraction.Receiver.Count;
+            }
+
+            if (extraction.Receiver.ReceiverModel is not null and not ReceiverModel.Unknown)
+            {
+                receiverModel = extraction.Receiver.ReceiverModel;
+            }
+            else if (!string.IsNullOrWhiteSpace(extraction.Receiver.Model))
+            {
+                var parsed = ReceiverModelParser.Normalize(extraction.Receiver.Model);
+                if (parsed != ReceiverModel.Unknown)
+                {
+                    receiverModel = parsed;
+                }
+            }
         }
         else if (extraction.Receiver is not null && extraction.Receiver.Count is not null)
         {
             prompts.Add(WorkflowPrompts.AskReceiverClarification);
+        }
+
+        if (extraction.Player is not null && extraction.Player.Confidence >= _options.ConfidenceThreshold)
+        {
+            if (extraction.Player.PlayerType is not null and not PlayerType.Unknown)
+            {
+                playerType = extraction.Player.PlayerType;
+            }
+        }
+
+        if (extraction.ProcessorHdmi is not null && extraction.ProcessorHdmi.Confidence >= _options.ConfidenceThreshold)
+        {
+            if (extraction.ProcessorHdmi.Connected == true)
+            {
+                processorHdmiConnected = true;
+            }
+            else if (extraction.ProcessorHdmi.Connected == false)
+            {
+                processorHdmiConnected = false;
+            }
+            processorHdmiNeedsClarification = extraction.ProcessorHdmi.NeedsClarification;
         }
 
         if (extraction.Config is not null && extraction.Config.Confidence >= _options.ConfidenceThreshold)
@@ -44,13 +86,21 @@ public sealed class AiExtractionValidator
             {
                 configConfirmed = true;
             }
-            else if (extraction.Intent == CustomerMessageIntent.Rejection ||
+            else if (extraction.Config.ClarificationRequested == true || extraction.Intent == ConversationIntent.QuestionAboutCurrentStep)
+            {
+                configClarificationRequested = true;
+            }
+            else if (extraction.Intent == ConversationIntent.WorkflowInformation ||
                      extraction.Config.Confirmed == false ||
                      extraction.Config.Connected == false)
             {
                 configConfirmed = false;
                 prompts.Add(WorkflowPrompts.ExplainConfigConnection);
             }
+        }
+        else if (extraction.Intent == ConversationIntent.QuestionAboutCurrentStep)
+        {
+            configClarificationRequested = true;
         }
 
         if (extraction.AnyDesk is not null &&
@@ -84,7 +134,13 @@ public sealed class AiExtractionValidator
             configConfirmed,
             anyDeskAddress,
             prompts.Distinct(StringComparer.Ordinal).ToList(),
-            ComputeAverageConfidence(extraction));
+            ComputeAverageConfidence(extraction),
+            receiverModel,
+            playerType,
+            processorHdmiConnected,
+            processorHdmiNeedsClarification,
+            configClarificationRequested,
+            extraction.CustomerQuestion);
     }
 
     private ScreenValidation? ValidateScreen(ScreenSlotCandidate screen, List<string> prompts)
@@ -126,7 +182,12 @@ public sealed class AiExtractionValidator
             return new ScreenValidation(0, heightCm.Value, false);
         }
 
-        prompts.Add(WorkflowPrompts.AskScreenClarification);
+        if (screen.WidthMeters is not null || screen.HeightMeters is not null ||
+            screen.WidthCm is not null || screen.HeightCm is not null)
+        {
+            prompts.Add(WorkflowPrompts.AskScreenClarification);
+        }
+
         return null;
     }
 
@@ -134,12 +195,12 @@ public sealed class AiExtractionValidator
     {
         if (screen.WidthCm is > 0)
         {
-            return screen.WidthCm;
+            return Math.Round(screen.WidthCm.Value, 2);
         }
 
         if (screen.WidthMeters is > 0)
         {
-            return ScreenDimensionUnitConverter.FromMeters(screen.WidthMeters.Value);
+            return Math.Round(ScreenDimensionUnitConverter.FromMeters(screen.WidthMeters.Value), 2);
         }
 
         return null;
@@ -149,12 +210,12 @@ public sealed class AiExtractionValidator
     {
         if (screen.HeightCm is > 0)
         {
-            return screen.HeightCm;
+            return Math.Round(screen.HeightCm.Value, 2);
         }
 
         if (screen.HeightMeters is > 0)
         {
-            return ScreenDimensionUnitConverter.FromMeters(screen.HeightMeters.Value);
+            return Math.Round(ScreenDimensionUnitConverter.FromMeters(screen.HeightMeters.Value), 2);
         }
 
         return null;
@@ -163,22 +224,22 @@ public sealed class AiExtractionValidator
     private static double? ComputeAverageConfidence(AiStructuredExtraction extraction)
     {
         var values = new List<double>();
-        if (extraction.Screen?.Confidence > 0)
+        if (extraction.Screen is not null)
         {
             values.Add(extraction.Screen.Confidence);
         }
 
-        if (extraction.Receiver?.Confidence > 0)
+        if (extraction.Receiver is not null)
         {
             values.Add(extraction.Receiver.Confidence);
         }
 
-        if (extraction.Config?.Confidence > 0)
+        if (extraction.Config is not null)
         {
             values.Add(extraction.Config.Confidence);
         }
 
-        if (extraction.AnyDesk?.Confidence > 0)
+        if (extraction.AnyDesk is not null)
         {
             values.Add(extraction.AnyDesk.Confidence);
         }
@@ -190,10 +251,16 @@ public sealed class AiExtractionValidator
 public sealed record ScreenValidation(decimal WidthCm, decimal HeightCm, bool Complete);
 
 public sealed record ValidatedAiExtraction(
-    CustomerMessageIntent Intent,
+    ConversationIntent Intent,
     ScreenValidation? Screen,
     int? ReceiverCount,
     bool? ConfigConfirmed,
     string? AnyDeskAddress,
     IReadOnlyList<string> ClarificationPrompts,
-    double? AverageConfidence);
+    double? AverageConfidence,
+    ReceiverModel? ReceiverModel = null,
+    PlayerType? PlayerType = null,
+    bool? ProcessorHdmiConnected = null,
+    bool? ProcessorHdmiNeedsClarification = null,
+    bool ConfigClarificationRequested = false,
+    string? CustomerQuestion = null);
