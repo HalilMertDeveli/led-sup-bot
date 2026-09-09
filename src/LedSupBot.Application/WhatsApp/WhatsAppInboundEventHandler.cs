@@ -92,7 +92,8 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
         }
 
         _logger.LogInformation(
-            "WhatsApp inbound received type=private messageType={MessageType} fromMe={FromMe}",
+            "WA_FILTER_ACCEPTED correlationId={CorrelationId} type=private messageType={MessageType} fromMe={FromMe}",
+            inboundEvent.CorrelationId ?? "none",
             inboundEvent.MessageType,
             inboundEvent.FromMe);
 
@@ -167,6 +168,10 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
 
         var phone = WhatsAppEventMapper.NormalizeWhatsAppAddress(customerAddress);
         var customer = await ResolveCustomerAsync(db, phone, inboundEvent, cancellationToken);
+        _logger.LogInformation(
+            "WA_IDENTITY_RESOLVED correlationId={CorrelationId} routeType={RouteType}",
+            inboundEvent.CorrelationId ?? "none",
+            WhatsAppEventMapper.IsLidJid(phone) ? "lid" : "pn");
 
         var conversation = await ResolveActiveConversationAsync(db, customer, cancellationToken);
 
@@ -234,6 +239,11 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
         try
         {
             await db.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation(
+                "MESSAGE_PERSISTED correlationId={CorrelationId} conversationId={ConversationId} messageId={MessageId}",
+                inboundEvent.CorrelationId ?? "none",
+                conversation.Id,
+                message.Id);
 
             var notifier = _services.GetService<IAdminEventNotifier>();
             if (notifier is not null)
@@ -430,6 +440,11 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
         }
 
         _logger.LogInformation(
+            "WA_TEST_AUTHORIZED correlationId={CorrelationId} conversationId={ConversationId}",
+            inboundEvent.CorrelationId ?? "none",
+            conversationId);
+
+        _logger.LogInformation(
             "Workflow resolve conversationId={ConversationId} botMode={BotMode} workflowResolved={Resolved}",
             conversationId,
             botMode,
@@ -466,16 +481,84 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
             return;
         }
 
-        await workflow.ProcessCustomerInboundAsync(
-            new WorkflowInboundMessage(
+        try
+        {
+            _logger.LogInformation(
+                "BOT_PROCESSING correlationId={CorrelationId} conversationId={ConversationId}",
+                inboundEvent.CorrelationId ?? "none",
+                conversationId);
+            await workflow.ProcessCustomerInboundAsync(
+                new WorkflowInboundMessage(
+                    conversationId,
+                    customerIdentity,
+                    message.Id,
+                    message.ExternalMessageId!,
+                    message.MessageType,
+                    textContent,
+                    WhatsAppDeliveryRoute: deliveryRoute),
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "FAILURE_STAGE={FailureStage} FAILURE_CATEGORY={FailureCategory} correlationId={CorrelationId}",
+                "BOT_PROCESSING",
+                ex.GetType().Name,
+                inboundEvent.CorrelationId ?? "none");
+            await TrySendSafeFallbackAsync(
                 conversationId,
                 customerIdentity,
-                message.Id,
-                message.ExternalMessageId!,
-                message.MessageType,
-                textContent,
-                WhatsAppDeliveryRoute: deliveryRoute),
+                deliveryRoute,
+                message.CreatedAt,
+                inboundEvent.CorrelationId,
+                cancellationToken);
+        }
+    }
+
+    private async Task TrySendSafeFallbackAsync(
+        Guid conversationId,
+        string customerIdentity,
+        string? deliveryRoute,
+        DateTimeOffset inboundCreatedAt,
+        string? correlationId,
+        CancellationToken cancellationToken)
+    {
+        var db = _services.GetRequiredService<IApplicationDbContext>();
+        var alreadySent = await db.Messages.AsNoTracking().AnyAsync(x =>
+            x.ConversationId == conversationId &&
+            x.Direction == MessageDirection.Outbound &&
+            x.SentBy == MessageSender.Bot &&
+            x.DeliveryStatus != DeliveryStatus.Failed &&
+            x.CreatedAt >= inboundCreatedAt,
             cancellationToken);
+        if (alreadySent) return;
+
+        try
+        {
+            await _services.GetRequiredService<IWorkflowOutboundDispatcher>().SendTextsAsync(
+                conversationId,
+                customerIdentity,
+                deliveryRoute,
+                ["Merhaba, mesajınızı aldım. Yanıtı hazırlarken geçici bir sorun oluştu; lütfen kısa şekilde tekrar yazar mısınız?"],
+                cancellationToken: cancellationToken);
+            _logger.LogInformation(
+                "BOT_RESPONSE_CREATED correlationId={CorrelationId} source=safe_fallback",
+                correlationId ?? "none");
+        }
+        catch (Exception fallbackException)
+        {
+            _logger.LogError(
+                fallbackException,
+                "FAILURE_STAGE={FailureStage} FAILURE_CATEGORY={FailureCategory} correlationId={CorrelationId}",
+                "OUTBOUND_TEXT_REQUESTED",
+                fallbackException.GetType().Name,
+                correlationId ?? "none");
+        }
     }
 
     private static string? ResolveWhatsAppDeliveryRoute(

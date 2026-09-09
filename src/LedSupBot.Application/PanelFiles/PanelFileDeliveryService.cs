@@ -8,6 +8,7 @@ using LedSupBot.Application.Workflow;
 using LedSupBot.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 
 namespace LedSupBot.Application.PanelFiles;
 
@@ -33,7 +34,8 @@ public interface IPanelFileDeliveryService
 public sealed class PanelFileDeliveryService(
     IApplicationDbContext db, IPanelFileDeliverySafetyGate gate, IMediaStorage storage,
     IWhatsAppClient client, IWhatsAppTestAllowlist allowlist, IWhatsAppSelfIdentityStore selfIdentity,
-    IOptions<WorkflowOptions> workflowOptions) : IPanelFileDeliveryService
+    IOptions<WorkflowOptions> workflowOptions,
+    ILogger<PanelFileDeliveryService> logger) : IPanelFileDeliveryService
 {
     private static readonly JsonSerializerOptions JsonOptions = CreateOptions();
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> DeliveryLocks = new();
@@ -63,6 +65,10 @@ public sealed class PanelFileDeliveryService(
         var authorized = await gate.EvaluateAsync(supportCase, cancellationToken);
         if (authorized.Decision != PanelFileDeliveryDecision.Allowed || authorized.ConfirmationId is null)
             return new(PanelFileDeliveryOutcome.Blocked, false, false);
+        logger.LogInformation(
+            "PACKAGE_RESOLVED packageId={PackageId} canonicalKey={CanonicalKey}",
+            authorized.PackageId,
+            authorized.CanonicalKey);
 
         var customerId = await db.Conversations.AsNoTracking().Where(x => x.Id == conversationId)
             .Select(x => x.CustomerId).SingleAsync(cancellationToken);
@@ -96,6 +102,10 @@ public sealed class PanelFileDeliveryService(
             authorized.ReceiverConfigAssetId!.Value, authorized.ReceiverConfigSha256!, null, DateTimeOffset.UtcNow,
             Assets: authorized.Assets?.Select(x => new PanelFileDeliveryAssetState(x.AssetId, x.Sha256, x.OriginalFileName)).ToList());
         var deliveryAssets = NormalizeAssets(state);
+        logger.LogInformation(
+            "PACKAGE_ASSETS_LOADED packageId={PackageId} assetCount={AssetCount}",
+            state.PackageId,
+            deliveryAssets.Count);
         await PersistAsync(supportCase, state, cancellationToken);
 
         try
@@ -109,13 +119,28 @@ public sealed class PanelFileDeliveryService(
                 var index = deliveryAssets.FindIndex(x => x.AssetId == pending.AssetId);
                 try
                 {
+                    logger.LogInformation(
+                        "DOCUMENT_SEND_REQUESTED packageId={PackageId} assetId={AssetId} attempt={Attempt}",
+                        state.PackageId,
+                        pending.AssetId,
+                        pending.AttemptCount + 1);
                     var id = await SendVerifiedAsync(destination.Address, state.PackageId, pending.AssetId,
                         pending.Sha256, cancellationToken);
                     deliveryAssets[index] = pending with { MessageId = id ?? "accepted-without-id", AttemptCount = pending.AttemptCount + 1, FailureReason = null };
+                    logger.LogInformation(
+                        "DOCUMENT_SEND_RESULT packageId={PackageId} assetId={AssetId} success=true",
+                        state.PackageId,
+                        pending.AssetId);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception ex)
                 {
+                    logger.LogWarning(
+                        "DOCUMENT_SEND_RESULT packageId={PackageId} assetId={AssetId} success=false FAILURE_STAGE={FailureStage} FAILURE_CATEGORY={FailureCategory}",
+                        state.PackageId,
+                        pending.AssetId,
+                        "DOCUMENT_SEND_REQUESTED",
+                        ex.GetType().Name);
                     deliveryAssets[index] = pending with { AttemptCount = pending.AttemptCount + 1, FailureReason = ex.GetType().Name };
                     state = ApplyAssets(state, deliveryAssets, ex.GetType().Name);
                     await PersistAsync(supportCase, state, CancellationToken.None);

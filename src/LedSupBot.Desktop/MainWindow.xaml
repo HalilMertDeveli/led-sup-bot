@@ -77,13 +77,15 @@
                 <!-- Status Pills & Mode Banners (Center) -->
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                     <!-- WhatsApp Status Pill -->
-                    <Border Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="10,4" Margin="0,0,8,0">
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <Ellipse Width="7" Height="7" Fill="{Binding WhatsAppConnected, Converter={StaticResource ConnBrush}}" Margin="0,0,6,0" VerticalAlignment="Center" />
-                            <TextBlock Text="WhatsApp: " Foreground="{StaticResource CardMutedBrush}" FontSize="11" />
-                            <TextBlock Text="{Binding WhatsAppStatus}" Foreground="{StaticResource CardTextBrush}" FontWeight="SemiBold" FontSize="11" />
-                        </StackPanel>
-                    </Border>
+                    <Button Command="{Binding ReconnectWhatsAppCommand}" Background="Transparent" BorderThickness="0" Padding="0" Margin="0,0,8,0" ToolTip="WhatsApp oturumunu yeniden bağla">
+                        <Border Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="10,4">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Ellipse Width="7" Height="7" Fill="{Binding WhatsAppConnected, Converter={StaticResource ConnBrush}}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                <TextBlock Text="WhatsApp: " Foreground="{StaticResource CardMutedBrush}" FontSize="11" />
+                                <TextBlock Text="{Binding WhatsAppStatus}" Foreground="{StaticResource CardTextBrush}" FontWeight="SemiBold" FontSize="11" />
+                            </StackPanel>
+                        </Border>
+                    </Button>
 
                     <!-- DB / API Status Pill -->
                     <Border Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="10,4" Margin="0,0,8,0">

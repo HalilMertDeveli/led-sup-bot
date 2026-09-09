@@ -7,21 +7,25 @@ public sealed class RuntimeEnvironmentLoader
 {
     private readonly Dictionary<string, string> _config = new(StringComparer.OrdinalIgnoreCase);
     private readonly string? _projectRoot;
+    private readonly string? _runtimeConfigRoot;
 
     public RuntimeEnvironmentLoader(DesktopSettings settings)
     {
         _projectRoot = settings.ProjectRoot;
+        _runtimeConfigRoot = string.IsNullOrWhiteSpace(settings.RuntimeConfigRoot)
+            ? _projectRoot
+            : Path.GetFullPath(settings.RuntimeConfigRoot);
 
         if (string.IsNullOrWhiteSpace(_projectRoot))
         {
             return;
         }
 
-        LocalRuntimeConfigLoader.EnsureTemplateExists(_projectRoot);
+        LocalRuntimeConfigLoader.EnsureTemplateExists(_runtimeConfigRoot!);
 
-        MergeEnvFile(Path.Combine(_projectRoot, ".env"));
-        MergeEnvFile(Path.Combine(_projectRoot, "connector", ".env"));
-        LocalRuntimeConfigLoader.MergeInto(_config, _projectRoot);
+        MergeEnvFile(Path.Combine(_runtimeConfigRoot!, ".env"));
+        MergeEnvFile(Path.Combine(_runtimeConfigRoot!, "connector", ".env"));
+        LocalRuntimeConfigLoader.MergeInto(_config, _runtimeConfigRoot!);
         MergeProcessEnvironment();
         NormalizeDatabaseKeys();
     }
@@ -32,7 +36,7 @@ public sealed class RuntimeEnvironmentLoader
     public string DatabaseConfigMissingMessage =>
         string.IsNullOrWhiteSpace(_projectRoot)
             ? "Database ayarı eksik: appsettings.Local.json"
-            : $"Database ayarı eksik: {LocalRuntimeConfigLoader.GetLocalConfigPath(_projectRoot)}";
+            : $"Database ayarı eksik: {LocalRuntimeConfigLoader.GetLocalConfigPath(_runtimeConfigRoot ?? _projectRoot)}";
 
     public string? GetConnectorSharedSecret() =>
         Get("WHATSAPP_CONNECTOR_SHARED_SECRET") ?? Get("CONNECTOR_SHARED_SECRET");
@@ -86,6 +90,10 @@ public sealed class RuntimeEnvironmentLoader
 
         env["PORT"] = settings.ConnectorPort.ToString();
         SetDefault(env, "ASPNET_WEBHOOK_URL", $"{settings.ApiBaseUrl.TrimEnd('/')}/internal/whatsapp/events");
+        var sessionDirectory = string.IsNullOrWhiteSpace(settings.WhatsAppSessionDirectory)
+            ? Path.Combine(settings.ProjectRoot, "connector", ".sessions")
+            : settings.WhatsAppSessionDirectory;
+        env["SESSION_DIR"] = Path.GetFullPath(sessionDirectory);
 
         var secret = GetConnectorSharedSecret();
         if (!string.IsNullOrWhiteSpace(secret))

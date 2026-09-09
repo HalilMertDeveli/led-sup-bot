@@ -29,6 +29,8 @@ admin/.vite/
 connector/node_modules/
 connector/.sessions/
 connector/.session-backups/
+**/.session-backups/
+**/.sessions.lock
 connector/.env
 *.tsbuildinfo
 npm-debug.log*

@@ -101,6 +101,7 @@ public sealed class MainViewModel : ViewModelBase
 
         LoginCommand = new AsyncRelayCommand(LoginAsync, () => !IsBusy && !IsModeChanging && !string.IsNullOrWhiteSpace(Password));
         RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !IsBusy);
+        ReconnectWhatsAppCommand = new AsyncRelayCommand(ReconnectWhatsAppAsync, () => IsAuthenticated && !IsBusy);
         SendMessageCommand = new AsyncRelayCommand(SendMessageAsync, () => CanSendMessage);
         PrimaryActionCommand = new AsyncRelayCommand(PrimaryActionAsync, () => CanPrimaryAction && !IsBusy && !IsModeChanging);
         TakeOverCommand = new AsyncRelayCommand(TakeOverAsync, () => CanTakeOver && !IsBusy && !IsModeChanging);
@@ -216,6 +217,7 @@ public sealed class MainViewModel : ViewModelBase
 
     public ICommand LoginCommand { get; }
     public ICommand RefreshCommand { get; }
+    public ICommand ReconnectWhatsAppCommand { get; }
     public ICommand SendMessageCommand { get; }
     public ICommand PrimaryActionCommand { get; }
     public ICommand TakeOverCommand { get; }
@@ -1929,6 +1931,38 @@ public sealed class MainViewModel : ViewModelBase
         var connected = string.Equals(raw, "Connected", StringComparison.OrdinalIgnoreCase);
         WhatsAppConnected = connected;
         WhatsAppStatus = connected ? "Bağlı" : MapWhatsAppStatus(raw);
+    }
+
+    private async Task ReconnectWhatsAppAsync()
+    {
+        var answer = System.Windows.MessageBox.Show(
+            "Aktif WhatsApp oturumu güvenli bir yedeğe alınacak ve yeni QR üretilecek. Devam edilsin mi?",
+            "WhatsApp Yeniden Bağlama",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (answer != MessageBoxResult.Yes) return;
+
+        IsBusy = true;
+        ErrorMessage = null;
+        try
+        {
+            await _api.ResetWhatsAppSessionAsync();
+            var window = new WhatsAppPairingWindow(_api)
+            {
+                Owner = System.Windows.Application.Current.MainWindow,
+            };
+            window.ShowDialog();
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = MapApiError(ex);
+            DesktopLog.Error("ReconnectWhatsApp", ex);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     private static string MapWhatsAppStatus(string raw) => raw.ToUpperInvariant() switch

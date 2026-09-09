@@ -7,6 +7,7 @@ using LedSupBot.Application.Abstractions;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.PanelFiles;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace LedSupBot.Application.PanelFiles;
 
@@ -48,7 +49,8 @@ public interface IPanelFileDeliverySafetyGate
 
 public sealed partial class PanelFileDeliverySafetyGate(
     IApplicationDbContext db,
-    IPanelFilePackageResolver resolver) : IPanelFileDeliverySafetyGate
+    IPanelFilePackageResolver resolver,
+    ILogger<PanelFileDeliverySafetyGate> logger) : IPanelFileDeliverySafetyGate
 {
     private static readonly JsonSerializerOptions JsonOptions = CreateOptions();
 
@@ -94,6 +96,12 @@ public sealed partial class PanelFileDeliverySafetyGate(
         if (IsPositive(customerText))
         {
             if (confirmation?.Status != PanelFileConfirmationStatus.Pending || !matching) return new(false);
+            if (confirmation.IsFolderPackage)
+            {
+                var invalid = await InvalidateAsync(supportCase, confirmation, "exact_customer_token_required",
+                    PanelFileDeliveryBlockedReason.ConfirmationRequired, ct);
+                return ExactFolderTokenRequired(identity, invalid);
+            }
             if (IsBareAcknowledgement(customerText) &&
                 !await LatestBotTurnIsConfirmationPromptAsync(supportCase.ConversationId, identity, ct))
                 return new(false);
@@ -113,8 +121,12 @@ public sealed partial class PanelFileDeliverySafetyGate(
         if (identityTurnAttempted && current.Decision == PanelFileDeliveryDecision.Blocked) return new(false);
         if (identityTurnAttempted && current.Decision == PanelFileDeliveryDecision.Allowed)
         {
-            if (current.IsFolderPackage && IsExplicitPackageRequest(customerText))
+            if (current.IsFolderPackage && IsExplicitPackageRequest(customerText) &&
+                identity.ExactCustomerPatternMessageId == customerMessageId)
             {
+                logger.LogInformation(
+                    "PACKAGE_REQUEST_DETECTED canonicalKey={CanonicalKey} customerExactToken=true",
+                    identity.CanonicalKey);
                 var explicitlyConfirmed = new PanelFileDeliveryConfirmationState(
                     Guid.NewGuid(), supportCase.Id, identity.CanonicalKey, current.PackageId!.Value,
                     BuildIdentityToken(identity), current.FirmwareAssetId!.Value, current.FirmwareSha256!,
@@ -124,6 +136,13 @@ public sealed partial class PanelFileDeliverySafetyGate(
                     BlockedReason: PanelFileDeliveryBlockedReason.None, Assets: current.Assets);
                 await PersistAsync(supportCase, explicitlyConfirmed, ct);
                 return Turn(identity, explicitlyConfirmed, "Tamam, bu klasöre ait dosyaları gönderiyorum.", true);
+            }
+            if (current.IsFolderPackage)
+            {
+                if (confirmation is { Status: PanelFileConfirmationStatus.Pending or PanelFileConfirmationStatus.Confirmed } && matching)
+                    confirmation = await InvalidateAsync(supportCase, confirmation, "exact_customer_token_required",
+                        PanelFileDeliveryBlockedReason.ConfirmationRequired, ct);
+                return ExactFolderTokenRequired(identity, confirmation);
             }
             if (confirmation is null || confirmation.Status is PanelFileConfirmationStatus.Invalidated or PanelFileConfirmationStatus.Rejected || !matching)
             {
@@ -243,6 +262,14 @@ public sealed partial class PanelFileDeliverySafetyGate(
             confirmationStatus = confirmation.Status, confirmationTargetCanonicalKey = confirmation.CanonicalKey,
             confirmationTargetPackageId = confirmation.PackageId, deliveryGateDecision = confirmation.Decision,
             deliveryGateBlockedReason = confirmation.BlockedReason, identity.PixelPitchSource, identity.PanelCodeSource, identity.SecondaryCodeSource }, JsonOptions), deliveryAuthorizedNow);
+    private static PanelIdentityTurnResult ExactFolderTokenRequired(
+        PanelIdentityCaseState identity, PanelFileDeliveryConfirmationState? confirmation) =>
+        new(true, $"Dosyaları gönderebilmem için kodu şu formatta gönder: {identity.PixelPitch}+{identity.PanelCode}+{identity.SecondaryCode}",
+            JsonSerializer.Serialize(new { panelIdentityAttempted = true, panelIdentityCanonicalKey = identity.CanonicalKey,
+                packageResolutionStatus = identity.PackageResolution, packageId = identity.PackageId,
+                confirmationStatus = confirmation?.Status, deliveryGateDecision = PanelFileDeliveryDecision.Blocked,
+                deliveryGateBlockedReason = PanelFileDeliveryBlockedReason.ConfirmationRequired,
+                exactCustomerTokenRequired = true }, JsonOptions));
     private static PanelFileDeliveryGateResult Block(PanelFileDeliveryBlockedReason reason, Guid? packageId = null, string? key = null) =>
         new(PanelFileDeliveryDecision.Blocked, reason, CanonicalKey: key, PackageId: packageId);
     private static string Display(PanelIdentityCaseState state) => $"{state.PixelPitch} + {state.PanelCode} + {state.SecondaryCode}";

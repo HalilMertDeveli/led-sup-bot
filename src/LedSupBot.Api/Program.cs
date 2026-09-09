@@ -165,6 +165,7 @@ app.MapGet("/api/foundation/status", async (
     IWhatsAppConnectionStateStore state,
     IServiceProvider services,
     IOptions<WhatsAppTestModeOptions> testMode,
+    IOptions<WorkflowOptions> workflow,
     CancellationToken cancellationToken) =>
 {
     var whatsAppConnection = await WhatsAppLiveStatusResolver.GetCurrentAsync(services, state, cancellationToken);
@@ -177,6 +178,9 @@ app.MapGet("/api/foundation/status", async (
         humanTakeoverSupportedByDesign = true,
         persistence = "postgresql_ef_core",
         whatsAppConnection = whatsAppConnection.ToString(),
+        inboundPipeline = whatsAppConnection == WhatsAppConnectionStatus.Connected ? "Ready" : "Error",
+        autoReply = workflow.Value.AutoReplyEnabled ? "Active" : "Paused",
+        api = "Connected",
         whatsAppTestMode = new
         {
             enabled = testModeOptions.Enabled,
@@ -201,6 +205,12 @@ app.MapPost("/internal/whatsapp/events", async (
     {
         return Results.BadRequest(new { error = "invalid_event" });
     }
+
+    var logger = request.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+    logger.LogInformation(
+        "API_EVENT_ACCEPTED correlationId={CorrelationId} eventType={EventType}",
+        inbound.CorrelationId ?? "none",
+        inbound.EventType);
 
     await handler.HandleAsync(inbound, cancellationToken);
     return Results.Accepted();

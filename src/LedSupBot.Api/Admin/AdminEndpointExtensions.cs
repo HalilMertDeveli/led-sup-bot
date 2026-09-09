@@ -29,6 +29,8 @@ public static class AdminEndpointExtensions
         group.MapGet("/auth/status", AuthStatusAsync);
 
         group.MapGet("/system/status", SystemStatusAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapPost("/system/whatsapp/reset-session", ResetWhatsAppSessionAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
+        group.MapGet("/system/whatsapp/pairing-qr", GetWhatsAppPairingQrAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapGet("/conversations", ListConversationsAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapGet("/conversations/{conversationId:guid}", GetConversationAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
         group.MapGet("/conversations/{conversationId:guid}/messages", GetMessagesAsync).AddEndpointFilter(AdminAuthFilter.InvokeAsync);
@@ -130,6 +132,31 @@ public static class AdminEndpointExtensions
             "connected",
             "configured",
             workflow.Value.AutoReplyEnabled));
+    }
+
+    private static async Task<IResult> ResetWhatsAppSessionAsync(
+        [FromServices] IWhatsAppClient whatsApp,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await whatsApp.ResetSessionAsync(cancellationToken);
+            return Results.Accepted(value: new { ok = true, status = "AuthenticationRequired" });
+        }
+        catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or HttpRequestException)
+        {
+            return Results.Problem(
+                detail: "Active WhatsApp session could not be reset.",
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    private static async Task<IResult> GetWhatsAppPairingQrAsync(
+        [FromServices] IWhatsAppClient whatsApp,
+        CancellationToken cancellationToken)
+    {
+        var qr = await whatsApp.GetPairingQrAsync(cancellationToken);
+        return Results.Ok(new { qr.Available, qr.Modules, status = qr.Status.ToString() });
     }
 
     private static async Task<IResult> ListConversationsAsync(

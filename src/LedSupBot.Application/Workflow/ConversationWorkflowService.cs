@@ -538,7 +538,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
                         inbound.WhatsAppDeliveryRoute, panelIdentityTurn.ForceNewDeliveryAttempt, cancellationToken);
                     var deliveryStatusText = deliveryResult.Outcome switch
                     {
-                        PanelFileDeliveryOutcome.PartialFailure => "HEX dosyası gitti, diğer dosyada gönderim hatası oluştu.",
+                        PanelFileDeliveryOutcome.PartialFailure => "Paket dosyalarının bir bölümü gönderildi; kalan dosyada gönderim hatası oluştu.",
                         PanelFileDeliveryOutcome.Failed => "Dosyaları gönderirken bir hata oluştu.",
                         PanelFileDeliveryOutcome.Blocked => "Güvenlik kontrolü tamamlanamadığı için dosyaları göndermedim.",
                         _ => null,

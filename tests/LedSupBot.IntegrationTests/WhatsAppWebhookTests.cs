@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.PanelFiles;
 using LedSupBot.Application.WhatsApp;
+using LedSupBot.Application.Workflow.Ai;
+using LedSupBot.Application.Workflow.Context;
 using LedSupBot.Domain.Enums;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Infrastructure.Persistence;
@@ -451,7 +453,8 @@ public sealed class WhatsAppWebhookTests
 
     private async Task<WebApplicationFactory<Program>> CreateAutoReplyFactoryAsync(
         bool testModeEnabled = false,
-        string allowedPhone = "")
+        string allowedPhone = "",
+        bool failingProvider = false)
     {
         _fixture.WhatsApp.SentTexts.Clear();
 
@@ -477,6 +480,11 @@ public sealed class WhatsAppWebhookTests
                 services.RemoveAll<IWhatsAppClient>();
                 services.AddSingleton(_fixture.WhatsApp);
                 services.AddSingleton<IWhatsAppClient>(sp => sp.GetRequiredService<RecordingWhatsAppClient>());
+                if (failingProvider)
+                {
+                    services.RemoveAll<IAiConversationPlanner>();
+                    services.AddSingleton<IAiConversationPlanner, ThrowingConversationPlanner>();
+                }
                 var selfStore = new WhatsAppSelfIdentityStore();
                 selfStore.SetSelfJids(["905469124845@s.whatsapp.net", "268040956571702@lid"]);
                 services.RemoveAll<IWhatsAppSelfIdentityStore>();
@@ -518,6 +526,60 @@ public sealed class WhatsAppWebhookTests
     }
 
     // ======================= BOT RUNTIME PIPELINE (BOT-03..07, BOT-12) =======
+
+    [Fact]
+    public async Task BOT_04_merhaba_through_http_persists_and_sends_one_text()
+    {
+        await using var factory = await CreateAutoReplyFactoryAsync();
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Connector-Secret", _fixture.SharedSecret);
+        var externalId = $"wamid.merhaba.{Guid.NewGuid():N}";
+        var phone = $"90555{Random.Shared.Next(1000000, 9999999)}";
+
+        var response = await client.PostAsJsonAsync("/internal/whatsapp/events", new
+        {
+            eventType = "IncomingMessage",
+            externalMessageId = externalId,
+            correlationId = $"test-{Guid.NewGuid():N}",
+            remotePhoneNumber = phone,
+            fromMe = false,
+            messageType = "Text",
+            textContent = "Merhaba",
+            textPresent = true,
+            timestamp = DateTimeOffset.UtcNow
+        });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await WaitForSentTextAsync();
+        Assert.Single(_fixture.WhatsApp.SentTexts);
+        await using var db = _fixture.CreateDb();
+        Assert.NotNull(await db.Messages.SingleOrDefaultAsync(x => x.ExternalMessageId == externalId));
+        Assert.Single(await db.Messages.Where(x => x.ExternalMessageId != externalId && x.SentBy == MessageSender.Bot && x.Conversation.Customer.PhoneNumber == phone).ToListAsync());
+    }
+
+    [Fact]
+    public async Task BOT_05_provider_exception_keeps_merhaba_on_deterministic_fallback()
+    {
+        await using var factory = await CreateAutoReplyFactoryAsync(failingProvider: true);
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Connector-Secret", _fixture.SharedSecret);
+
+        var response = await client.PostAsJsonAsync("/internal/whatsapp/events", new
+        {
+            eventType = "IncomingMessage",
+            externalMessageId = $"wamid.provider-failure.{Guid.NewGuid():N}",
+            remotePhoneNumber = $"90554{Random.Shared.Next(1000000, 9999999)}",
+            fromMe = false,
+            messageType = "Text",
+            textContent = "Merhaba",
+            textPresent = true,
+            timestamp = DateTimeOffset.UtcNow
+        });
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await WaitForSentTextAsync();
+        Assert.Single(_fixture.WhatsApp.SentTexts);
+    }
 
     [Fact]
     public async Task BOT_03_authorized_test_mode_customer_allowed()
@@ -630,14 +692,32 @@ public sealed class WhatsAppWebhookTests
         _fixture.WhatsApp.SentDocuments.Clear();
         _fixture.WhatsApp.SentDocumentDestinations.Clear();
         var trustedLid = $"{Random.Shared.NextInt64(100000000000000, 999999999999999)}@lid";
+        var customerPhone = $"90553{Random.Shared.Next(1000000, 9999999)}";
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Connector-Secret", _fixture.SharedSecret);
+        var greeting = await client.PostAsJsonAsync("/internal/whatsapp/events", new
+        {
+            eventType = "IncomingMessage",
+            externalMessageId = $"wamid.package-greeting.{Guid.NewGuid():N}",
+            remoteJid = trustedLid,
+            remotePhoneNumber = customerPhone,
+            fromMe = false,
+            messageType = "Text",
+            textContent = "Merhaba",
+            textPresent = true,
+            timestamp = DateTimeOffset.UtcNow
+        });
+        Assert.Equal(HttpStatusCode.Accepted, greeting.StatusCode);
+        await WaitForSentTextAsync();
+        Assert.Single(_fixture.WhatsApp.SentTexts);
+        _fixture.WhatsApp.SentTexts.Clear();
+
         var response = await client.PostAsJsonAsync("/internal/whatsapp/events", new
         {
             eventType = "IncomingMessage",
             externalMessageId = $"wamid.package.{Guid.NewGuid():N}",
             remoteJid = trustedLid,
-            remotePhoneNumber = "905555000299",
+            remotePhoneNumber = customerPhone,
             fromMe = false,
             botOriginated = false,
             messageType = "Text",
@@ -654,4 +734,13 @@ public sealed class WhatsAppWebhookTests
         Assert.Equal(3, _fixture.WhatsApp.SentDocumentDestinations.Count);
         Assert.All(_fixture.WhatsApp.SentDocumentDestinations, destination => Assert.Equal(trustedLid, destination));
     }
+}
+
+file sealed class ThrowingConversationPlanner : IAiConversationPlanner
+{
+    public Task<AiResponsePlanRaw?> TryPlanAsync(
+        ConversationContext context,
+        string latestCustomerMessage,
+        CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("simulated provider failure");
 }

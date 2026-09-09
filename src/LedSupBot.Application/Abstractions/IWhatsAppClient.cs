@@ -10,6 +10,12 @@ public interface IWhatsAppClient
 
     Task DisconnectAsync(CancellationToken cancellationToken = default);
 
+    Task ResetSessionAsync(CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Session reset is not supported by this client.");
+
+    Task<WhatsAppPairingQr> GetPairingQrAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(new WhatsAppPairingQr(false, [], WhatsAppConnectionStatus.Disconnected));
+
     Task<WhatsAppConnectionStatus> GetConnectionStatusAsync(CancellationToken cancellationToken = default);
 
     Task<string?> SendTextMessageAsync(string toPhoneE164, string body, CancellationToken cancellationToken = default);
@@ -43,8 +49,14 @@ public enum WhatsAppConnectionStatus
     Connecting = 1,
     Connected = 2,
     AuthenticationRequired = 3,
-    Error = 4
+    Error = 4,
+    DegradedSession = 5
 }
+
+public sealed record WhatsAppPairingQr(
+    bool Available,
+    bool[][] Modules,
+    WhatsAppConnectionStatus Status);
 
 public sealed record WhatsAppMediaDownloadResult(
     string MediaId,
@@ -57,6 +69,9 @@ public sealed class WhatsAppInboundEvent
     public string EventType { get; set; } = string.Empty;
 
     public string? ExternalMessageId { get; set; }
+
+    /// <summary>Privacy-safe connector trace id; never contains content or identity.</summary>
+    public string? CorrelationId { get; set; }
 
     public string? RemoteJid { get; set; }
 

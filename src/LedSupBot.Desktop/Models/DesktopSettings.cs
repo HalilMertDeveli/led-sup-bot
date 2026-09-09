@@ -11,6 +11,8 @@ public sealed class DesktopSettings
     public bool AutoStartConnector { get; set; } = true;
     public bool AutoStartPostgreSql { get; set; } = true;
     public string ProjectRoot { get; set; } = "";
+    public string RuntimeConfigRoot { get; set; } = "";
+    public string WhatsAppSessionDirectory { get; set; } = "";
 }
 
 public enum ComponentState

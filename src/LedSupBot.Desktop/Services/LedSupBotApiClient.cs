@@ -54,6 +54,15 @@ public sealed class LedSupBotApiClient : IDisposable
         await GetAsync<SystemStatusResponse>("api/admin/system/status", cancellationToken)
         ?? new SystemStatusResponse();
 
+    public async Task ResetWhatsAppSessionAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.PostAsync("api/admin/system/whatsapp/reset-session", null, cancellationToken);
+        await EnsureSuccessAsync(response);
+    }
+
+    public Task<WhatsAppPairingQrResponse?> GetWhatsAppPairingQrAsync(CancellationToken cancellationToken = default) =>
+        GetAsync<WhatsAppPairingQrResponse>("api/admin/system/whatsapp/pairing-qr", cancellationToken);
+
     public async Task<string?> GetFoundationWhatsAppStatusAsync(CancellationToken cancellationToken = default)
     {
         var status = await GetFoundationStatusAsync(cancellationToken);

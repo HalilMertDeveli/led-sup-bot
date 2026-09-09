@@ -31,8 +31,29 @@ public sealed class FoundationStatusResponse
     [JsonPropertyName("whatsAppConnection")]
     public string WhatsAppConnection { get; set; } = "Disconnected";
 
+    [JsonPropertyName("inboundPipeline")]
+    public string InboundPipeline { get; set; } = "Error";
+
+    [JsonPropertyName("autoReply")]
+    public string AutoReply { get; set; } = "Paused";
+
+    [JsonPropertyName("api")]
+    public string Api { get; set; } = "Disconnected";
+
     [JsonPropertyName("whatsAppTestMode")]
     public FoundationTestModeResponse? WhatsAppTestMode { get; set; }
+}
+
+public sealed class WhatsAppPairingQrResponse
+{
+    [JsonPropertyName("available")]
+    public bool Available { get; set; }
+
+    [JsonPropertyName("modules")]
+    public bool[][] Modules { get; set; } = [];
+
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "Disconnected";
 }
 
 public sealed class FoundationTestModeResponse

@@ -76,6 +76,13 @@ export function getSignalDiagnosticCounters() {
   return { ...counters };
 }
 
+export function resetSignalDiagnosticCounters() {
+  counters.badMac = 0;
+  counters.decryptFailed = 0;
+  counters.closedSessionUsed = 0;
+  counters.incomingPreKeyRotation = 0;
+}
+
 function toSafeText(value) {
   return value instanceof Error ? `${value.name}: ${value.message}` : String(value);
 }

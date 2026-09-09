@@ -52,6 +52,39 @@ public sealed class PanelFileDeliverySafetyGateTests(WorkflowFixture fixture)
     }
 
     [Fact]
+    public async Task Folder_package_cannot_be_reauthorized_by_malformed_token_and_yes()
+    {
+        var code = Code();
+        await using (var importScope = fixture.Services.CreateAsyncScope())
+        {
+            await importScope.ServiceProvider.GetRequiredService<IPanelFolderImportService>().ImportAsync(
+                $"P2.5+{code}+2012",
+                [
+                    new("first.bin", "first.bin", "application/octet-stream", new MemoryStream("a"u8.ToArray())),
+                    new("second.rcvbp", "second.rcvbp", "application/octet-stream", new MemoryStream("b"u8.ToArray()))
+                ]);
+        }
+
+        var (conversation, customer) = await fixture.SeedConversationAsync();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text,
+            $"P2.5+{code}+2012 dosyalarını gönder");
+        Assert.Equal(2, fixture.WhatsApp.SentDocuments.Count);
+
+        fixture.WhatsApp.SentDocuments.Clear();
+        fixture.WhatsApp.SentTexts.Clear();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text,
+            $"P2.5-{code}-2012 dosyalarını gönder");
+        Assert.Empty(fixture.WhatsApp.SentDocuments);
+        Assert.Contains(fixture.WhatsApp.SentTexts, x =>
+            x.Contains($"P2.5+{code}+2012", StringComparison.Ordinal) &&
+            x.Contains("format", StringComparison.OrdinalIgnoreCase));
+
+        fixture.WhatsApp.SentTexts.Clear();
+        await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, "Evet");
+        Assert.Empty(fixture.WhatsApp.SentDocuments);
+    }
+
+    [Fact]
     public async Task PF6_Exact_ready_requires_confirmation_then_exact_yes_allows_without_sending_files()
     {
         var code = Code(); await ReadyPackage(code, "2012");
@@ -288,7 +321,7 @@ public sealed class PanelFileDeliverySafetyGateTests(WorkflowFixture fixture)
             fixture.WhatsApp.SentTexts.Clear();
             await fixture.ProcessAsync(conversation.Id, customer.PhoneNumber, Id(), MessageType.Text, "Evet");
             Assert.Single(fixture.WhatsApp.SentDocuments);
-            Assert.Contains(fixture.WhatsApp.SentTexts, x => x.Contains("diğer dosyada gönderim hatası", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(fixture.WhatsApp.SentTexts, x => x.Contains("kalan dosyada gönderim hatası", StringComparison.OrdinalIgnoreCase));
             Assert.DoesNotContain(fixture.WhatsApp.SentTexts, x => x.Contains("dosyalar gönderildi", StringComparison.OrdinalIgnoreCase));
             fixture.WhatsApp.FailDocumentCall = null;
             await using var scope = fixture.Services.CreateAsyncScope();
