@@ -19,6 +19,7 @@ public sealed class MainViewModel : ViewModelBase
     private bool _isAuthenticated;
     private bool _isBusy;
     private bool _isModeChanging;
+    private bool _isPairingWindowOpen;
     private string _password = "";
     private string? _errorMessage;
 
@@ -101,6 +102,7 @@ public sealed class MainViewModel : ViewModelBase
 
         LoginCommand = new AsyncRelayCommand(LoginAsync, () => !IsBusy && !IsModeChanging && !string.IsNullOrWhiteSpace(Password));
         RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !IsBusy);
+        ReconnectWhatsAppCommand = new AsyncRelayCommand(ReconnectWhatsAppAsync, () => IsAuthenticated && !IsBusy);
         SendMessageCommand = new AsyncRelayCommand(SendMessageAsync, () => CanSendMessage);
         PrimaryActionCommand = new AsyncRelayCommand(PrimaryActionAsync, () => CanPrimaryAction && !IsBusy && !IsModeChanging);
         TakeOverCommand = new AsyncRelayCommand(TakeOverAsync, () => CanTakeOver && !IsBusy && !IsModeChanging);
@@ -217,6 +219,7 @@ public sealed class MainViewModel : ViewModelBase
 
     public ICommand LoginCommand { get; }
     public ICommand RefreshCommand { get; }
+    public ICommand ReconnectWhatsAppCommand { get; }
     public ICommand SendMessageCommand { get; }
     public ICommand PrimaryActionCommand { get; }
     public ICommand TakeOverCommand { get; }
@@ -958,6 +961,11 @@ public sealed class MainViewModel : ViewModelBase
         RunOnUi(() => IsAuthenticated = true);
         Password = "";
         await _signalR.ConnectAsync();
+        var system = await _api.GetSystemStatusAsync();
+        if (string.Equals(system.WhatsAppConnection, "AuthenticationRequired", StringComparison.OrdinalIgnoreCase))
+        {
+            ShowWhatsAppPairingWindow();
+        }
         await RefreshAsync();
     }
 
@@ -965,6 +973,61 @@ public sealed class MainViewModel : ViewModelBase
     {
         ScheduleCoalescedRefresh(TimeSpan.Zero);
         return Task.CompletedTask;
+    }
+
+    private async Task ReconnectWhatsAppAsync()
+    {
+        var confirmation = System.Windows.MessageBox.Show(
+            "Mevcut WhatsApp bağlı cihaz oturumu yedeklenip yeniden eşleştirilecek. Devam edilsin mi?",
+            "WhatsApp Yeniden Bağlama",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (confirmation != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        ErrorMessage = null;
+        try
+        {
+            await _api.ResetWhatsAppSessionAsync();
+            UpdateWhatsAppStatus("AuthenticationRequired");
+            ShowWhatsAppPairingWindow();
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            DesktopLog.Error("ReconnectWhatsApp", ex);
+            ErrorMessage = MapApiError(ex);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private void ShowWhatsAppPairingWindow()
+    {
+        if (_isPairingWindowOpen)
+        {
+            return;
+        }
+
+        _isPairingWindowOpen = true;
+        try
+        {
+            var pairingWindow = new WhatsAppPairingWindow(_api)
+            {
+                Owner = System.Windows.Application.Current.MainWindow,
+            };
+            pairingWindow.ShowDialog();
+        }
+        finally
+        {
+            _isPairingWindowOpen = false;
+        }
     }
 
     private async Task RefreshInternalAsync()

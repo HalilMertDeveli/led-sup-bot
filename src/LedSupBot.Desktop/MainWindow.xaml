@@ -114,6 +114,12 @@
 
                 <!-- Top Right Actions -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Style="{StaticResource SecondaryButton}"
+                            Command="{Binding ReconnectWhatsAppCommand}"
+                            Content="WhatsApp Bağla"
+                            Padding="10,6"
+                            Margin="0,0,8,0"
+                            ToolTip="WhatsApp bağlı cihazını yedekli olarak yeniden eşleştir" />
                     <!-- Operator-only training data view -->
                     <Button Style="{StaticResource SecondaryButton}"
                             Command="{Binding TogglePanelFilesViewCommand}"
