@@ -17,10 +17,42 @@ public enum ConversationResponseAction
 
 public static class ConversationSemantics
 {
+    public sealed record IntentRoute(
+        ConversationIntent PrimaryIntent,
+        bool HasScreenSetup,
+        bool HasFileRequest,
+        bool HasTechnicalSupport);
+
+    public static IntentRoute Route(string? message)
+    {
+        var text = Normalize(message);
+        if (string.IsNullOrWhiteSpace(text))
+            return new(ConversationIntent.Unclear, false, false, false);
+
+        var file = ContainsAny(text, "dosya", "dosyalari", "config dosyasi", "rcvbp", ".hex", "firmware") &&
+                   ContainsAny(text, "gonder", "yolla", " at", "atar misin", "atabilir misin", "lazim", "istiyorum");
+        var setup = ContainsAny(text, "yeni ekran", "ekran kuracagiz", "kurulum yapacagiz", "ekrani ayarlam", "sistemi tanimla") ||
+                    ContainsAny(text, "receiverlari bagladik", "receiverleri bagladik") && text.Contains("devam");
+        var technical = ContainsAny(text, "neden", "calismiyor", "goruntu yok", "gelmiyor", "offline", "kirmizi", "beyaz kaldi",
+            "yarisi", "titriyor", "renk bozuk", "lan isigi", "destekliyor", "maksimum", "kapasite");
+
+        var primary = technical ? ConversationIntent.LedTechnicalSupport
+            : file ? ConversationIntent.FileRequest
+            : setup ? ConversationIntent.ScreenSetup
+            : DetectLegacy(text);
+        return new(primary, setup, file, technical);
+    }
+
     public static ConversationIntent Detect(string? message)
     {
         var text = Normalize(message);
         if (string.IsNullOrWhiteSpace(text)) return ConversationIntent.Unclear;
+
+        return Route(message).PrimaryIntent;
+    }
+
+    private static ConversationIntent DetectLegacy(string text)
+    {
 
         if (ContainsAny(text, "devam", "nerede kalmistik", "kuruluma donelim", "receivera donelim", "receiver tarafina donelim"))
             return ConversationIntent.ResumeWorkflow;
@@ -41,7 +73,7 @@ public static class ConversationSemantics
         if (ContainsAny(text, "pardon", "degil", "yanlis yazdim"))
             return ConversationIntent.Correction;
 
-        if (IsWaitAcknowledgement(message) || IsPhotoOffer(message) || IsShortAcknowledgement(message))
+        if (IsWaitAcknowledgement(text) || IsPhotoOffer(text) || IsShortAcknowledgement(text))
             return ConversationIntent.Acknowledgement;
 
         if (ContainsAny(text, "bir sey daha soracagim", "bir soru soracagim"))
@@ -55,11 +87,12 @@ public static class ConversationSemantics
 
     public static ConversationResponseAction ResolveAction(ConversationIntent intent) => intent switch
     {
-        ConversationIntent.LedTechnicalQuestion or ConversationIntent.LedTroubleshooting => ConversationResponseAction.AnswerAndHoldWorkflow,
+        ConversationIntent.LedTechnicalQuestion or ConversationIntent.LedTroubleshooting or ConversationIntent.LedTechnicalSupport => ConversationResponseAction.AnswerAndHoldWorkflow,
         ConversationIntent.QuestionAboutCurrentStep => ConversationResponseAction.ClarifyCurrentStep,
         ConversationIntent.ResumeWorkflow => ConversationResponseAction.ResumeWorkflow,
         ConversationIntent.FlowRecovery => ConversationResponseAction.RecoveryResponse,
         ConversationIntent.CasualConversation or ConversationIntent.GeneralKnowledge or ConversationIntent.Acknowledgement => ConversationResponseAction.AnswerOnly,
+        ConversationIntent.FileRequest => ConversationResponseAction.AnswerOnly,
         _ => ConversationResponseAction.WorkflowPrompt,
     };
 

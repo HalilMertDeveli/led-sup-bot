@@ -50,6 +50,10 @@ public static class PanelFileConversationGuidance
         if (text.Contains("gibi") && text.Any(char.IsDigit) && identity?.CanonicalKey is null)
             return new(true, "Koddan emin olmadan dosya seçemem. Etiketi kontrol edip net kodu yazabilir veya fotoğrafını gönderebilirsiniz.");
 
+        var route = ConversationSemantics.Route(customerText);
+        if (route.HasFileRequest && identity?.CanonicalKey is null && !text.Any(char.IsDigit))
+            return new(true, "Dosyalar\u0131 kontrol edebilmem i\u00e7in klas\u00f6r/model ad\u0131n\u0131 yazar m\u0131s\u0131n\u0131z? \u00d6rnek: P2.5+1065S+2012");
+
         if ((text.Contains("nerede kalmistik") || text == "devam") && delivery is not null)
         {
             if (delivery.CompletedAt is not null) return new(true, "Dosya gönderimi tamamlanmıştı.");

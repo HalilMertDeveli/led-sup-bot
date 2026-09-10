@@ -46,7 +46,7 @@ public sealed record ValidatedAiResponsePlan(
 {
     public bool HasUsableReply => !string.IsNullOrWhiteSpace(Reply);
 
-    public bool IsGeneralTechnicalQuestion => Intent is ConversationIntent.LedTechnicalQuestion or ConversationIntent.LedTroubleshooting;
+    public bool IsGeneralTechnicalQuestion => Intent is ConversationIntent.LedTechnicalQuestion or ConversationIntent.LedTroubleshooting or ConversationIntent.LedTechnicalSupport;
 
     public bool IsStepClarification =>
         Intent == ConversationIntent.QuestionAboutCurrentStep;
@@ -135,6 +135,9 @@ public sealed class AiResponsePlanner
             "casual_conversation" or "humor" or "greeting" => ConversationIntent.CasualConversation,
             "general_knowledge" => ConversationIntent.GeneralKnowledge,
             "new_support_issue" or "new_installation" => ConversationIntent.NewCase,
+            "screen_setup" => ConversationIntent.ScreenSetup,
+            "file_request" => ConversationIntent.FileRequest,
+            "led_technical_support" => ConversationIntent.LedTechnicalSupport,
             _ => ConversationIntent.Unclear,
         };
     }

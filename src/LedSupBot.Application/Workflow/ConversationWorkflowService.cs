@@ -119,6 +119,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             conversation.BotMode);
 
         var supportCase = await LoadOrCreateCaseAsync(conversation.Id, inbound.MessageType == MessageType.Image, cancellationToken);
+        var intentRoute = ConversationSemantics.Route(inbound.TextContent);
         var panelIdentityTurn = inbound.MessageType == MessageType.Text
             ? await _panelIdentityCoordinator.ApplyTextAsync(supportCase, inbound.TextContent, inbound.MessageId, cancellationToken)
             : new PanelIdentityTurnResult(false);
@@ -146,7 +147,7 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             if (guidanceTurn.Attempted) panelIdentityTurn = guidanceTurn;
         }
 
-        if (!panelIdentityTurn.Attempted)
+        if (!panelIdentityTurn.Attempted || intentRoute.HasTechnicalSupport)
             await ApplyInboundContentAsync(conversation.Id, conversation.CurrentStage, supportCase, inbound,
                 clarificationTexts, cancellationToken);
 
@@ -209,9 +210,9 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
 
         ValidatedAiResponsePlan? aiPlan = null;
         var aiReplyWasProviderGenerated = false;
-        var localIntent = ConversationSemantics.Detect(inbound.TextContent);
+        var localIntent = intentRoute.PrimaryIntent;
         var deterministicAcknowledgement = localIntent == LedSupBot.Application.Abstractions.ConversationIntent.Acknowledgement;
-        if (!panelIdentityTurn.Attempted && ((inbound.MessageType == MessageType.Text && !string.IsNullOrWhiteSpace(inbound.TextContent) && !deterministicAcknowledgement) || imageAnalysis is not null))
+        if ((!panelIdentityTurn.Attempted || intentRoute.HasTechnicalSupport) && ((inbound.MessageType == MessageType.Text && !string.IsNullOrWhiteSpace(inbound.TextContent) && !deterministicAcknowledgement) || imageAnalysis is not null))
         {
             _logger.LogInformation(
                 "AI provider=Gemini geminiAttempted=true conversationId={ConversationId}",
@@ -358,7 +359,12 @@ public sealed class ConversationWorkflowService : IConversationWorkflowService
             outboundTexts = [diagnosticTurn.DeterministicReply];
             aiReplyWasProviderGenerated = false;
         }
-        if (panelIdentityTurn.Attempted && !string.IsNullOrWhiteSpace(panelIdentityTurn.Reply))
+        if (panelIdentityTurn.Attempted && !string.IsNullOrWhiteSpace(panelIdentityTurn.Reply) && intentRoute.HasTechnicalSupport)
+        {
+            if (!outboundTexts.Contains(panelIdentityTurn.Reply, StringComparer.Ordinal))
+                outboundTexts.Add(panelIdentityTurn.Reply);
+        }
+        else if (panelIdentityTurn.Attempted && !string.IsNullOrWhiteSpace(panelIdentityTurn.Reply))
         {
             outboundTexts = [panelIdentityTurn.Reply];
             aiReplyWasProviderGenerated = false;

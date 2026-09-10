@@ -29,6 +29,9 @@ public enum ConversationIntent
     CasualConversation = 9,
     GeneralKnowledge = 10,
     NewCase = 11,
+    ScreenSetup = 12,
+    FileRequest = 13,
+    LedTechnicalSupport = 14,
 }
 
 // Compatibility boundary for the untouched OpenAI fallback. Production workflow code uses ConversationIntent.
