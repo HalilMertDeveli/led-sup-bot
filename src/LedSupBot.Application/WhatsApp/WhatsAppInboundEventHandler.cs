@@ -3,6 +3,7 @@ using LedSupBot.Application.Admin;
 using LedSupBot.Application.Media;
 using LedSupBot.Application.Audio;
 using LedSupBot.Application.Takeover;
+using LedSupBot.Application.PanelFiles;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Application.WhatsApp;
 using LedSupBot.Domain.Entities;
@@ -244,6 +245,16 @@ public sealed class WhatsAppInboundEventHandler : IWhatsAppInboundEventHandler
 
             if (sender == MessageSender.Customer && !inboundEvent.FromMe)
             {
+                if (messageType == MessageType.Text)
+                {
+                    var fastDelivery = _services.GetService<IPackageCodeFastDeliveryService>();
+                    if (fastDelivery is not null && await fastDelivery.TryDeliverAsync(conversation.Id, message, customer,
+                        customer.PhoneNumber, ResolveWhatsAppDeliveryRoute(inboundEvent, _selfIdentity), cancellationToken))
+                    {
+                        _logger.LogInformation("Exact package code handled before conversation workflow conversationId={ConversationId}", conversation.Id);
+                        return;
+                    }
+                }
                 if (messageType == MessageType.Image)
                 {
                     await ProcessInboundImageAsync(

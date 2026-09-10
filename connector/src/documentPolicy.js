@@ -6,6 +6,8 @@ export function maxDocumentBytes(fileName) {
   const lower = String(fileName || "").toLowerCase();
   if (lower.endsWith(".hex")) return 16 * MIB;
   if (lower.endsWith(".rcvbp")) return 8 * MIB;
+  if ([".bin", ".raw", ".cfg", ".rcfg", ".rcfgx"].some(extension => lower.endsWith(extension))) return 16 * MIB;
+  if (lower.endsWith(".json") || lower.endsWith(".txt")) return 2 * MIB;
   return 0;
 }
 
