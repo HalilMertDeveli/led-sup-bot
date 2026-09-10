@@ -63,16 +63,8 @@ flowchart LR
 
 **Diğer ekranlar**
 
-<table>
-  <tr>
-    <td><img src="docs/screenshots/desktop-login.png" alt="LedSupport giriş ekranı" width="340"></td>
-    <td><img src="docs/screenshots/technical-panel.png" alt="LedSupport teknik panel (açılmış)" width="340"></td>
-  </tr>
-  <tr>
-    <td align="center"><em>Giriş ekranı</em></td>
-    <td align="center"><em>Teknik panel (açılmış)</em></td>
-  </tr>
-</table>
+- ![LedSupport giriş ekranı](docs/screenshots/desktop-login.png)
+- ![LedSupport teknik panel (açılmış)](docs/screenshots/technical-panel.png)
 
 ---
 
