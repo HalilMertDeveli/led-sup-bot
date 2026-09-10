@@ -7,7 +7,7 @@ using SixLabors.ImageSharp.PixelFormats;
 
 namespace LedSupBot.UnitTests.Media;
 
-internal static class TestImageBytes
+public static class TestImageBytes
 {
     public static byte[] CreatePng(int width = 8, int height = 8)
     {
@@ -46,8 +46,6 @@ internal static class TestImageBytes
 
     public static byte[] CorruptJpegHeader()
     {
-        var jpeg = CreateJpeg();
-        jpeg[0] = 0x00;
-        return jpeg;
+        return [0xFF, 0xD8, 0xFF, 0x00, 0x00, 0x00];
     }
 }

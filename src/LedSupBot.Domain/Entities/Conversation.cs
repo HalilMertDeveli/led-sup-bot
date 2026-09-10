@@ -21,9 +21,19 @@ public class Conversation : Entity
 
     public DateTimeOffset? LastCustomerMessageAt { get; set; }
 
+    /// <summary>Exact normalized WhatsApp JID from the last customer inbound (e.g. live @lid).</summary>
+    public string? LastInboundWhatsAppAddress { get; set; }
+
+    /// <summary>Trusted WhatsApp routing address for outbound replies (same as last inbound route).</summary>
+    public string? WhatsAppRouteJid
+    {
+        get => LastInboundWhatsAppAddress;
+        set => LastInboundWhatsAppAddress = value;
+    }
+
     public ICollection<Message> Messages { get; set; } = new List<Message>();
 
-    public TechnicalSupportCase? TechnicalSupportCase { get; set; }
+    public ICollection<TechnicalSupportCase> TechnicalSupportCases { get; set; } = new List<TechnicalSupportCase>();
 
     public ICollection<AiExtractionResult> AiExtractionResults { get; set; } = new List<AiExtractionResult>();
 }

@@ -1,8 +1,11 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Application.Workflow.Ai;
+using LedSupBot.Application.Workflow.Context;
 using LedSupBot.Application.Workflow.Parsing;
+using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace LedSupBot.UnitTests;
@@ -15,13 +18,21 @@ public sealed class WorkflowParserTests
     [InlineData("500 cm yatay, 300 cm dikey", 500, 300)]
     [InlineData("Yatay 500 cm dikey 300 cm", 500, 300)]
     [InlineData("Yatay 500 cm dikey 300 cm, 8 tane receiver kullandık", 500, 300)]
-    public void ScreenSizeParser_Parses_Explicit_Cm_Variations(string text, decimal width, decimal height)
+    [InlineData("192cm yükseklik 160 cm genişlik", 160, 192)]
+    [InlineData("160 cm genişlik 192 cm yükseklik", 160, 192)]
+    [InlineData("genişlik 160 yükseklik 192", 160, 192)]
+    [InlineData("genişlik: 160, yükseklik: 192", 160, 192)]
+    [InlineData("192x160", 192, 160)]
+    [InlineData("192 x 160", 192, 160)]
+    [InlineData("192 x 160 cm", 192, 160)]
+    [InlineData("500x300", 500, 300)]
+    public void ScreenSizeParser_Parses_Explicit_And_Semantic_Dimensions(string text, decimal expectedWidth, decimal expectedHeight)
     {
         var result = ScreenSizeParser.Parse(text);
 
         Assert.True(result.ParsedAny);
-        Assert.Equal(width, result.WidthCm);
-        Assert.Equal(height, result.HeightCm);
+        Assert.Equal(expectedWidth, result.WidthCm);
+        Assert.Equal(expectedHeight, result.HeightCm);
         Assert.False(result.Ambiguous);
     }
 
@@ -42,9 +53,7 @@ public sealed class WorkflowParserTests
 
     [Theory]
     [InlineData("5x3")]
-    [InlineData("500x300")]
-    [InlineData("500 300")]
-    public void ScreenSizeParser_Unitless_Dimensions_Are_Ambiguous(string text)
+    public void ScreenSizeParser_Small_Unitless_Dimensions_Are_Ambiguous(string text)
     {
         var result = ScreenSizeParser.Parse(text);
 
@@ -52,6 +61,18 @@ public sealed class WorkflowParserTests
         Assert.True(result.Ambiguous);
         Assert.Null(result.WidthCm);
         Assert.Null(result.HeightCm);
+    }
+
+    [Theory]
+    [InlineData("123 456 789")]
+    [InlineData("123456789")]
+    [InlineData("8 receiver")]
+    [InlineData("Merhaba")]
+    public void ScreenSizeParser_Ignores_Non_Dimension_Messages(string text)
+    {
+        var result = ScreenSizeParser.Parse(text);
+        Assert.False(result.ParsedAny);
+        Assert.False(result.Ambiguous);
     }
 
     [Fact]
@@ -94,6 +115,27 @@ public sealed class WorkflowParserTests
         Assert.False(ReceiverCountParser.TryParse(text, out _));
     }
 
+    [Theory]
+    [InlineData("E120 5 volt")]
+    [InlineData("E120 HDMI 2")]
+    [InlineData("E120 81 il var")]
+    [InlineData("E120 1920x1080")]
+    public void ReceiverCountParser_Rejects_Numbers_Belonging_To_Other_Facts_After_A_Model(string text)
+    {
+        Assert.False(ReceiverCountParser.TryParse(text, out _));
+    }
+
+    [Theory]
+    [InlineData("E120 4 adet", 4)]
+    [InlineData("colorlight E120 12 tane", 12)]
+    [InlineData("receiver 8", 8)]
+    [InlineData("kart sayısı 6", 6)]
+    public void ReceiverCountParser_Preserves_Explicit_Model_First_Quantities(string text, int expected)
+    {
+        Assert.True(ReceiverCountParser.TryParse(text, out var count));
+        Assert.Equal(expected, count);
+    }
+
     [Fact]
     public void Multi_Slot_With_Explicit_Cm_Fills_Screen_And_Receiver()
     {
@@ -129,10 +171,67 @@ public sealed class WorkflowParserTests
     }
 
     [Fact]
+    public void AnyDeskParser_LooksLikeAttempt_Does_Not_Match_Dimension_Texts()
+    {
+        Assert.False(AnyDeskParser.LooksLikeAttempt("192cm yükseklik 160 cm genişlik"));
+        Assert.False(AnyDeskParser.LooksLikeAttempt("192x160"));
+        Assert.False(AnyDeskParser.LooksLikeAttempt("500x300 cm"));
+    }
+
+    [Fact]
     public void ConfigConfirmationParser_Accepts_Common_Confirmations()
     {
         Assert.Equal(ConfigConfirmationResult.Confirmed, ConfigConfirmationParser.Parse("evet"));
         Assert.Equal(ConfigConfirmationResult.Confirmed, ConfigConfirmationParser.Parse("bağladım"));
+    }
+
+    [Fact]
+    public void HybridResponseComposer_Suppresses_Screen_Clarification_When_Screen_Is_Complete()
+    {
+        var composer = new HybridResponseComposer(NullLogger<HybridResponseComposer>.Instance);
+
+        var context = new ConversationContext
+        {
+            BotMode = BotMode.Bot,
+            CurrentStage = ConversationStage.AskAnyDesk,
+            StageLabel = "AnyDesk",
+            CurrentIssue = "Kurulum",
+            KnownFacts = ["Ekran: 160×192 cm", "AnyDesk bilgisi alındı"],
+            MissingFacts = [],
+            Screen = new ContextScreen("160 × 192 cm", Complete: true),
+            Receiver = null,
+            Panel = null,
+            Config = null,
+            AnyDesk = new ContextAnyDesk("AnyDesk alındı", Complete: true),
+            RecentMessages = []
+        };
+
+        var slots = new WorkflowSlotState
+        {
+            WidthCm = 160,
+            HeightCm = 192,
+            HasAnyDesk = true,
+            HasPanelLabelPhoto = true,
+            ReceiverCount = 8,
+            ConfigConfirmed = true,
+        };
+
+        var input = new HybridResponseComposeInput(
+            context,
+            slots,
+            ConversationStage.AskAnyDesk,
+            new WorkflowInboundMessage(Guid.NewGuid(), "905425192119", Guid.NewGuid(), "msg-1", MessageType.Text, "123 456 789", null),
+            DeterministicClarifications: [WorkflowPrompts.AskScreenClarification],
+            AiPlan: null,
+            ConfigExampleAssetAvailable: false,
+            ConfigExampleCompleted: true,
+            ConfigExampleImagePath: null);
+
+        var result = composer.Compose(input);
+
+        // Screen clarification must be filtered out when screen is complete!
+        Assert.DoesNotContain(WorkflowPrompts.AskScreenClarification, result.OutboundTexts);
+        Assert.DoesNotContain(WorkflowPrompts.AskScreenSize, result.OutboundTexts);
     }
 }
 
@@ -145,7 +244,7 @@ public sealed class ScreenDimensionUnitPolicyTests
     public void Ai_Validator_Converts_Explicit_Meters_To_Cm()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(null, null, 5, 3, 0.96, false),
             null, null, null, []));
 
@@ -158,7 +257,7 @@ public sealed class ScreenDimensionUnitPolicyTests
     public void Ai_Validator_Rejects_Unitless_5x3()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(null, null, null, null, 0.6, true),
             null, null, null,
             ["unit ambiguous"]));
@@ -170,7 +269,7 @@ public sealed class ScreenDimensionUnitPolicyTests
     public void Ai_Validator_Accepts_Explicit_Cm()
     {
         var result = _validator.Validate(new AiStructuredExtraction(
-            CustomerMessageIntent.TechnicalSupport,
+            ConversationIntent.WorkflowInformation,
             new ScreenSlotCandidate(500, 300, null, null, 0.98, false),
             null, null, null, []));
 

@@ -1,0 +1,830 @@
+﻿<Window x:Class="LedSupBot.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:LedSupBot.Desktop.Converters"
+        xmlns:views="clr-namespace:LedSupBot.Desktop.Views"
+        Title="LED Support — Teknik Destek Kontrol Merkezi"
+        Width="1280"
+        Height="820"
+        MinWidth="960"
+        MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="True"
+        ResizeMode="CanResizeWithGrip"
+        Background="{StaticResource BgBrush}"
+        Foreground="{StaticResource TextBrush}">
+
+    <Window.Resources>
+        <conv:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <conv:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis" />
+        <conv:StringNotEmptyToVisibilityConverter x:Key="StringToVis" />
+        <conv:ConnectionBrushConverter x:Key="ConnBrush" />
+        <conv:BotModeBrushConverter x:Key="BotModeBrush" />
+        <conv:BotModeBackgroundConverter x:Key="BotModeBgBrush" />
+        <conv:MessageSenderLabelConverter x:Key="SenderLabel" />
+        <conv:MessageAlignmentConverter x:Key="MsgAlign" />
+        <conv:MessageBubbleBrushConverter x:Key="MsgBubbleBg" />
+        <conv:MessageBubbleBorderConverter x:Key="MsgBubbleBorder" />
+        <conv:MessageSenderBrushConverter x:Key="MsgSenderBrush" />
+        <conv:RelativeTimeConverter x:Key="RelativeTime" />
+        <conv:DeliveryStatusIconConverter x:Key="DeliveryIcon" />
+        <conv:StepStatusToBrushConverter x:Key="StepBrush" />
+        <conv:StepStatusToBgBrushConverter x:Key="StepBgBrush" />
+        <conv:CountToVisibilityConverter x:Key="CountToVis" />
+
+        <Style x:Key="DynamicPrimaryActionButton" TargetType="Button" BasedOn="{StaticResource ActionButtonBase}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding PrimaryActionKind}" Value="Pause">
+                    <Setter Property="Background" Value="{StaticResource BtnDestructiveBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding PrimaryActionKind}" Value="Resume">
+                    <Setter Property="Background" Value="{StaticResource BtnSuccessBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <!-- 0: Header Toolbar -->
+            <RowDefinition Height="52" />
+            <!-- 1: Main 3-Column Content -->
+            <RowDefinition Height="*" />
+            <!-- 2: Global Notification / Error Bar -->
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 0: TOP HEADER BAR -->
+        <Border Grid.Row="0" Background="{StaticResource HeaderBgBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Brand & Logo -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Background="{StaticResource BadgeSuccessBgBrush}" BorderBrush="{StaticResource SuccessBrush}" BorderThickness="1" CornerRadius="6" Padding="6,3" Margin="0,0,10,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="8" Height="8" Fill="{StaticResource SuccessBrush}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                            <TextBlock Text="LED SUPPORT" FontWeight="Bold" FontSize="13" Foreground="{StaticResource SuccessBrush}" />
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Text="Teknik Destek Kontrol Merkezi" Foreground="{StaticResource CardMutedBrush}" FontSize="12" VerticalAlignment="Center" />
+                </StackPanel>
+
+                <!-- Status Pills & Mode Banners (Center) -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <!-- WhatsApp Status Pill -->
+                    <Border Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="10,4" Margin="0,0,8,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse Width="7" Height="7" Fill="{Binding WhatsAppConnected, Converter={StaticResource ConnBrush}}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                            <TextBlock Text="WhatsApp: " Foreground="{StaticResource CardMutedBrush}" FontSize="11" />
+                            <TextBlock Text="{Binding WhatsAppStatus}" Foreground="{StaticResource CardTextBrush}" FontWeight="SemiBold" FontSize="11" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- DB / API Status Pill -->
+                    <Border Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="10,4" Margin="0,0,8,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse Width="7" Height="7" Fill="{StaticResource SuccessBrush}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                            <TextBlock Text="Sistem: " Foreground="{StaticResource CardMutedBrush}" FontSize="11" />
+                            <TextBlock Text="{Binding DbStatus}" Foreground="{StaticResource CardTextBrush}" FontWeight="SemiBold" FontSize="11" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Real-time Live Status Pill -->
+                    <Border Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="10,4" Margin="0,0,8,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse Width="7" Height="7" Fill="{Binding RealtimeConnected, Converter={StaticResource ConnBrush}}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding RealtimeStatusLabel}" Foreground="{StaticResource CardTextBrush}" FontWeight="SemiBold" FontSize="11" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Test Mode Banner (if active) -->
+                    <Border Background="{StaticResource BadgeWarnBgBrush}" BorderBrush="{StaticResource WarnBrush}" BorderThickness="1" CornerRadius="12" Padding="10,4"
+                            Visibility="{Binding ShowTestModeBanner, Converter={StaticResource BoolToVis}}">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="⚡ " Foreground="{StaticResource WarnBrush}" FontSize="11" />
+                            <TextBlock Text="{Binding TestModeLabel}" Foreground="{StaticResource WarnBrush}" FontWeight="SemiBold" FontSize="11" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- Top Right Actions -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <!-- Operator-only training data view -->
+                    <Button Style="{StaticResource SecondaryButton}"
+                            Command="{Binding TogglePanelFilesViewCommand}"
+                            Content="{Binding PanelFilesToggleText}"
+                            Padding="10,6" Margin="0,0,8,0" />
+                    <Button Style="{StaticResource SecondaryButton}"
+                            Command="{Binding ToggleTrainingDataViewCommand}"
+                            Content="{Binding TrainingDataToggleText}"
+                            Padding="10,6"
+                            Margin="0,0,8,0" />
+
+                    <!-- Refresh Button -->
+                    <Button Style="{StaticResource GhostButton}" Command="{Binding RefreshCommand}" Margin="0,0,8,0" ToolTip="Yenile">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🔄 Yenile" FontSize="12" />
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Toggle Technical Details Panel Button -->
+                    <Button Style="{StaticResource SecondaryButton}" Command="{Binding ToggleTechnicalPanelCommand}" Padding="10,6">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="📊 Teknik Panel" FontSize="12" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 1: MAIN 3-COLUMN WORKSPACE -->
+        <Grid Grid.Row="1"
+              Visibility="{Binding IsConversationWorkspaceVisible, Converter={StaticResource BoolToVis}}">
+            <Grid.ColumnDefinitions>
+                <!-- Col 0: Conversations Sidebar -->
+                <ColumnDefinition Width="300" MinWidth="240" MaxWidth="420" />
+                <!-- Col 1: Splitter -->
+                <ColumnDefinition Width="Auto" />
+                <!-- Col 2: Active Chat Area -->
+                <ColumnDefinition Width="*" MinWidth="380" />
+                <!-- Col 3: Splitter -->
+                <ColumnDefinition Width="Auto" />
+                <!-- Col 4: Technical & Customer Panel -->
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ========================================================================= -->
+            <!-- COLUMN 0: CONVERSATION SIDEBAR -->
+            <!-- ========================================================================= -->
+            <Border Grid.Column="0" Background="{StaticResource SidebarBgBrush}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <!-- Search Bar -->
+                        <RowDefinition Height="Auto" />
+                        <!-- Filter Tabs -->
+                        <RowDefinition Height="Auto" />
+                        <!-- Conversation List -->
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Search Box -->
+                    <Border Grid.Row="0" Padding="12,10,12,6">
+                        <TextBox Style="{StaticResource ModernTextBox}"
+                                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                 Tag="🔍 Konuşmalarda ara..." />
+                    </Border>
+
+                    <!-- Filter Tabs -->
+                    <Border Grid.Row="1" Padding="12,4,12,8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                        <UniformGrid Columns="4">
+                            <RadioButton Content="Tümü" GroupName="FilterModeGroup" Style="{StaticResource FilterTabButton}"
+                                         IsChecked="{Binding IsFilterAll, Mode=TwoWay}" />
+                            <RadioButton Content="Bot" GroupName="FilterModeGroup" Style="{StaticResource FilterTabButton}"
+                                         IsChecked="{Binding IsFilterBot, Mode=TwoWay}" />
+                            <RadioButton Content="Manuel" GroupName="FilterModeGroup" Style="{StaticResource FilterTabButton}"
+                                         IsChecked="{Binding IsFilterHuman, Mode=TwoWay}" />
+                            <RadioButton Content="Durduruldu" GroupName="FilterModeGroup" Style="{StaticResource FilterTabButton}"
+                                         IsChecked="{Binding IsFilterPaused, Mode=TwoWay}" />
+                        </UniformGrid>
+                    </Border>
+
+                    <!-- Conversations List -->
+                    <Grid Grid.Row="2">
+                        <!-- Loading State -->
+                        <TextBlock Text="Konuşmalar yükleniyor..."
+                                   Style="{StaticResource EmptyStateText}"
+                                   VerticalAlignment="Center"
+                                   Visibility="{Binding IsLoadingConversations, Converter={StaticResource BoolToVis}}" />
+
+                        <!-- Empty State -->
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                    Visibility="{Binding HasConversations, Converter={StaticResource InverseBoolToVis}}">
+                            <TextBlock Text="💬" FontSize="28" HorizontalAlignment="Center" Margin="0,0,0,8" />
+                            <TextBlock Text="Konuşma bulunamadı" Style="{StaticResource EmptyStateText}" />
+                        </StackPanel>
+
+                        <!-- List -->
+                        <ListBox ItemsSource="{Binding Conversations}"
+                                 SelectedItem="{Binding SelectedConversation}"
+                                 Style="{StaticResource ConversationListBox}"
+                                 ItemContainerStyle="{StaticResource ConversationListBoxItem}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <!-- Row 0: Customer Title + Timestamp -->
+                                        <TextBlock Grid.Row="0" Grid.Column="0"
+                                                   Text="{Binding DisplayTitle}"
+                                                   FontWeight="SemiBold" FontSize="13"
+                                                   Foreground="{StaticResource TextBrush}"
+                                                   TextTrimming="CharacterEllipsis" />
+
+                                        <TextBlock Grid.Row="0" Grid.Column="1"
+                                                   Text="{Binding FormattedTime}"
+                                                   Foreground="{StaticResource CardMutedBrush}"
+                                                   FontSize="11" Margin="6,0,0,0" />
+
+                                        <!-- Row 1: Stage Badge & Attention Dot -->
+                                        <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,4,0,3">
+                                            <!-- Stage Tag -->
+                                            <Border Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="0,0,6,0">
+                                                <TextBlock Text="{Binding StageLabel}" Foreground="{StaticResource SectionHeaderBrush}" FontSize="10" FontWeight="SemiBold" />
+                                            </Border>
+
+                                            <!-- Bot Mode Indicator Tag -->
+                                            <Border Background="{Binding BotMode, Converter={StaticResource BotModeBgBrush}}" CornerRadius="4" Padding="6,2">
+                                                <TextBlock Text="{Binding BotMode}" Foreground="{Binding BotMode, Converter={StaticResource BotModeBrush}}" FontSize="10" FontWeight="Bold" />
+                                            </Border>
+
+                                            <!-- Attention Indicator -->
+                                            <Ellipse Width="6" Height="6" Fill="{StaticResource WarnBrush}" Margin="6,0,0,0" VerticalAlignment="Center"
+                                                     Visibility="{Binding RequiresAttention, Converter={StaticResource BoolToVis}}" ToolTip="Dikkat gerekiyor" />
+                                        </StackPanel>
+
+                                        <!-- Row 2: Last Message Preview -->
+                                        <TextBlock Grid.Row="2" Grid.ColumnSpan="2"
+                                                   Text="{Binding LastMessagePreview}"
+                                                   Foreground="{StaticResource CardMutedBrush}"
+                                                   FontSize="12"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <!-- GridSplitter 1 -->
+            <GridSplitter Grid.Column="1" />
+
+            <!-- ========================================================================= -->
+            <!-- COLUMN 2: ACTIVE CHAT AREA -->
+            <!-- ========================================================================= -->
+            <Border Grid.Column="2" Background="{StaticResource ChatBgBrush}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <!-- 0: Chat Header -->
+                        <RowDefinition Height="Auto" />
+                        <!-- 1: AnyDesk Banner (if active) -->
+                        <RowDefinition Height="Auto" />
+                        <!-- 2: Message History Stream -->
+                        <RowDefinition Height="*" />
+                        <!-- 3: Message Composer Input -->
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Chat Header -->
+                    <Border Grid.Row="0" Background="{StaticResource HeaderBgBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="16,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Left: Customer Information & Stage -->
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding ActiveCustomerTitle}" FontWeight="Bold" FontSize="15" Foreground="{StaticResource TextBrush}" Margin="0,0,10,0" />
+                                    <Border Background="{Binding BotModeKind, Converter={StaticResource BotModeBgBrush}}" CornerRadius="10" Padding="8,2" VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Ellipse Width="6" Height="6" Fill="{Binding BotModeKind, Converter={StaticResource BotModeBrush}}" Margin="0,0,4,0" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding BotStatusLabel}" Foreground="{Binding BotModeKind, Converter={StaticResource BotModeBrush}}" FontSize="11" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                    <TextBlock Text="{Binding ActiveCustomerPhone}" Foreground="{StaticResource CardMutedBrush}" FontSize="12" Margin="0,0,12,0" />
+                                    <TextBlock Text="Aşama: " Foreground="{StaticResource SectionHeaderBrush}" FontSize="12" />
+                                    <TextBlock Text="{Binding ActiveStageLabel}" Foreground="{StaticResource TextBrush}" FontSize="12" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Right: Bot Controls (Pause, Resume, Takeover) -->
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="ÇÖZÜMÜ HAFIZAYA EKLE"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Command="{Binding AddCaseMemoryCommand}"
+                                        Margin="0,0,8,0" />
+                                <!-- TakeOver Button -->
+                                <Button Content="MANUEL DEVRAL"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Command="{Binding TakeOverCommand}"
+                                        Margin="0,0,8,0"
+                                        Visibility="{Binding CanTakeOver, Converter={StaticResource BoolToVis}}" />
+
+                                <!-- Primary Dynamic Action Button (Pause / Resume) -->
+                                <Button Content="{Binding PrimaryActionText}"
+                                        Style="{StaticResource DynamicPrimaryActionButton}"
+                                        Command="{Binding PrimaryActionCommand}"
+                                        Visibility="{Binding CanPrimaryAction, Converter={StaticResource BoolToVis}}" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- AnyDesk Alert Banner (if alert triggered) -->
+                    <Border Grid.Row="1" Background="#3A2C14" BorderBrush="{StaticResource WarnBrush}" BorderThickness="0,0,0,1" Padding="14,10"
+                            Visibility="{Binding ShowAnyDeskAlert, Converter={StaticResource BoolToVis}}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="⚠ MÜŞTERİ ANYDESK AŞAMASINDA" FontWeight="Bold" Foreground="{StaticResource WarnBrush}" FontSize="13" />
+                                <TextBlock Text="{Binding AnyDeskAlertIssueSummary}" Foreground="{StaticResource CardTextBrush}" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="DEVRAL" Style="{StaticResource PrimaryButton}" Margin="0,0,8,0"
+                                        Command="{Binding TakeOverCommand}" />
+                                <Button Content="DEVAM ET" Style="{StaticResource SecondaryButton}"
+                                        Command="{Binding DismissAnyDeskCommand}" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Message History Stream -->
+                    <Grid Grid.Row="2">
+                        <!-- Loading State -->
+                        <TextBlock Text="Mesajlar yükleniyor..." Style="{StaticResource EmptyStateText}" VerticalAlignment="Center"
+                                   Visibility="{Binding IsLoadingMessages, Converter={StaticResource BoolToVis}}" />
+
+                        <!-- Empty State -->
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                    Visibility="{Binding HasActiveConversation, Converter={StaticResource InverseBoolToVis}}">
+                            <TextBlock Text="💬" FontSize="36" HorizontalAlignment="Center" Margin="0,0,0,8" />
+                            <TextBlock Text="Görüntülemek için bir konuşma seçin" Foreground="{StaticResource CardMutedBrush}" FontSize="13" HorizontalAlignment="Center" />
+                        </StackPanel>
+
+                        <!-- Messages ScrollViewer -->
+                        <ScrollViewer x:Name="MessagesScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="16,12">
+                            <ItemsControl ItemsSource="{Binding ActiveMessages}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,3,0,3">
+                                            <!-- Message Bubble Container -->
+                                            <Border Background="{Binding Direction, Converter={StaticResource MsgBubbleBg}}"
+                                                    BorderBrush="{Binding Direction, Converter={StaticResource MsgBubbleBorder}}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="8"
+                                                    Padding="12,8"
+                                                    MaxWidth="540"
+                                                    HorizontalAlignment="{Binding Direction, Converter={StaticResource MsgAlign}}">
+                                                <StackPanel>
+                                                    <!-- Bubble Header: Sender Label ("Müşteri" or "Sen") -->
+                                                    <TextBlock Text="{Binding DisplaySender}"
+                                                               Foreground="{Binding Direction, Converter={StaticResource MsgSenderBrush}}"
+                                                               FontSize="11" FontWeight="Bold" Margin="0,0,0,3" />
+
+                                                    <!-- Message Text Content -->
+                                                    <TextBlock Text="{Binding Content}"
+                                                               Foreground="{StaticResource TextBrush}"
+                                                               FontSize="13"
+                                                               TextWrapping="Wrap"
+                                                               LineHeight="19" />
+
+                                                    <!-- Media indicator if image -->
+                                                    <Border Background="#151C28" CornerRadius="4" Padding="6,4" Margin="0,6,0,0"
+                                                            Visibility="{Binding HasMedia, Converter={StaticResource BoolToVis}}">
+                                                        <TextBlock Text="📷 [Fotoğraf Eklentisi]" Foreground="{StaticResource InfoBrush}" FontSize="11" />
+                                                    </Border>
+
+                                                    <!-- Timestamp & Delivery Status -->
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,0">
+                                                        <TextBlock Text="{Binding FormattedTime}"
+                                                                   Foreground="{StaticResource CardMutedBrush}"
+                                                                   FontSize="10" Margin="0,0,4,0" />
+                                                        <TextBlock Text="{Binding FormattedDeliveryStatus}"
+                                                                   Foreground="{StaticResource CardMutedBrush}"
+                                                                   FontSize="10" />
+                                                    </StackPanel>
+
+                                                    <!-- Operator-only Teacher Mode. Eligibility is decided by the backend. -->
+                                                    <Border Margin="0,7,0,0"
+                                                            Padding="8,7"
+                                                            CornerRadius="5"
+                                                            Background="#141B27"
+                                                            BorderBrush="#334155"
+                                                            BorderThickness="1"
+                                                            Visibility="{Binding ShowTeacherControls, Converter={StaticResource BoolToVis}}">
+                                                        <StackPanel>
+                                                            <TextBlock Text="Yanıt geri bildirimi"
+                                                                       Foreground="{StaticResource CardMutedBrush}"
+                                                                       FontSize="10"
+                                                                       FontWeight="SemiBold" />
+
+                                                            <Border Margin="0,5,0,0" Padding="7" Background="#0E1520" CornerRadius="4"
+                                                                    Visibility="{Binding HasPanelRecognition, Converter={StaticResource BoolToVis}}">
+                                                                <StackPanel>
+                                                                    <TextBlock Text="PANEL KİMLİĞİ" FontSize="10" FontWeight="Bold" Foreground="{StaticResource InfoBrush}" />
+                                                                    <TextBlock FontSize="10" Foreground="{StaticResource CardTextBrush}">
+                                                                        <Run Text="Pitch: "/><Run Text="{Binding PanelRecognition.PixelPitch}"/>
+                                                                        <Run Text="  Panel: "/><Run Text="{Binding PanelRecognition.PanelCode}"/>
+                                                                        <Run Text="  Son: "/><Run Text="{Binding PanelRecognition.SecondaryCode}"/>
+                                                                    </TextBlock>
+                                                                    <TextBlock Text="{Binding PanelRecognition.CanonicalKey}" FontSize="10" Foreground="{StaticResource CardMutedBrush}" />
+                                                                    <TextBlock Text="{Binding PanelRecognitionSource, StringFormat=Kaynak: {0}}" FontSize="9" Foreground="{StaticResource CardMutedBrush}" />
+                                                                </StackPanel>
+                                                            </Border>
+
+                                                            <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                                                <Button Content="👍 Doğru"
+                                                                        Style="{StaticResource GhostButton}"
+                                                                        Padding="7,4"
+                                                                        FontSize="11"
+                                                                        Margin="0,0,5,0"
+                                                                        Command="{Binding DataContext.ApproveTrainingFeedbackCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                        CommandParameter="{Binding}" />
+                                                                <Button Content="✏ Düzelt"
+                                                                        Style="{StaticResource GhostButton}"
+                                                                        Padding="7,4"
+                                                                        FontSize="11"
+                                                                        Margin="0,0,5,0"
+                                                                        Command="{Binding DataContext.OpenEditedTrainingFeedbackCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                        CommandParameter="{Binding}" />
+                                                                <Button Content="👎 Yanlış"
+                                                                        Style="{StaticResource GhostButton}"
+                                                                        Padding="7,4"
+                                                                        FontSize="11"
+                                                                        Command="{Binding DataContext.OpenRejectedTrainingFeedbackCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                        CommandParameter="{Binding}" />
+                                                            </StackPanel>
+
+                                                            <StackPanel Orientation="Horizontal"
+                                                                        Margin="0,5,0,0"
+                                                                        Visibility="{Binding HasTrainingFeedback, Converter={StaticResource BoolToVis}}">
+                                                                <TextBlock Text="{Binding TrainingFeedbackStatusLabel}"
+                                                                           Foreground="{StaticResource SuccessBrush}"
+                                                                           FontSize="10"
+                                                                           FontWeight="SemiBold" />
+                                                                <TextBlock Text="{Binding TrainingEligibilityLabel}"
+                                                                           Foreground="{StaticResource CardMutedBrush}"
+                                                                           FontSize="10"
+                                                                           Margin="6,0,0,0" />
+                                                            </StackPanel>
+
+                                                            <Border Margin="0,7,0,0"
+                                                                    Padding="8"
+                                                                    CornerRadius="4"
+                                                                    Background="#0E1520"
+                                                                    Visibility="{Binding IsFeedbackEditorOpen, Converter={StaticResource BoolToVis}}">
+                                                                <StackPanel>
+                                                                    <TextBlock Text="{Binding FeedbackEditorTitle}"
+                                                                               Foreground="{StaticResource TextBrush}"
+                                                                               FontWeight="SemiBold"
+                                                                               FontSize="11" />
+                                                                    <TextBlock Text="{Binding FeedbackEditorHint}"
+                                                                               Foreground="{StaticResource CardMutedBrush}"
+                                                                               TextWrapping="Wrap"
+                                                                               FontSize="10"
+                                                                               Margin="0,2,0,6" />
+                                                                    <TextBlock Text="Orijinal AI yanıtı"
+                                                                               Foreground="{StaticResource CardMutedBrush}"
+                                                                               FontSize="10" />
+                                                                    <TextBlock Text="{Binding Content}"
+                                                                               Foreground="{StaticResource CardTextBrush}"
+                                                                               TextWrapping="Wrap"
+                                                                               FontSize="10"
+                                                                               MaxHeight="72"
+                                                                               Margin="0,2,0,6" />
+                                                                    <TextBlock Text="İdeal yanıtınız"
+                                                                               Foreground="{StaticResource CardMutedBrush}"
+                                                                               FontSize="10"
+                                                                               Margin="0,0,0,3" />
+                                                                    <StackPanel Visibility="{Binding HasPanelRecognition, Converter={StaticResource BoolToVis}}" Margin="0,0,0,6">
+                                                                        <TextBlock Text="Doğru panel kimliği (eğitim etiketi)" Foreground="{StaticResource CardMutedBrush}" FontSize="10" />
+                                                                        <StackPanel Orientation="Horizontal">
+                                                                            <TextBox Text="{Binding DraftPixelPitch, UpdateSourceTrigger=PropertyChanged}" Width="70" Margin="0,2,5,0" Tag="P2.5" />
+                                                                            <TextBox Text="{Binding DraftPanelCode, UpdateSourceTrigger=PropertyChanged}" Width="90" Margin="0,2,5,0" Tag="1065S" />
+                                                                            <TextBox Text="{Binding DraftSecondaryCode, UpdateSourceTrigger=PropertyChanged}" Width="90" Margin="0,2,0,0" Tag="2012" />
+                                                                        </StackPanel>
+                                                                    </StackPanel>
+                                                                    <TextBox Text="{Binding DraftPreferredTechnicianResponse, UpdateSourceTrigger=PropertyChanged}"
+                                                                             Style="{StaticResource ModernTextBox}"
+                                                                             AcceptsReturn="True"
+                                                                             TextWrapping="Wrap"
+                                                                             MinHeight="58"
+                                                                             MaxHeight="130"
+                                                                             VerticalScrollBarVisibility="Auto"
+                                                                             Tag="Tercih ettiğiniz yanıt (müşteriye gönderilmez)" />
+
+                                                                    <TextBlock Text="Nedenler (isteğe bağlı)"
+                                                                               Foreground="{StaticResource CardMutedBrush}"
+                                                                               FontSize="10"
+                                                                               Margin="0,7,0,3" />
+                                                                    <ItemsControl ItemsSource="{Binding FeedbackReasonOptions}">
+                                                                        <ItemsControl.ItemsPanel>
+                                                                            <ItemsPanelTemplate>
+                                                                                <WrapPanel />
+                                                                            </ItemsPanelTemplate>
+                                                                        </ItemsControl.ItemsPanel>
+                                                                        <ItemsControl.ItemTemplate>
+                                                                            <DataTemplate>
+                                                                                <CheckBox Content="{Binding Value}"
+                                                                                          IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                                                          Foreground="{StaticResource CardTextBrush}"
+                                                                                          FontSize="10"
+                                                                                          Margin="0,1,10,2" />
+                                                                            </DataTemplate>
+                                                                        </ItemsControl.ItemTemplate>
+                                                                    </ItemsControl>
+
+                                                                    <TextBlock Text="{Binding FeedbackValidationMessage}"
+                                                                               Foreground="{StaticResource DangerBrush}"
+                                                                               TextWrapping="Wrap"
+                                                                               FontSize="10"
+                                                                               Margin="0,4,0,0"
+                                                                               Visibility="{Binding FeedbackValidationMessage, Converter={StaticResource StringToVis}}" />
+
+                                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,7,0,0">
+                                                                        <Button Content="İPTAL"
+                                                                                Style="{StaticResource GhostButton}"
+                                                                                Padding="8,4"
+                                                                                FontSize="10"
+                                                                                Margin="0,0,5,0"
+                                                                                Command="{Binding DataContext.CancelTrainingFeedbackCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                                CommandParameter="{Binding}" />
+                                                                        <Button Content="{Binding FeedbackSaveButtonText}"
+                                                                                Style="{StaticResource SecondaryButton}"
+                                                                                Padding="8,4"
+                                                                                FontSize="10"
+                                                                                Command="{Binding DataContext.SaveTrainingFeedbackCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                                CommandParameter="{Binding}" />
+                                                                    </StackPanel>
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Grid>
+
+                    <!-- Message Composer Input Bar (Bottom) -->
+                    <Border Grid.Row="3" Background="{StaticResource HeaderBgBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Message Input Box -->
+                            <TextBox x:Name="MessageComposerBox"
+                                     Grid.Column="0"
+                                     Style="{StaticResource ModernTextBox}"
+                                     Text="{Binding OutboundMessageText, UpdateSourceTrigger=PropertyChanged}"
+                                     Tag="Mesajınızı yazın... (Göndermek için Enter, yeni satır için Shift+Enter)"
+                                     AcceptsReturn="True"
+                                     MaxHeight="100"
+                                     MinHeight="42"
+                                     VerticalScrollBarVisibility="Auto"
+                                     PreviewKeyDown="MessageComposerBox_OnPreviewKeyDown"
+                                     IsEnabled="{Binding HasActiveConversation}"
+                                     Margin="0,0,10,0" />
+
+                            <!-- Send Button -->
+                            <Button Grid.Column="1"
+                                    Content="GÖNDER"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Padding="18,10"
+                                    Command="{Binding SendMessageCommand}"
+                                    IsEnabled="{Binding CanSendMessage}" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <!-- GridSplitter 2 (between Chat and Technical Support Panel) -->
+            <GridSplitter Grid.Column="3" Width="1"
+                          Visibility="{Binding IsTechnicalPanelCollapsed, Converter={StaticResource InverseBoolToVis}}" />
+
+            <!-- ========================================================================= -->
+            <!-- COLUMN 4: CUSTOMER & TECHNICAL SUPPORT PANEL -->
+            <!-- ========================================================================= -->
+            <Border Grid.Column="4" Background="{StaticResource PanelBgBrush}"
+                    Width="340"
+                    Visibility="{Binding IsTechnicalPanelCollapsed, Converter={StaticResource InverseBoolToVis}}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <!-- Panel Header -->
+                        <RowDefinition Height="Auto" />
+                        <!-- Stepper Progress -->
+                        <RowDefinition Height="Auto" />
+                        <!-- Details ScrollViewer -->
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Panel Header -->
+                    <Border Grid.Row="0" Style="{StaticResource SectionHeaderBorder}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="TEKNİK DESTEK ÖZETİ" FontWeight="Bold" FontSize="12" Foreground="{StaticResource SectionHeaderBrush}" VerticalAlignment="Center" />
+                            <Border Grid.Column="1" Background="{StaticResource BadgeSuccessBgBrush}" CornerRadius="4" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center"
+                                    Visibility="{Binding HasCompletedCases, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="{Binding CompletedCasesBadgeText}" Foreground="{StaticResource SuccessBrush}" FontSize="10" FontWeight="Bold" />
+                            </Border>
+                            <Button Grid.Column="2" Content="✕" Style="{StaticResource GhostButton}" Command="{Binding ToggleTechnicalPanelCommand}" ToolTip="Paneli Gizle" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Support Process Progress Stepper (Compact Visual Flow) -->
+                    <Border Grid.Row="1" Background="{StaticResource HeaderBgBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="12,10">
+                        <StackPanel>
+                            <TextBlock Text="Süreç Aşamaları" Style="{StaticResource SectionTitle}" Margin="0,0,0,8" />
+                            <ItemsControl ItemsSource="{Binding SupportSteps}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,2,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- Step Dot -->
+                                            <Ellipse Grid.Column="0" Width="8" Height="8" Fill="{Binding Status, Converter={StaticResource StepBrush}}" Margin="0,0,8,0" VerticalAlignment="Center" />
+
+                                            <!-- Step Name -->
+                                            <TextBlock Grid.Column="1" Text="{Binding Title}" FontSize="12" Foreground="{StaticResource CardTextBrush}" VerticalAlignment="Center" />
+
+                                            <!-- Step Status Value -->
+                                            <Border Grid.Column="2" Background="{Binding Status, Converter={StaticResource StepBgBrush}}" CornerRadius="4" Padding="6,2">
+                                                <TextBlock Text="{Binding StatusText}" Foreground="{Binding Status, Converter={StaticResource StepBrush}}" FontSize="11" FontWeight="SemiBold" />
+                                            </Border>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Technical Details Cards -->
+                    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="12">
+                        <StackPanel>
+                            <!-- AI Operatör Özeti -->
+                            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,10" Background="#15212E" BorderBrush="{StaticResource InfoBrush}">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                        <Ellipse Width="6" Height="6" Fill="{StaticResource InfoBrush}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                        <TextBlock Text="AI OPERATÖR ÖZETİ" Style="{StaticResource SectionTitle}" Foreground="{StaticResource InfoBrush}" Margin="0" />
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding AiOperatorSummaryText}" Style="{StaticResource IssueBody}" FontSize="12" Foreground="{StaticResource CardTextBrush}" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Sorun Özeti -->
+                            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="BİLDİRİLEN SORUN" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="{Binding IssueSummaryText}" Style="{StaticResource IssueBody}" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Ekran Bilgileri -->
+                            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="EKRAN ÖLÇÜLERİ" Style="{StaticResource SectionTitle}" />
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Ölçü (G×Y):" Style="{StaticResource CardLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ScreenWidthHeightText}" FontWeight="SemiBold" Style="{StaticResource CardValue}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Panel & Etiket Fotoğrafları -->
+                            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="PANEL &amp; ETİKETLER" Style="{StaticResource SectionTitle}" />
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Durum:" Style="{StaticResource CardLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding PanelStatusText}" Style="{StaticResource CardValue}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Receiver Kartı -->
+                            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="RECEIVER KARTI" Style="{StaticResource SectionTitle}" />
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Model:" Style="{StaticResource CardLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ReceiverModelText}" FontWeight="SemiBold" Style="{StaticResource CardValue}" />
+                                    </Grid>
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Adet:" Style="{StaticResource CardLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ReceiverCountText}" FontWeight="SemiBold" Style="{StaticResource CardValue}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Oynatıcı / Sinyal -->
+                            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="OYNATICI / SİNYAL" Style="{StaticResource SectionTitle}" />
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="Oynatıcı:" Style="{StaticResource CardLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding PlayerTypeText}" FontWeight="SemiBold" Style="{StaticResource CardValue}" />
+                                    </Grid>
+                                    <Grid Margin="0,4,0,0" Visibility="{Binding IsProcessorPlayer, Converter={StaticResource BoolToVis}}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="HDMI:" Style="{StaticResource CardLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ProcessorHdmiStatusText}" FontWeight="SemiBold" Style="{StaticResource CardValue}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- USB & Config Bağlantısı -->
+                            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="BAĞLANTI &amp; CONFIG" Style="{StaticResource SectionTitle}" />
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="USB/Config:" Style="{StaticResource CardLabel}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding ConfigStatusText}" Style="{StaticResource CardValue}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- AnyDesk Uzak Bağlantı -->
+                            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="UZAK DESTEK (ANYDESK)" Style="{StaticResource SectionTitle}" />
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="AnyDesk ID:" Style="{StaticResource CardLabel}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="{Binding AnyDeskAddressText}" FontWeight="Bold" Foreground="{StaticResource PrimaryBrush}" Style="{StaticResource CardValue}" VerticalAlignment="Center" />
+                                        <Button Grid.Column="2" Content="Kopyala" Style="{StaticResource SecondaryButton}" Padding="8,4" FontSize="11" Command="{Binding CopyAnyDeskCommand}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Small operator-only training management view; reuses the current API session. -->
+        <views:TrainingDataView Grid.Row="1"
+                                Visibility="{Binding IsTrainingDataViewVisible, Converter={StaticResource BoolToVis}}" />
+        <views:PanelFilesView Grid.Row="1"
+                              Visibility="{Binding IsPanelFilesViewVisible, Converter={StaticResource BoolToVis}}" />
+
+        <!-- 2: GLOBAL STATUS & ERROR BAR (Bottom) -->
+        <Border Grid.Row="2" Background="#2B1414" BorderBrush="{StaticResource DangerBrush}" BorderThickness="0,1,0,0" Padding="12,6"
+                Visibility="{Binding ErrorMessage, Converter={StaticResource StringToVis}}">
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="{StaticResource DangerBrush}" FontSize="12" TextWrapping="Wrap" />
+        </Border>
+    </Grid>
+</Window>

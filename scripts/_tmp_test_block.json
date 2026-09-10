@@ -1,0 +1,12 @@
+{
+  "eventType": "IncomingMessage",
+  "externalMessageId": "TEST-BLOCK-004",
+  "remoteJid": "905551234567@s.whatsapp.net",
+  "remotePhoneNumber": "905551234567",
+  "fromMe": false,
+  "botOriginated": false,
+  "messageType": "Text",
+  "textContent": "Selam",
+  "textPresent": true,
+  "timestamp": "2026-09-01T14:31:00Z"
+}

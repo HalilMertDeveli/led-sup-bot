@@ -1,10 +1,12 @@
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.Training;
 using LedSupBot.Application.WhatsApp;
 using LedSupBot.Domain.Entities;
 using LedSupBot.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace LedSupBot.Application.Workflow;
 
@@ -12,13 +14,16 @@ public interface IWorkflowOutboundDispatcher
 {
     Task SendTextsAsync(
         Guid conversationId,
-        string customerPhoneE164,
+        string customerIdentity,
+        string? whatsAppDeliveryRoute,
         IReadOnlyList<string> texts,
+        IReadOnlyList<AiReplySnapshotDraft?>? trainingSnapshots = null,
         CancellationToken cancellationToken = default);
 
     Task TrySendConfigExampleImageAsync(
         Guid conversationId,
-        string customerPhoneE164,
+        string customerIdentity,
+        string? whatsAppDeliveryRoute,
         string imagePath,
         string? caption,
         CancellationToken cancellationToken = default);
@@ -37,8 +42,10 @@ public sealed class WorkflowOutboundDispatcher : IWorkflowOutboundDispatcher
 
     public async Task SendTextsAsync(
         Guid conversationId,
-        string customerPhoneE164,
+        string customerIdentity,
+        string? whatsAppDeliveryRoute,
         IReadOnlyList<string> texts,
+        IReadOnlyList<AiReplySnapshotDraft?>? trainingSnapshots = null,
         CancellationToken cancellationToken = default)
     {
         if (texts.Count == 0)
@@ -46,54 +53,184 @@ public sealed class WorkflowOutboundDispatcher : IWorkflowOutboundDispatcher
             return;
         }
 
+        if (WhatsAppEventMapper.IsGroupJid(whatsAppDeliveryRoute ?? customerIdentity))
+        {
+            _logger.LogWarning("Bot auto-reply skipped for WhatsApp group");
+            return;
+        }
+
         var db = _services.GetRequiredService<IApplicationDbContext>();
-        var options = _services.GetRequiredService<Microsoft.Extensions.Options.IOptions<WorkflowOptions>>().Value;
+        var options = _services.GetRequiredService<IOptions<WorkflowOptions>>().Value;
+        var coordinator = _services.GetService<IConversationReplyCoordinator>();
+        var linkedToken = coordinator?.LinkReplyCancellation(conversationId, cancellationToken) ?? cancellationToken;
 
         if (!options.AutoReplyEnabled)
         {
-            _logger.LogInformation(
-                "Workflow auto-reply disabled; skipped {Count} outbound message(s) for conversation {ConversationId}",
+            _logger.LogWarning(
+                "Workflow auto-reply disabled (Workflow:AutoReplyEnabled=false); skipped {Count} outbound message(s) for conversation {ConversationId}",
                 texts.Count,
                 conversationId);
             return;
         }
 
-        var client = _services.GetService<IWhatsAppClient>();
-        if (client is null)
+        var testAllowlist = _services.GetRequiredService<IWhatsAppTestAllowlist>();
+        var selfIdentity = _services.GetRequiredService<IWhatsAppSelfIdentityStore>();
+        if (selfIdentity.SelfJids.Count == 0)
         {
-            _logger.LogWarning("WhatsApp client unavailable; workflow outbound skipped");
+            var identitySync = _services.GetService<IWhatsAppSelfIdentitySync>();
+            if (identitySync is not null)
+            {
+                await identitySync.SyncFromConnectorAsync(cancellationToken);
+            }
+        }
+
+        Customer? customer = null;
+        var customerId = await db.Conversations
+            .AsNoTracking()
+            .Where(c => c.Id == conversationId)
+            .Select(c => (Guid?)c.CustomerId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (customerId is not null)
+        {
+            customer = await db.Customers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == customerId, cancellationToken);
+        }
+
+        var allowlistAddress = whatsAppDeliveryRoute ?? customerIdentity;
+        if (!testAllowlist.IsOutboundAllowed(allowlistAddress, customer))
+        {
+            _logger.LogInformation("Test allowlist blocked outbound conversationId={ConversationId}", conversationId);
             return;
         }
 
+        var destination = await WhatsAppOutboundDestinationResolver.ResolveAsync(
+            db,
+            selfIdentity,
+            conversationId,
+            whatsAppDeliveryRoute,
+            customerIdentity,
+            cancellationToken);
+
+        if (!testAllowlist.IsOutboundAllowed(destination.Address, customer))
+        {
+            _logger.LogInformation("Test allowlist / exclusion blocked resolved destination conversationId={ConversationId}", conversationId);
+            return;
+        }
+
+        if (destination.SelfMatch || selfIdentity.IsSelfJid(destination.Address))
+        {
+            _logger.LogWarning(
+                "Outbound blocked: self destination conversationId={ConversationId} destinationType={DestinationType}",
+                conversationId,
+                destination.DestinationType);
+            return;
+        }
+
+        if (WhatsAppEventMapper.IsGroupJid(destination.Address))
+        {
+            _logger.LogWarning("Bot auto-reply skipped for resolved WhatsApp group destination");
+            return;
+        }
+
+        var client = _services.GetRequiredService<IWhatsAppClient>();
         var recorder = _services.GetRequiredService<IWhatsAppOutboundRecorder>();
 
-        foreach (var text in texts)
-        {
-            var conversation = await db.Conversations
-                .AsNoTracking()
-                .FirstOrDefaultAsync(c => c.Id == conversationId, cancellationToken);
+        _logger.LogInformation(
+            "Outbound started conversationId={ConversationId} routeSource={RouteSource} destinationType={DestinationType} exactRoutePreserved={ExactRoutePreserved}",
+            conversationId,
+            destination.Source,
+            destination.DestinationType,
+            destination.ExactRoutePreserved);
 
-            if (conversation is null || !ConversationBotPolicy.CanAutoReply(conversation.BotMode))
+        for (var index = 0; index < texts.Count; index++)
+        {
+            var text = texts[index];
+            linkedToken.ThrowIfCancellationRequested();
+
+            if (!await CanStillAutoReplyAsync(db, conversationId, linkedToken))
             {
                 _logger.LogInformation(
-                    "Workflow outbound stopped before send; BotMode={BotMode}",
-                    conversation?.BotMode.ToString() ?? "missing");
+                    "Workflow outbound stopped before natural delay; BotMode is not Bot for conversation {ConversationId}",
+                    conversationId);
+                coordinator?.SetActivity(conversationId, BotReplyActivity.Idle);
                 return;
             }
 
-            var externalId = await client.SendTextMessageAsync(customerPhoneE164, text, cancellationToken);
-            await recorder.RecordBotTextAsync(customerPhoneE164, text, externalId, cancellationToken);
+            await ApplyNaturalDelayAsync(
+                conversationId,
+                destination.Address,
+                text,
+                options.NaturalTiming,
+                client,
+                coordinator,
+                linkedToken);
+
+            if (!await CanStillAutoReplyAsync(db, conversationId, linkedToken))
+            {
+                _logger.LogInformation(
+                    "Workflow outbound cancelled before send; BotMode is not Bot for conversation {ConversationId}",
+                    conversationId);
+                await TryClearTypingAsync(client, destination.Address);
+                coordinator?.SetActivity(conversationId, BotReplyActivity.Idle);
+                return;
+            }
+
+            var snapshotForMessage = trainingSnapshots is not null && index < trainingSnapshots.Count
+                ? trainingSnapshots[index]
+                : null;
+            var pendingId = await recorder.CreatePendingBotTextAsync(
+                conversationId,
+                text,
+                snapshotForMessage,
+                linkedToken);
+            try
+            {
+                var externalId = await client.SendTextMessageAsync(destination.Address, text, linkedToken);
+                await recorder.FinalizeBotTextAsync(
+                    pendingId,
+                    externalId,
+                    DeliveryStatus.Sent,
+                    linkedToken);
+                _logger.LogInformation(
+                    "Outbound completed conversationId={ConversationId} connectorAccepted=true sockSendMessageCalled=true baileysMessageIdPresent={MessageIdPresent} routeSource={RouteSource} destinationType={DestinationType} exactRoutePreserved={ExactRoutePreserved} selfMatch=false",
+                    conversationId,
+                    !string.IsNullOrWhiteSpace(externalId),
+                    destination.Source,
+                    destination.DestinationType,
+                    destination.ExactRoutePreserved);
+            }
+            catch (Exception ex)
+            {
+                await recorder.FinalizeBotTextAsync(pendingId, null, DeliveryStatus.Failed, CancellationToken.None);
+                _logger.LogWarning(
+                    ex,
+                    "Outbound failed conversationId={ConversationId} routeSource={RouteSource} destinationType={DestinationType}",
+                    conversationId,
+                    destination.Source,
+                    destination.DestinationType);
+                throw;
+            }
+
+            await TryClearTypingAsync(client, destination.Address);
         }
+
+        coordinator?.SetActivity(conversationId, BotReplyActivity.Idle);
     }
 
     public async Task TrySendConfigExampleImageAsync(
         Guid conversationId,
-        string customerPhoneE164,
+        string customerIdentity,
+        string? whatsAppDeliveryRoute,
         string imagePath,
         string? caption,
         CancellationToken cancellationToken = default)
     {
-        var options = _services.GetRequiredService<Microsoft.Extensions.Options.IOptions<WorkflowOptions>>().Value;
+        if (WhatsAppEventMapper.IsGroupJid(whatsAppDeliveryRoute ?? customerIdentity))
+        {
+            _logger.LogWarning("Bot auto-reply skipped for WhatsApp group");
+            return;
+        }
+
+        var options = _services.GetRequiredService<IOptions<WorkflowOptions>>().Value;
         if (!options.AutoReplyEnabled || string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath))
         {
             return;
@@ -109,6 +246,38 @@ public sealed class WorkflowOutboundDispatcher : IWorkflowOutboundDispatcher
             return;
         }
 
+        var customer = await db.Customers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == conversation.CustomerId, cancellationToken);
+        var testAllowlist = _services.GetRequiredService<IWhatsAppTestAllowlist>();
+        var selfIdentity = _services.GetRequiredService<IWhatsAppSelfIdentityStore>();
+        var allowlistAddress = whatsAppDeliveryRoute ?? customerIdentity;
+        if (!testAllowlist.IsOutboundAllowed(allowlistAddress, customer))
+        {
+            return;
+        }
+
+        var destination = await WhatsAppOutboundDestinationResolver.ResolveAsync(
+            db,
+            selfIdentity,
+            conversationId,
+            whatsAppDeliveryRoute,
+            customerIdentity,
+            cancellationToken);
+
+        if (!testAllowlist.IsOutboundAllowed(destination.Address, customer))
+        {
+            _logger.LogInformation("Test allowlist / exclusion blocked resolved destination conversationId={ConversationId}", conversationId);
+            return;
+        }
+
+        if (destination.SelfMatch || selfIdentity.IsSelfJid(destination.Address))
+        {
+            _logger.LogWarning(
+                "Outbound blocked: self destination conversationId={ConversationId} destinationType={DestinationType}",
+                conversationId,
+                destination.DestinationType);
+            return;
+        }
+
         var client = _services.GetService<IWhatsAppClient>();
         if (client is null)
         {
@@ -121,16 +290,84 @@ public sealed class WorkflowOutboundDispatcher : IWorkflowOutboundDispatcher
             var contentType = Path.GetExtension(imagePath).Equals(".png", StringComparison.OrdinalIgnoreCase)
                 ? "image/png"
                 : "image/jpeg";
-            var externalId = await client.SendImageMessageAsync(customerPhoneE164, stream, contentType, caption, cancellationToken);
+            var externalId = await client.SendImageMessageAsync(destination.Address, stream, contentType, caption, cancellationToken);
             if (!string.IsNullOrWhiteSpace(externalId))
             {
                 var recorder = _services.GetRequiredService<IWhatsAppOutboundRecorder>();
-                await recorder.RecordBotTextAsync(customerPhoneE164, caption ?? "[config example image]", externalId, cancellationToken);
+                await recorder.RecordBotTextAsync(conversationId, destination.Address, caption ?? "[config example image]", externalId, cancellationToken);
             }
         }
         catch (NotSupportedException)
         {
             _logger.LogWarning("Config example image send is not supported by the WhatsApp client");
         }
+    }
+
+    private async Task ApplyNaturalDelayAsync(
+        Guid conversationId,
+        string destinationAddress,
+        string text,
+        NaturalResponseTimingOptions timing,
+        IWhatsAppClient client,
+        IConversationReplyCoordinator? coordinator,
+        CancellationToken cancellationToken)
+    {
+        if (!timing.Enabled)
+        {
+            return;
+        }
+
+        var delay = NaturalResponseTimingCalculator.ComputeDelay(text, timing);
+        if (delay <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        coordinator?.SetActivity(conversationId, BotReplyActivity.Typing);
+
+        try
+        {
+            await client.SendComposingAsync(destinationAddress, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Typing presence failed for conversation {ConversationId}; continuing send", conversationId);
+        }
+
+        try
+        {
+            await Task.Delay(delay, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            await TryClearTypingAsync(client, destinationAddress);
+            throw;
+        }
+    }
+
+    private static async Task TryClearTypingAsync(IWhatsAppClient client, string destinationAddress)
+    {
+        try
+        {
+            await client.SendPausedPresenceAsync(destinationAddress);
+        }
+        catch
+        {
+            /* presence cleanup is best-effort */
+        }
+    }
+
+    private static async Task<bool> CanStillAutoReplyAsync(
+        IApplicationDbContext db,
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        var botMode = await db.Conversations
+            .AsNoTracking()
+            .Where(c => c.Id == conversationId)
+            .Select(c => c.BotMode)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return ConversationBotPolicy.CanAutoReply(botMode);
     }
 }

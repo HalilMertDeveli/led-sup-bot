@@ -1,11 +1,25 @@
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.Admin;
+using LedSupBot.Application.Media;
+using LedSupBot.Application.Knowledge;
+using LedSupBot.Application.Takeover;
+using LedSupBot.Application.Training;
+using LedSupBot.Application.WhatsApp;
 using LedSupBot.Application.Workflow;
 using LedSupBot.Application.Workflow.Ai;
+using LedSupBot.Application.Workflow.Context;
+using LedSupBot.Application.Workflow.Diagnostics;
+using LedSupBot.Application.Workflow.Web;
+using LedSupBot.Application.CaseMemory;
 using LedSupBot.Infrastructure.Configuration;
-using LedSupBot.Application.Media;
+using LedSupBot.Infrastructure.Gemini;
 using LedSupBot.Infrastructure.Media;
+using LedSupBot.Infrastructure.Knowledge;
 using LedSupBot.Infrastructure.OpenAi;
 using LedSupBot.Infrastructure.Persistence;
+using LedSupBot.Application.PanelFiles;
+using LedSupBot.Application.Audio;
+using LedSupBot.Infrastructure.PanelFiles;
 using LedSupBot.Infrastructure.Queue;
 using LedSupBot.Infrastructure.WhatsApp;
 using Microsoft.EntityFrameworkCore;
@@ -27,11 +41,33 @@ public static class DependencyInjection
         services.Configure<CorsOptions>(configuration.GetSection(CorsOptions.SectionName));
         services.Configure<WorkflowOptions>(configuration.GetSection(WorkflowOptions.SectionName));
         services.Configure<AiExtractionOptions>(configuration.GetSection(AiExtractionOptions.SectionName));
-        var openAiSection = configuration.GetSection(OpenAiOptions.SectionName).Get<OpenAiOptions>() ?? new OpenAiOptions();
-        services.PostConfigure<AiExtractionOptions>(opts => opts.ModelName = openAiSection.Model);
+        services.Configure<AdminOptions>(configuration.GetSection(AdminOptions.SectionName));
+        services.Configure<WhatsAppTestModeOptions>(configuration.GetSection(WhatsAppTestModeOptions.SectionName));
+        services.Configure<WhatsAppAutomationOptions>(configuration.GetSection(WhatsAppAutomationOptions.SectionName));
+        services.Configure<KnowledgeOptions>(configuration.GetSection(KnowledgeOptions.SectionName));
+        services.Configure<TrainingCollectionOptions>(configuration.GetSection(TrainingCollectionOptions.SectionName));
+        services.Configure<WebGroundingOptions>(configuration.GetSection(WebGroundingOptions.SectionName));
+        services.Configure<EmbeddingOptions>(configuration.GetSection(EmbeddingOptions.SectionName));
+        services.Configure<PanelFilePackageOptions>(configuration.GetSection(PanelFilePackageOptions.SectionName));
+        services.AddScoped<IPdfKnowledgeExtractor, PdfKnowledgeExtractor>();
+        services.AddHttpClient<IDocumentFallbackExtractor, GeminiDocumentFallbackExtractor>((sp, client) =>
+        {
+            var value = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<GeminiOptions>>().Value;
+            client.BaseAddress = new Uri(value.BaseUrl); client.Timeout = TimeSpan.FromMinutes(4);
+        });
+        services.AddHttpClient<IEmbeddingService, GeminiEmbeddingService>((sp, client) =>
+        {
+            var value = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<GeminiOptions>>().Value;
+            client.BaseAddress = new Uri(value.BaseUrl); client.Timeout = TimeSpan.FromSeconds(value.TimeoutSeconds);
+        });
+        services.AddHttpClient<ITechnicalImageAnalyzer, GeminiTechnicalImageAnalyzer>((sp, client) =>
+        {
+            var value = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<GeminiOptions>>().Value;
+            client.BaseAddress = new Uri(value.BaseUrl); client.Timeout = TimeSpan.FromSeconds(Math.Clamp(value.TimeoutSeconds, 5, 60));
+        });
 
         services.AddSingleton<IBackgroundWorkQueue, InMemoryBackgroundWorkQueue>();
-        RegisterAiServices(services, configuration);
+        AiServiceRegistration.Register(services, configuration);
 
         var connectionString = configuration.GetSection(DatabaseOptions.SectionName)["ConnectionString"];
         if (!string.IsNullOrWhiteSpace(connectionString))
@@ -41,18 +77,48 @@ public static class DependencyInjection
                 options.UseNpgsql(connectionString, npgsql =>
                 {
                     npgsql.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
+                    npgsql.UseVector();
                 });
             });
 
             services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<ApplicationDbContext>());
+            services.AddScoped<KnowledgeImporter>();
+            services.AddScoped<ITechnicalKnowledgeRetriever, TechnicalKnowledgeRetriever>();
+            services.AddScoped<IVerifiedCaseMemoryService, VerifiedCaseMemoryService>();
+            services.AddSingleton<IPanelIdentityNormalizer, PanelIdentityNormalizer>();
+            services.AddSingleton<IPanelIdentityTextParser, PanelIdentityTextParser>();
+            services.AddScoped<IPanelFilePackageResolver, PanelFilePackageResolver>();
+            services.AddScoped<IPanelIdentityCoordinator, PanelIdentityCoordinator>();
+            services.AddScoped<IPanelFileDeliverySafetyGate, PanelFileDeliverySafetyGate>();
+            services.AddScoped<IPanelFileDeliveryService, PanelFileDeliveryService>();
+            services.AddScoped<IPanelFileAssetRegistry, PanelFileAssetRegistry>();
+            services.AddScoped<IPanelFilePackageRegistry, PanelFilePackageRegistry>();
+            services.AddScoped<IPanelFilePackageAdminQuery, PanelFilePackageAdminQuery>();
+            services.AddScoped<IPanelFolderImportService, PanelFolderImportService>();
+            services.AddScoped<IPanelBulkFolderImportService, PanelBulkFolderImportService>();
+            services.AddSingleton<IRemoteSupportAvailabilityPolicy, TurkeyRemoteSupportAvailabilityPolicy>();
+            services.AddSingleton(TimeProvider.System);
+            services.Configure<VoiceOptions>(configuration.GetSection(VoiceOptions.SectionName));
+            services.AddSingleton<ISpeechToTextService, UnavailableSpeechToTextService>();
+            services.AddSingleton<ITextToSpeechService, UnavailableTextToSpeechService>();
+            services.AddScoped<IConversationTakeoverService, ConversationTakeoverService>();
             services.AddScoped<IConversationWorkflowService, ConversationWorkflowService>();
             services.AddScoped<IWorkflowOutboundDispatcher, WorkflowOutboundDispatcher>();
+            services.AddSingleton<IConversationReplyCoordinator, ConversationReplyCoordinator>();
+            services.AddScoped<IConversationContextBuilder, ConversationContextBuilder>();
+            services.AddScoped<HybridResponseComposer>();
+            services.AddScoped<AiResponsePlanner>();
             services.AddScoped<AiExtractionValidator>();
             services.AddScoped<AiExtractionOrchestrator>();
             services.AddScoped<AiExtractionAuditWriter>();
             services.AddSingleton<IMediaStorage, LocalMediaStorage>();
             services.AddSingleton<IMediaImageValidator, MediaImageValidator>();
             services.AddScoped<IInboundMediaPipeline, InboundMediaPipeline>();
+            services.AddScoped<TechnicalImageAnalysisService>();
+            services.AddScoped<DiagnosticStateService>();
+            services.AddScoped<IAdminConversationService, AdminConversationService>();
+            services.AddScoped<IAdminTechnicianOutboundService, AdminTechnicianOutboundService>();
+            services.AddScoped<IAiTrainingService, AiTrainingService>();
         }
 
         var connectorEnabled = configuration.GetSection(WhatsAppConnectorOptions.SectionName).GetValue<bool>("Enabled");
@@ -60,6 +126,13 @@ public static class DependencyInjection
         if (connectorEnabled && !string.IsNullOrWhiteSpace(connectorSecret))
         {
             services.AddHttpClient<IWhatsAppClient, ConnectorWhatsAppClient>();
+            services.AddHttpClient<IWhatsAppSelfIdentitySync, WhatsAppSelfIdentitySync>((sp, client) =>
+            {
+                var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WhatsAppConnectorOptions>>().Value;
+                client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
+                client.DefaultRequestHeaders.Remove("X-Connector-Secret");
+                client.DefaultRequestHeaders.Add("X-Connector-Secret", options.SharedSecret);
+            });
         }
         else
         {
@@ -67,22 +140,5 @@ public static class DependencyInjection
         }
 
         return services;
-    }
-
-    private static void RegisterAiServices(IServiceCollection services, IConfiguration configuration)
-    {
-        var openAiOptions = configuration.GetSection(OpenAiOptions.SectionName).Get<OpenAiOptions>() ?? new OpenAiOptions();
-        if (!string.IsNullOrWhiteSpace(openAiOptions.ApiKey))
-        {
-            services.AddHttpClient<IAiService, OpenAiExtractionService>(client =>
-            {
-                client.BaseAddress = new Uri(openAiOptions.BaseUrl);
-                client.Timeout = TimeSpan.FromSeconds(openAiOptions.TimeoutSeconds > 0 ? openAiOptions.TimeoutSeconds : 30);
-            });
-        }
-        else
-        {
-            services.AddSingleton<IAiService, UnavailableAiService>();
-        }
     }
 }

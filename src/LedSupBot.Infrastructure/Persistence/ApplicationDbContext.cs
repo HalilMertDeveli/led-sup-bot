@@ -1,6 +1,7 @@
 using LedSupBot.Application.Abstractions;
 using LedSupBot.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Pgvector.EntityFrameworkCore;
 
 namespace LedSupBot.Infrastructure.Persistence;
 
@@ -9,6 +10,12 @@ public sealed class ApplicationDbContext : DbContext, IApplicationDbContext
     public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
         : base(options)
     {
+    }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.UseNpgsql(npgsql => npgsql.UseVector());
+        base.OnConfiguring(optionsBuilder);
     }
 
     public DbSet<Customer> Customers => Set<Customer>();
@@ -30,6 +37,15 @@ public sealed class ApplicationDbContext : DbContext, IApplicationDbContext
     public DbSet<AnyDeskInformation> AnyDeskInformations => Set<AnyDeskInformation>();
 
     public DbSet<AiExtractionResult> AiExtractionResults => Set<AiExtractionResult>();
+
+    public DbSet<BotModeChangeAudit> BotModeChangeAudits => Set<BotModeChangeAudit>();
+    public DbSet<KnowledgeDocument> KnowledgeDocuments => Set<KnowledgeDocument>();
+    public DbSet<KnowledgeChunk> KnowledgeChunks => Set<KnowledgeChunk>();
+    public DbSet<AiReplyContextSnapshot> AiReplyContextSnapshots => Set<AiReplyContextSnapshot>();
+    public DbSet<AiTrainingExample> AiTrainingExamples => Set<AiTrainingExample>();
+    public DbSet<VerifiedSupportCaseMemory> VerifiedSupportCaseMemories => Set<VerifiedSupportCaseMemory>();
+    public DbSet<PanelFilePackage> PanelFilePackages => Set<PanelFilePackage>();
+    public DbSet<PanelFilePackageAsset> PanelFilePackageAssets => Set<PanelFilePackageAsset>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -1,13 +1,22 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Serialization;
 using HealthChecks.UI.Client;
 using LedSupBot.Application;
 using LedSupBot.Application.Abstractions;
+using LedSupBot.Application.Admin;
+using LedSupBot.Application.Takeover;
 using LedSupBot.Application.WhatsApp;
+using LedSupBot.Application.Workflow;
+using LedSupBot.Domain.Enums;
 using LedSupBot.Infrastructure;
 using LedSupBot.Infrastructure.Configuration;
+using LedSupBot.Infrastructure.Gemini;
+using LedSupBot.Infrastructure.Persistence;
+using LedSupBot.Api.Admin;
 using LedSupBot.Api.Middleware;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 
@@ -21,9 +30,17 @@ builder.Logging.AddConsole();
 builder.Logging.AddDebug();
 
 builder.Services.AddApplication();
+builder.Services.Configure<LedSupBot.Application.WhatsApp.WhatsAppTestModeOptions>(
+    builder.Configuration.GetSection(LedSupBot.Application.WhatsApp.WhatsAppTestModeOptions.SectionName));
+builder.Services.Configure<LedSupBot.Application.WhatsApp.WhatsAppAutomationOptions>(
+    builder.Configuration.GetSection(LedSupBot.Application.WhatsApp.WhatsAppAutomationOptions.SectionName));
 builder.Services.AddInfrastructure(builder.Configuration);
 
 builder.Services.AddEndpointsApiExplorer();
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+});
 builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new()
@@ -50,8 +67,47 @@ if (!string.IsNullOrWhiteSpace(databaseOptions.ConnectionString))
 }
 
 builder.Services.AddCors();
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<IAdminEventNotifier, SignalRAdminEventNotifier>();
 
 var app = builder.Build();
+
+var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
+var workflowOptions = app.Services.GetRequiredService<IOptions<WorkflowOptions>>().Value;
+var connectorOptionsAtStartup = app.Services.GetRequiredService<IOptions<WhatsAppConnectorOptions>>().Value;
+startupLogger.LogInformation(
+    "Startup pipeline: DatabaseConfigured={DatabaseConfigured} WorkflowAutoReplyEnabled={AutoReplyEnabled} ConnectorEnabled={ConnectorEnabled} ConnectorSecretConfigured={ConnectorSecretConfigured} WhatsAppTestMode={TestModeEnabled}",
+    !string.IsNullOrWhiteSpace(databaseOptions.ConnectionString),
+    workflowOptions.AutoReplyEnabled,
+    connectorOptionsAtStartup.Enabled,
+    !string.IsNullOrWhiteSpace(connectorOptionsAtStartup.SharedSecret),
+    app.Services.GetRequiredService<IOptions<WhatsAppTestModeOptions>>().Value.Enabled);
+
+if (!string.IsNullOrWhiteSpace(databaseOptions.ConnectionString))
+{
+    using var migrationScope = app.Services.CreateScope();
+    var database = migrationScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    try
+    {
+        var pendingMigrations = (await database.Database.GetPendingMigrationsAsync()).ToArray();
+        if (pendingMigrations.Length > 0)
+        {
+            startupLogger.LogInformation(
+                "Applying {PendingMigrationCount} pending database migration(s). First={FirstMigration}",
+                pendingMigrations.Length,
+                pendingMigrations[0]);
+            await database.Database.MigrateAsync();
+            startupLogger.LogInformation("Database migrations completed successfully.");
+        }
+    }
+    catch (Exception ex)
+    {
+        startupLogger.LogCritical(
+            "Database migration failed. ExceptionType={ExceptionType}",
+            ex.GetType().Name);
+        throw;
+    }
+}
 
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
@@ -71,24 +127,32 @@ app.UseCors(policy =>
 
     policy.WithOrigins(corsOptions.AllowedOrigins)
         .AllowAnyHeader()
-        .AllowAnyMethod();
+        .AllowAnyMethod()
+        .AllowCredentials();
 });
 
+var aiOptions = app.Services.GetRequiredService<IOptions<AiOptions>>().Value;
+var geminiOptions = app.Services.GetRequiredService<IOptions<GeminiOptions>>().Value;
 var openAiOptions = app.Services.GetRequiredService<IOptions<OpenAiOptions>>().Value;
-var openAiStatus = string.IsNullOrWhiteSpace(openAiOptions.ApiKey)
-    ? "not_configured"
-    : "structured_extraction";
+var aiStatus = string.Equals(aiOptions.Provider, "Gemini", StringComparison.OrdinalIgnoreCase)
+    ? (string.IsNullOrWhiteSpace(geminiOptions.ApiKey) ? "gemini_not_configured" : $"gemini:{geminiOptions.Model}")
+    : string.Equals(aiOptions.Provider, "OpenAI", StringComparison.OrdinalIgnoreCase)
+        ? "openai_explicit"
+        : "unavailable";
+var openAiStatus = string.IsNullOrWhiteSpace(openAiOptions.ApiKey) ? "not_configured" : "configured";
 
 app.MapGet("/", () => Results.Ok(new
 {
     service = "LedSupBot.Api",
-    phase = "7",
-    status = "media_pipeline",
+    phase = "9",
+    status = "admin_dashboard",
     whatsAppIntegration = "baileys_connector_unofficial",
     metaApproved = false,
+    aiProvider = aiOptions.Provider,
+    aiIntegration = aiStatus,
     openAiIntegration = openAiStatus,
     databaseSchema = "ef_core_postgresql",
-    autoMigrateOnStartup = false,
+    autoMigrateOnStartup = true,
     autoCustomerReplies = false
 }));
 
@@ -97,15 +161,33 @@ app.MapHealthChecks("/health", new HealthCheckOptions
     ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse
 });
 
-app.MapGet("/api/foundation/status", (IWhatsAppConnectionStateStore state) => Results.Ok(new
+app.MapGet("/api/foundation/status", async (
+    IWhatsAppConnectionStateStore state,
+    IServiceProvider services,
+    IOptions<WhatsAppTestModeOptions> testMode,
+    IOptions<WorkflowOptions> workflow,
+    CancellationToken cancellationToken) =>
 {
-    architecture = "hybrid-workflow-plus-ai-boundaries",
-    botOwnsStateMachine = false,
-    backendOwnsWorkflow = true,
-    humanTakeoverSupportedByDesign = true,
-    persistence = "postgresql_ef_core",
-    whatsAppConnection = state.Current.ToString()
-}));
+    var whatsAppConnection = await WhatsAppLiveStatusResolver.GetCurrentAsync(services, state, cancellationToken);
+    var testModeOptions = testMode.Value;
+    return Results.Ok(new
+    {
+        architecture = "hybrid-workflow-plus-ai-boundaries",
+        botOwnsStateMachine = false,
+        backendOwnsWorkflow = true,
+        humanTakeoverSupportedByDesign = true,
+        persistence = "postgresql_ef_core",
+        whatsAppConnection = whatsAppConnection.ToString(),
+        inboundPipeline = whatsAppConnection == WhatsAppConnectionStatus.Connected ? "Ready" : "Error",
+        autoReply = workflow.Value.AutoReplyEnabled ? "Active" : "Paused",
+        api = "Connected",
+        whatsAppTestMode = new
+        {
+            enabled = testModeOptions.Enabled,
+            identityConfigured = PhoneNumberNormalizer.TryNormalizeToCanonicalDigits(testModeOptions.AllowedPhoneNumber) is not null
+        }
+    });
+});
 
 app.MapPost("/internal/whatsapp/events", async (
     HttpRequest request,
@@ -189,10 +271,89 @@ app.MapPost("/internal/whatsapp/send-text", async (
     }
 
     // Persist immediately so fromMe echoes correlate as Bot even if connector memory is lost.
-    await recorder.RecordBotTextAsync(body.To, body.Text, externalId, cancellationToken);
+    await recorder.RecordBotTextAsync(null, body.To, body.Text, externalId, cancellationToken);
 
     return Results.Ok(new { ok = true, externalMessageId = externalId });
 });
+
+app.MapPost("/internal/conversations/{conversationId:guid}/takeover", async (
+    Guid conversationId,
+    HttpRequest request,
+    IOptions<WhatsAppConnectorOptions> connectorOptions,
+    IConversationTakeoverService takeover,
+    CancellationToken cancellationToken) =>
+{
+    if (!IsAuthorized(request, connectorOptions.Value.SharedSecret))
+    {
+        return Results.Unauthorized();
+    }
+
+    var result = await takeover.TakeOverAsync(conversationId, TakeoverChangeSource.AdminTakeover, cancellationToken);
+    return result.Found
+        ? Results.Ok(new { ok = true, changed = result.Changed, botMode = result.CurrentMode.ToString(), stage = result.CurrentStage.ToString() })
+        : Results.NotFound(new { error = "conversation_not_found" });
+});
+
+app.MapPost("/internal/conversations/{conversationId:guid}/pause", async (
+    Guid conversationId,
+    HttpRequest request,
+    IOptions<WhatsAppConnectorOptions> connectorOptions,
+    IConversationTakeoverService takeover,
+    CancellationToken cancellationToken) =>
+{
+    if (!IsAuthorized(request, connectorOptions.Value.SharedSecret))
+    {
+        return Results.Unauthorized();
+    }
+
+    var result = await takeover.PauseAsync(conversationId, cancellationToken);
+    return result.Found
+        ? Results.Ok(new { ok = true, changed = result.Changed, botMode = result.CurrentMode.ToString() })
+        : Results.NotFound(new { error = "conversation_not_found" });
+});
+
+app.MapPost("/internal/conversations/{conversationId:guid}/resume-bot", async (
+    Guid conversationId,
+    HttpRequest request,
+    IOptions<WhatsAppConnectorOptions> connectorOptions,
+    IConversationTakeoverService takeover,
+    CancellationToken cancellationToken) =>
+{
+    if (!IsAuthorized(request, connectorOptions.Value.SharedSecret))
+    {
+        return Results.Unauthorized();
+    }
+
+    var result = await takeover.ResumeBotAsync(conversationId, cancellationToken);
+    return result.Found
+        ? Results.Ok(new { ok = true, changed = result.Changed, botMode = result.CurrentMode.ToString(), stage = result.CurrentStage.ToString() })
+        : Results.NotFound(new { error = "conversation_not_found" });
+});
+
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/hubs/admin"))
+    {
+        var auth = context.RequestServices.GetRequiredService<IAdminAuthService>();
+        if (!auth.IsConfigured)
+        {
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            return;
+        }
+
+        var token = context.Request.Cookies[AdminEndpointExtensions.SessionCookieName];
+        if (!auth.TryValidateSessionToken(token))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+    }
+
+    await next(context);
+});
+
+app.MapAdminEndpoints();
+app.MapHub<AdminHub>("/hubs/admin");
 
 app.Run();
 

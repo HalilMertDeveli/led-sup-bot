@@ -26,15 +26,15 @@ public sealed class ApplicationDbContextFactory : IDesignTimeDbContextFactory<Ap
             .AddFlatEnvironmentVariableBridge()
             .Build();
 
-        var connectionString =
-            configuration.GetSection(DatabaseOptions.SectionName)[nameof(DatabaseOptions.ConnectionString)]
-            ?? Environment.GetEnvironmentVariable("DATABASE_CONNECTION_STRING")
-            ?? "Host=localhost;Port=5432;Database=led_sup_bot;Username=postgres;Password=postgres";
+        var connectionString = configuration.GetSection(DatabaseOptions.SectionName)[nameof(DatabaseOptions.ConnectionString)];
+        if (string.IsNullOrWhiteSpace(connectionString)) connectionString = Environment.GetEnvironmentVariable("DATABASE_CONNECTION_STRING");
+        if (string.IsNullOrWhiteSpace(connectionString)) connectionString = "Host=localhost;Port=5432;Database=led_sup_bot;Username=postgres;Password=postgres";
 
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseNpgsql(connectionString, npgsql =>
             {
                 npgsql.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
+                npgsql.UseVector();
             })
             .Options;
 
