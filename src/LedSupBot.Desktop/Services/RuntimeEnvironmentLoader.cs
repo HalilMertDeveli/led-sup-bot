@@ -1,5 +1,6 @@
 using System.IO;
 using LedSupBot.Desktop.Models;
+using LedSupBot.Application.Media;
 
 namespace LedSupBot.Desktop.Services;
 
@@ -59,6 +60,15 @@ public sealed class RuntimeEnvironmentLoader
             if (File.Exists(defaultCableAsset))
             {
                 SetDefault(env, "WORKFLOW_CONFIG_EXAMPLE_IMAGE_PATH", defaultCableAsset);
+            }
+
+            // Historical imports were written while the API content root was the API project
+            // directory. Keep that private store stable when Desktop launches the API from the
+            // repository root; changing the process working directory must not orphan assets.
+            var existingMediaRoot = MediaStorageRootResolver.FindExistingProjectStore(settings.ProjectRoot);
+            if (existingMediaRoot is not null)
+            {
+                SetDefault(env, "MEDIA_STORAGE_ROOT", existingMediaRoot);
             }
         }
 
