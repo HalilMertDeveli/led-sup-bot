@@ -493,7 +493,10 @@ public sealed class LocalServiceManager : IDisposable
 
     private StartProcessResult TryStartConnector()
     {
-        var connectorDir = Path.Combine(_settings.ProjectRoot, "connector");
+        var runtimeRoot = string.IsNullOrWhiteSpace(_settings.RuntimeRoot)
+            ? _settings.ProjectRoot
+            : _settings.RuntimeRoot;
+        var connectorDir = Path.Combine(runtimeRoot, "connector");
         var entry = Path.Combine(connectorDir, "src", "index.js");
         if (!File.Exists(entry))
         {
