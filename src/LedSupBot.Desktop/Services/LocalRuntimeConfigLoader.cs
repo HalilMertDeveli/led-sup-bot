@@ -31,6 +31,12 @@ public static class LocalRuntimeConfigLoader
             SetMapped(target, overwrite, "AI_PROVIDER", root, "AI", "Provider");
             SetMapped(target, overwrite, "GEMINI_API_KEY", root, "Gemini", "ApiKey");
             SetMapped(target, overwrite, "GEMINI_MODEL", root, "Gemini", "Model");
+            SetMapped(target, overwrite, "GEMINI_CAPACITY_MODE", root, "Gemini", "CapacityMode");
+            SetMapped(target, overwrite, "GEMINI_TIMEOUT_SECONDS", root, "Gemini", "TimeoutSeconds");
+            SetMapped(target, overwrite, "GEMINI_MAX_CONCURRENT_REQUESTS", root, "Gemini", "MaxConcurrentRequests");
+            SetMapped(target, overwrite, "GEMINI_MAX_RETRIES", root, "Gemini", "MaxRetries");
+            SetMapped(target, overwrite, "GEMINI_MAX_RETRY_DELAY_SECONDS", root, "Gemini", "MaxRetryDelaySeconds");
+            SetMapped(target, overwrite, "GEMINI_DAILY_QUOTA_AWARE", root, "Gemini", "DailyQuotaAware");
             SetMapped(target, overwrite, "WHATSAPP_CONNECTOR_SHARED_SECRET", root, "WhatsAppConnector", "SharedSecret");
             SetMapped(target, overwrite, "CONNECTOR_SHARED_SECRET", root, "WhatsAppConnector", "SharedSecret");
             SetMapped(target, overwrite, "WHATSAPP_CONNECTOR_ENABLED", root, "WhatsAppConnector", "Enabled");

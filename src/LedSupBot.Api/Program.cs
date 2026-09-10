@@ -164,12 +164,14 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 app.MapGet("/api/foundation/status", async (
     IWhatsAppConnectionStateStore state,
     IServiceProvider services,
+    IGeminiProviderState geminiProviderState,
     IOptions<WhatsAppTestModeOptions> testMode,
     IOptions<WorkflowOptions> workflow,
     CancellationToken cancellationToken) =>
 {
     var whatsAppConnection = await WhatsAppLiveStatusResolver.GetCurrentAsync(services, state, cancellationToken);
     var testModeOptions = testMode.Value;
+    var capacity = geminiProviderState.Current;
     return Results.Ok(new
     {
         architecture = "hybrid-workflow-plus-ai-boundaries",
@@ -181,6 +183,16 @@ app.MapGet("/api/foundation/status", async (
         inboundPipeline = whatsAppConnection == WhatsAppConnectionStatus.Connected ? "Ready" : "Error",
         autoReply = workflow.Value.AutoReplyEnabled ? "Active" : "Paused",
         api = "Connected",
+        aiCapacity = new
+        {
+            provider = aiOptions.Provider,
+            status = capacity.Status.ToString(),
+            failure = capacity.LastFailure.ToString(),
+            retryAt = capacity.SuppressedUntil,
+            capacity.RequestsAttempted,
+            capacity.CapacityMode,
+            capacity.Model
+        },
         whatsAppTestMode = new
         {
             enabled = testModeOptions.Enabled,

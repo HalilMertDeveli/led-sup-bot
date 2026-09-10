@@ -48,7 +48,8 @@ public sealed record TechnicalAnswerEvidence(
     CaseMemorySearchResult CaseMemory,
     WebGroundingResult Web,
     InformationSourceRoute WebRoute,
-    bool InternalEvidenceSufficient)
+    bool InternalEvidenceSufficient,
+    AiRequestBudget RequestBudget)
 {
     public string ToOperatorTrace()
     {
@@ -65,7 +66,8 @@ public sealed record TechnicalAnswerEvidence(
                $"TrainingSearch={Training.Attempted}; TrainingResults={Training.Examples.Count}; " +
                $"ChatContext={SameCustomerMemory.Used}; HistoricalCases={SameCustomerMemory.Cases.Count}; " +
                $"CaseMemory={CaseMemory.Used}; WebSearch={Web.Attempted}; WebUsed={Web.Used}; " +
-               $"WebDomains={string.Join(',', webDomains)}; FinalSource={finalSource}";
+               $"WebDomains={string.Join(',', webDomains)}; EmbeddingCalls={RequestBudget.EmbeddingCalls}; " +
+               $"WebCalls={RequestBudget.WebCalls}; GeminiCalls={RequestBudget.GeminiCalls}; FinalSource={finalSource}";
     }
 }
 
@@ -100,18 +102,17 @@ public sealed class TechnicalAnswerContextBuilder(
         var evidenceEligible = IsEvidenceEligible(request.Intent, spec, request.Question);
 
         var trainingResult = evidenceEligible
-            ? await training.SearchAsync(request.Question, request.Intent, spec.DetectedModels, cancellationToken)
+            ? await SearchTrainingSafelyAsync(request, spec, cancellationToken)
             : ApprovedTrainingSearchResult.NotAttempted;
         var customerHistory = evidenceEligible
-            ? await customerMemory.SearchAsync(request.Conversation.CustomerId, request.Conversation.ConversationId,
-                request.Question, cancellationToken)
+            ? await SearchCustomerMemorySafelyAsync(request, cancellationToken)
             : SameCustomerMemoryResult.NotAttempted;
 
         var verifiedMemory = string.IsNullOrWhiteSpace(request.DiagnosticSymptom)
             ? new CaseMemorySearchResult(false, [])
-            : await caseMemory.SearchAsync(request.DiagnosticSymptom,
-                request.DeviceModel ?? spec.DetectedModels.FirstOrDefault(),
-                request.CompletedChecks ?? [], cancellationToken);
+            : await SearchCaseMemorySafelyAsync(request, spec, cancellationToken);
+
+        request.Conversation.RequestBudget.EmbeddingCalls += spec.Attempted ? 1 : 0;
 
         var sufficient = spec.Level == GroundingLevel.GroundedExact ||
             (spec.Used && spec.Confidence >= 0.68 && !spec.ConflictDetected && !spec.ExactClaimNeedsModel);
@@ -137,6 +138,7 @@ public sealed class TechnicalAnswerContextBuilder(
                 {
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(webOptions.Value.TimeoutSeconds, 2, 60)));
+                    request.Conversation.RequestBudget.WebCalls++;
                     webResult = await web.SearchAsync(publicQuery, timeout.Token);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -158,13 +160,14 @@ public sealed class TechnicalAnswerContextBuilder(
         }
 
         var result = new TechnicalAnswerEvidence(spec, trainingResult, customerHistory, verifiedMemory,
-            webResult, webRoute, sufficient);
+            webResult, webRoute, sufficient, request.Conversation.RequestBudget);
         ApplyToConversation(request.Conversation, result);
 
         logger.LogInformation(
             "TechnicalAnswerSources intent={Intent} models={Models} specSearch={SpecSearch} specResults={SpecResults} " +
             "trainingSearch={TrainingSearch} trainingResults={TrainingResults} chatContext={ChatContext} " +
-            "webSearch={WebSearch} webUsed={WebUsed} finalSource={FinalSource}",
+            "webSearch={WebSearch} webUsed={WebUsed} embeddingCalls={EmbeddingCalls} webCalls={WebCalls} " +
+            "geminiCalls={GeminiCalls} finalSource={FinalSource}",
             request.Intent,
             string.Join(',', spec.DetectedModels),
             spec.Attempted,
@@ -174,8 +177,59 @@ public sealed class TechnicalAnswerContextBuilder(
             customerHistory.Used,
             webResult.Attempted,
             webResult.Used,
+            request.Conversation.RequestBudget.EmbeddingCalls,
+            request.Conversation.RequestBudget.WebCalls,
+            request.Conversation.RequestBudget.GeminiCalls,
             result.ToOperatorTrace().Split("FinalSource=")[^1]);
         return result;
+    }
+
+    private async Task<ApprovedTrainingSearchResult> SearchTrainingSafelyAsync(
+        TechnicalAnswerContextRequest request, KnowledgeGroundingResult spec, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await training.SearchAsync(request.Question, request.Intent, spec.DetectedModels, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Approved training retrieval failed; continuing without training examples");
+            return new ApprovedTrainingSearchResult(true, []);
+        }
+    }
+
+    private async Task<SameCustomerMemoryResult> SearchCustomerMemorySafelyAsync(
+        TechnicalAnswerContextRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await customerMemory.SearchAsync(request.Conversation.CustomerId,
+                request.Conversation.ConversationId, request.Question, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Same-customer memory retrieval failed; continuing without historical context");
+            return new SameCustomerMemoryResult(true, []);
+        }
+    }
+
+    private async Task<CaseMemorySearchResult> SearchCaseMemorySafelyAsync(
+        TechnicalAnswerContextRequest request, KnowledgeGroundingResult spec, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await caseMemory.SearchAsync(request.DiagnosticSymptom!,
+                request.DeviceModel ?? spec.DetectedModels.FirstOrDefault(),
+                request.CompletedChecks ?? [], cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Verified case-memory retrieval failed; continuing without case memory");
+            return CaseMemorySearchResult.Failed;
+        }
     }
 
     private static bool IsEvidenceEligible(ConversationIntent intent, KnowledgeGroundingResult spec, string question) =>

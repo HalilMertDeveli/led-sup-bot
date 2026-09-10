@@ -41,6 +41,13 @@ public sealed record ContextConfig(string DisplayText, bool Complete, bool Defer
 
 public sealed record ContextAnyDesk(string DisplayText, bool Complete, bool Deferred = false);
 
+public sealed class AiRequestBudget
+{
+    public int EmbeddingCalls { get; set; }
+    public int WebCalls { get; set; }
+    public int GeminiCalls { get; set; }
+}
+
 public enum PendingWorkflowFact
 {
     None = 0,
@@ -56,6 +63,8 @@ public enum PendingWorkflowFact
 
 public sealed class ConversationContext
 {
+    public AiRequestBudget RequestBudget { get; } = new();
+
     public Guid CustomerId { get; init; }
 
     public Guid ConversationId { get; init; }

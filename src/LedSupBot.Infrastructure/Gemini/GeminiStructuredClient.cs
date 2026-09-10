@@ -1,11 +1,14 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using LedSupBot.Infrastructure.Configuration;
 using LedSupBot.Application.Workflow.Web;
 using LedSupBot.Application.Workflow;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace LedSupBot.Infrastructure.Gemini;
 
@@ -13,6 +16,7 @@ public sealed class GeminiStructuredClient
 {
     private readonly HttpClient _http;
     private readonly GeminiOptions _options;
+    private readonly GeminiProviderState _providerState;
     private readonly ILogger _logger;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -21,12 +25,28 @@ public sealed class GeminiStructuredClient
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
-    public GeminiStructuredClient(HttpClient http, IOptions<GeminiOptions> options, ILogger<GeminiStructuredClient> logger)
+    public GeminiStructuredClient(
+        HttpClient http,
+        IOptions<GeminiOptions> options,
+        ILogger<GeminiStructuredClient> logger)
+        : this(http, options, logger, new GeminiProviderState(options))
+    {
+    }
+
+    [ActivatorUtilitiesConstructor]
+    public GeminiStructuredClient(
+        HttpClient http,
+        IOptions<GeminiOptions> options,
+        ILogger<GeminiStructuredClient> logger,
+        GeminiProviderState providerState)
     {
         _http = http;
         _options = options.Value;
+        _providerState = providerState;
         _logger = logger;
     }
+
+    public IGeminiProviderState ProviderState => _providerState;
 
     public async Task<string?> TryGenerateJsonAsync(
         string operation,
@@ -58,33 +78,9 @@ public sealed class GeminiStructuredClient
             },
         };
 
-        HttpResponseMessage response;
-        try
+        using (var response = await SendWithPolicyAsync(operation, url, payload, cancellationToken))
         {
-            using var request = CreateRequest(url, payload);
-            response = await _http.SendAsync(request, cancellationToken);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            _logger.LogWarning("Gemini request timed out for {Operation}; using deterministic fallback", operation);
-            return null;
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogWarning(ex, "Gemini request failed for {Operation}; using deterministic fallback", operation);
-            return null;
-        }
-
-        using (response)
-        {
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning(
-                    "Gemini request failed for {Operation}: status={StatusCode}; using deterministic fallback",
-                    operation,
-                    (int)response.StatusCode);
-                return null;
-            }
+            if (response is null) return null;
 
             GenerateContentResponse? body;
             try
@@ -93,12 +89,18 @@ public sealed class GeminiStructuredClient
             }
             catch (JsonException ex)
             {
+                _providerState.MarkFailure(GeminiFailureKind.InvalidResponse);
                 _logger.LogWarning(ex, "Gemini response parse failed for {Operation}", operation);
                 return null;
             }
 
             var text = body?.Candidates?.FirstOrDefault()?.Content?.Parts?.FirstOrDefault()?.Text;
-            return string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                _providerState.MarkFailure(GeminiFailureKind.InvalidResponse);
+                return null;
+            }
+            return text.Trim();
         }
     }
 
@@ -119,13 +121,8 @@ public sealed class GeminiStructuredClient
 
         try
         {
-            using var request = CreateRequest(url, payload);
-            using var response = await _http.SendAsync(request, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning("Gemini web grounding failed: status={StatusCode}", (int)response.StatusCode);
-                return WebGroundingResult.Failed;
-            }
+            using var response = await SendWithPolicyAsync("web_grounding", url, payload, cancellationToken);
+            if (response is null) return WebGroundingResult.Failed;
 
             var body = await response.Content.ReadFromJsonAsync<GenerateContentResponse>(JsonOptions, cancellationToken);
             var candidate = body?.Candidates?.FirstOrDefault();
@@ -158,10 +155,149 @@ public sealed class GeminiStructuredClient
         }
         catch (JsonException ex)
         {
+            _providerState.MarkFailure(GeminiFailureKind.InvalidResponse);
             _logger.LogWarning(ex, "Gemini web grounding response was invalid");
             return WebGroundingResult.Failed;
         }
     }
+
+    private async Task<HttpResponseMessage?> SendWithPolicyAsync(
+        string operation,
+        string url,
+        GenerateContentRequest payload,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_options.ApiKey) || string.IsNullOrWhiteSpace(_options.Model))
+        {
+            _providerState.MarkFailure(GeminiFailureKind.Unauthorized);
+            return null;
+        }
+
+        using var lease = await _providerState.TryAcquireAsync(cancellationToken);
+        if (lease is null)
+        {
+            _logger.LogWarning("Gemini request suppressed for {Operation}: providerStatus={ProviderStatus}",
+                operation, _providerState.Current.Status);
+            return null;
+        }
+
+        var maxRetries = Math.Clamp(_options.MaxRetries, 0, 3);
+        for (var attempt = 0; attempt <= maxRetries; attempt++)
+        {
+            HttpResponseMessage? response = null;
+            try
+            {
+                using var request = CreateRequest(url, payload);
+                _providerState.RecordAttempt();
+                response = await _http.SendAsync(request, cancellationToken);
+                if (response.IsSuccessStatusCode)
+                {
+                    _providerState.MarkAvailable();
+                    return response;
+                }
+
+                var failure = await ClassifyFailureAsync(response, cancellationToken);
+                _providerState.MarkFailure(failure.Kind, failure.SuppressedUntil);
+                _logger.LogWarning(
+                    "Gemini request failed for {Operation}: status={StatusCode} failure={Failure} attempt={Attempt}",
+                    operation, (int)response.StatusCode, failure.Kind, attempt + 1);
+                response.Dispose();
+                response = null;
+
+                if (!failure.Retryable || attempt >= maxRetries) return null;
+                if (failure.Delay > TimeSpan.Zero) await Task.Delay(failure.Delay, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                response?.Dispose();
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                response?.Dispose();
+                _providerState.MarkFailure(GeminiFailureKind.Timeout);
+                _logger.LogWarning("Gemini request timed out for {Operation}; attempt={Attempt}", operation, attempt + 1);
+                if (attempt >= maxRetries) return null;
+            }
+            catch (HttpRequestException ex)
+            {
+                response?.Dispose();
+                _providerState.MarkFailure(GeminiFailureKind.Network);
+                _logger.LogWarning(ex, "Gemini network request failed for {Operation}; attempt={Attempt}", operation, attempt + 1);
+                if (attempt >= maxRetries) return null;
+            }
+        }
+        return null;
+    }
+
+    private async Task<FailureDecision> ClassifyFailureAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        var status = response.StatusCode;
+        var errorBody = string.Empty;
+        try
+        {
+            errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (errorBody.Length > 64_000) errorBody = errorBody[..64_000];
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Classification remains status-code based when the provider body is unreadable.
+        }
+
+        if (status == HttpStatusCode.TooManyRequests)
+        {
+            var daily = _options.DailyQuotaAware &&
+                (errorBody.Contains("GenerateRequestsPerDayPerProjectPerModel", StringComparison.OrdinalIgnoreCase) ||
+                 errorBody.Contains("daily quota", StringComparison.OrdinalIgnoreCase));
+            if (daily)
+                return new(GeminiFailureKind.DailyQuota, false, TimeSpan.Zero, _providerState.DailyResetBoundary());
+
+            var delay = ResolveRetryDelay(response, errorBody);
+            return new(GeminiFailureKind.TemporaryRateLimit, true, delay, DateTimeOffset.UtcNow + delay);
+        }
+
+        if (status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            return new(GeminiFailureKind.Unauthorized, false, TimeSpan.Zero, null);
+        if (status == HttpStatusCode.BadRequest)
+            return new(GeminiFailureKind.InvalidRequest, false, TimeSpan.Zero, null);
+        if (status == HttpStatusCode.NotFound)
+            return new(GeminiFailureKind.ModelNotFound, false, TimeSpan.Zero, null);
+        if ((int)status >= 500)
+            return new(GeminiFailureKind.TransientProviderFailure, true, ResolveRetryDelay(response, errorBody), null);
+        return new(GeminiFailureKind.InvalidResponse, false, TimeSpan.Zero, null);
+    }
+
+    private TimeSpan ResolveRetryDelay(HttpResponseMessage response, string errorBody)
+    {
+        var delay = response.Headers.RetryAfter?.Delta;
+        if (delay is null && response.Headers.RetryAfter?.Date is { } date)
+            delay = date - DateTimeOffset.UtcNow;
+        if (delay is null)
+        {
+            var match = Regex.Match(errorBody, "\\\"retryDelay\\\"\\s*:\\s*\\\"(?<seconds>[0-9.]+)s\\\"",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (match.Success && double.TryParse(match.Groups["seconds"].Value,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+                delay = TimeSpan.FromSeconds(seconds);
+        }
+
+        var max = Math.Clamp(_options.MaxRetryDelaySeconds, 0, 60);
+        var secondsValue = Math.Clamp(delay?.TotalSeconds ?? 1, 0, max);
+        return TimeSpan.FromSeconds(secondsValue);
+    }
+
+    private sealed record FailureDecision(
+        GeminiFailureKind Kind,
+        bool Retryable,
+        TimeSpan Delay,
+        DateTimeOffset? SuppressedUntil);
 
     private HttpRequestMessage CreateRequest(string url, GenerateContentRequest payload)
     {

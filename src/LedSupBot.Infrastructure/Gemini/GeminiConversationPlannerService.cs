@@ -32,6 +32,12 @@ public sealed class GeminiConversationPlannerService : IAiConversationPlanner
         string latestCustomerMessage,
         CancellationToken cancellationToken = default)
     {
+        if (context.RequestBudget.GeminiCalls >= 1)
+        {
+            _logger.LogWarning("Gemini final-planner call suppressed by per-turn request budget");
+            return null;
+        }
+        context.RequestBudget.GeminiCalls++;
         var content = await _client.TryGenerateJsonAsync(
             "response_plan",
             BuildSystemPrompt(),

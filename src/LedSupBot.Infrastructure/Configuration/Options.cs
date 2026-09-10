@@ -37,6 +37,11 @@ public sealed class GeminiOptions
     public string Model { get; set; } = "gemini-3.6-flash";
     public string BaseUrl { get; set; } = "https://generativelanguage.googleapis.com/";
     public int TimeoutSeconds { get; set; } = 30;
+    public string CapacityMode { get; set; } = "Limited";
+    public int MaxConcurrentRequests { get; set; } = 1;
+    public int MaxRetries { get; set; } = 1;
+    public int MaxRetryDelaySeconds { get; set; } = 5;
+    public bool DailyQuotaAware { get; set; } = true;
 }
 
 public sealed class WhatsAppOptions

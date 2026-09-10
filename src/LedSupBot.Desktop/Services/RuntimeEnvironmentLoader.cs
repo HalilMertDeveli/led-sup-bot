@@ -157,6 +157,12 @@ public sealed class RuntimeEnvironmentLoader
         CopyAspNet(env, "AI_PROVIDER", "AI__Provider");
         CopyAspNet(env, "GEMINI_API_KEY", "Gemini__ApiKey");
         CopyAspNet(env, "GEMINI_MODEL", "Gemini__Model");
+        CopyAspNet(env, "GEMINI_CAPACITY_MODE", "Gemini__CapacityMode");
+        CopyAspNet(env, "GEMINI_TIMEOUT_SECONDS", "Gemini__TimeoutSeconds");
+        CopyAspNet(env, "GEMINI_MAX_CONCURRENT_REQUESTS", "Gemini__MaxConcurrentRequests");
+        CopyAspNet(env, "GEMINI_MAX_RETRIES", "Gemini__MaxRetries");
+        CopyAspNet(env, "GEMINI_MAX_RETRY_DELAY_SECONDS", "Gemini__MaxRetryDelaySeconds");
+        CopyAspNet(env, "GEMINI_DAILY_QUOTA_AWARE", "Gemini__DailyQuotaAware");
         CopyAspNet(env, "WHATSAPP_CONNECTOR_ENABLED", "WhatsAppConnector__Enabled");
         CopyAspNet(env, "WHATSAPP_CONNECTOR_BASE_URL", "WhatsAppConnector__BaseUrl");
         CopyAspNet(env, "WHATSAPP_CONNECTOR_SHARED_SECRET", "WhatsAppConnector__SharedSecret");

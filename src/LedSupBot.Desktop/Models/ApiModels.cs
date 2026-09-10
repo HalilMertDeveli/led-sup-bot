@@ -42,6 +42,24 @@ public sealed class FoundationStatusResponse
 
     [JsonPropertyName("whatsAppTestMode")]
     public FoundationTestModeResponse? WhatsAppTestMode { get; set; }
+
+    [JsonPropertyName("aiCapacity")]
+    public FoundationAiCapacityResponse? AiCapacity { get; set; }
+}
+
+public sealed class FoundationAiCapacityResponse
+{
+    [JsonPropertyName("provider")]
+    public string Provider { get; set; } = "Gemini";
+
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "Unavailable";
+
+    [JsonPropertyName("failure")]
+    public string Failure { get; set; } = "None";
+
+    [JsonPropertyName("retryAt")]
+    public DateTimeOffset? RetryAt { get; set; }
 }
 
 public sealed class WhatsAppPairingQrResponse
