@@ -81,10 +81,9 @@ public sealed class GeminiLiveVerificationTests
             0.1,
             CancellationToken.None);
 
-        if (response is not null)
-        {
-            Assert.Contains("GEMINI_CALISIYOR", response);
-        }
+        Assert.False(string.IsNullOrWhiteSpace(response),
+            $"Gemini live response was unavailable. ProviderState={client.ProviderState.Current.Status}; Failure={client.ProviderState.Current.LastFailure}");
+        Assert.Contains("GEMINI_CALISIYOR", response);
     }
 
     [Fact]

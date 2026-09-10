@@ -533,7 +533,7 @@ public sealed class LocalServiceManager : IDisposable
         var psi = new ProcessStartInfo
         {
             FileName = dotnet,
-            Arguments = $"run --project \"{project}\" --no-launch-profile",
+            Arguments = $"run --project \"{project}\" --configuration Release --no-launch-profile",
             WorkingDirectory = _settings.ProjectRoot,
             CreateNoWindow = true,
             UseShellExecute = false,
