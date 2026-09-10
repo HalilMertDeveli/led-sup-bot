@@ -63,16 +63,8 @@ flowchart LR
 
 **More screens**
 
-<table>
-  <tr>
-    <td><img src="docs/screenshots/desktop-login.png" alt="LedSupport login screen" width="340"></td>
-    <td><img src="docs/screenshots/technical-panel.png" alt="LedSupport technical panel (expanded)" width="340"></td>
-  </tr>
-  <tr>
-    <td align="center"><em>Login screen</em></td>
-    <td align="center"><em>Technical panel (expanded)</em></td>
-  </tr>
-</table>
+- ![LedSupport login screen](docs/screenshots/desktop-login.png)
+- ![LedSupport technical panel (expanded)](docs/screenshots/technical-panel.png)
 
 ---
 
