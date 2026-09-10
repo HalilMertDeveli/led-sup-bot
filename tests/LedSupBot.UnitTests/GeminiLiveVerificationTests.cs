@@ -12,6 +12,11 @@ namespace LedSupBot.UnitTests;
 
 public sealed class GeminiLiveVerificationTests
 {
+    private static bool LiveTestsEnabled => string.Equals(
+        Environment.GetEnvironmentVariable("LEDSUPBOT_RUN_LIVE_GEMINI_TESTS"),
+        "1",
+        StringComparison.Ordinal);
+
     private static GeminiOptions LoadOptions()
     {
         var candidates = new[]
@@ -58,6 +63,7 @@ public sealed class GeminiLiveVerificationTests
     [Fact]
     public async Task Gemini_Direct_GenerateContent_Succeeds()
     {
+        if (!LiveTestsEnabled) return;
         var options = LoadOptions();
         Assert.False(string.IsNullOrWhiteSpace(options.ApiKey), "Gemini API key must be configured.");
 
@@ -84,6 +90,7 @@ public sealed class GeminiLiveVerificationTests
     [Fact]
     public async Task Gemini_Application_ConversationPlanner_TechnicalSupport_Succeeds()
     {
+        if (!LiveTestsEnabled) return;
         var options = LoadOptions();
         Assert.False(string.IsNullOrWhiteSpace(options.ApiKey), "Gemini API key must be configured.");
 
@@ -131,6 +138,7 @@ public sealed class GeminiLiveVerificationTests
     [Fact]
     public async Task Gemini_General_Technical_Question_Returns_Structured_Decision_And_Diagnostic_Response()
     {
+        if (!LiveTestsEnabled) return;
         var options = LoadOptions();
         if (string.IsNullOrWhiteSpace(options.ApiKey))
         {
@@ -185,6 +193,7 @@ public sealed class GeminiLiveVerificationTests
     [Fact]
     public async Task Gemini_Context_Aware_Reasoning_Does_Not_ReAsk_Known_Dimensions()
     {
+        if (!LiveTestsEnabled) return;
         var options = LoadOptions();
         Assert.False(string.IsNullOrWhiteSpace(options.ApiKey), "Gemini API key must be configured.");
 

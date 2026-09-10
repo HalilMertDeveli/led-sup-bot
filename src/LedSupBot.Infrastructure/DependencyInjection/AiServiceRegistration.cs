@@ -16,6 +16,8 @@ internal static class AiServiceRegistration
         services.Configure<AiOptions>(configuration.GetSection(AiOptions.SectionName));
         services.Configure<GeminiOptions>(configuration.GetSection(GeminiOptions.SectionName));
         services.Configure<OpenAiOptions>(configuration.GetSection(OpenAiOptions.SectionName));
+        services.AddSingleton<GeminiProviderState>();
+        services.AddSingleton<IGeminiProviderState>(provider => provider.GetRequiredService<GeminiProviderState>());
 
         if (AiProviderRegistration.IsGemini(configuration))
         {

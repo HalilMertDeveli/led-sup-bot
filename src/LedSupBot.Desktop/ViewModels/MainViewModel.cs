@@ -31,6 +31,7 @@ public sealed class MainViewModel : ViewModelBase
     private string _realtimeStatusLabel = "Bağlantı Yok";
     private bool _showTestModeBanner;
     private string _testModeLabel = "";
+    private string _aiCapacityStatus = "AI: Bilinmiyor";
 
     // Coalesced Realtime Refresh
     private readonly object _refreshLock = new();
@@ -355,6 +356,12 @@ public sealed class MainViewModel : ViewModelBase
     {
         get => _testModeLabel;
         private set => RunOnUi(() => SetProperty(ref _testModeLabel, value));
+    }
+
+    public string AiCapacityStatus
+    {
+        get => _aiCapacityStatus;
+        private set => RunOnUi(() => SetProperty(ref _aiCapacityStatus, value));
     }
 
     #endregion
@@ -1057,6 +1064,7 @@ public sealed class MainViewModel : ViewModelBase
             TestModeLabel = testModeActive
                 ? "TEST MODU — Sadece test telefonu"
                 : "";
+            AiCapacityStatus = MapAiCapacity(foundation?.AiCapacity);
 
             // 2. Fetch compact focus
             var focus = await _api.GetCompactFocusAsync();
@@ -2063,6 +2071,16 @@ public sealed class MainViewModel : ViewModelBase
         "DEGRADED_SESSION" => "Oturum bozuk — yeniden bağlayın",
         "ERROR" => "Hata",
         _ => "Bağlantı Yok",
+    };
+
+    private static string MapAiCapacity(FoundationAiCapacityResponse? capacity) => capacity?.Status switch
+    {
+        "Available" => $"{capacity.Provider}: Hazır",
+        "RateLimited" => $"{capacity.Provider}: Geçici limit",
+        "DailyQuotaExhausted" => $"{capacity.Provider}: Günlük kota dolu",
+        "Misconfigured" => $"{capacity.Provider}: Yapılandırma hatası",
+        "Unavailable" => $"{capacity.Provider}: Kullanılamıyor",
+        _ => "AI: Bilinmiyor"
     };
 
     private static string NormalizeBotMode(string? mode) =>

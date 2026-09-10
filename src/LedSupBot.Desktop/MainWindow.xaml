@@ -102,6 +102,10 @@
                         </StackPanel>
                     </Border>
 
+                    <Border Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="10,4" Margin="0,0,8,0">
+                        <TextBlock Text="{Binding AiCapacityStatus}" Foreground="{StaticResource CardTextBrush}" FontWeight="SemiBold" FontSize="11" />
+                    </Border>
+
                     <!-- Test Mode Banner (if active) -->
                     <Border Background="{StaticResource BadgeWarnBgBrush}" BorderBrush="{StaticResource WarnBrush}" BorderThickness="1" CornerRadius="12" Padding="10,4"
                             Visibility="{Binding ShowTestModeBanner, Converter={StaticResource BoolToVis}}">
