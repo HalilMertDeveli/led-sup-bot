@@ -11,6 +11,7 @@ public sealed class DesktopSettings
     public bool AutoStartConnector { get; set; } = true;
     public bool AutoStartPostgreSql { get; set; } = true;
     public string ProjectRoot { get; set; } = "";
+    public string RuntimeRoot { get; set; } = "";
 }
 
 public enum ComponentState

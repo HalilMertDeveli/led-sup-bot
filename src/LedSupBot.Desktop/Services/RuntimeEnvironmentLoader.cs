@@ -11,7 +11,9 @@ public sealed class RuntimeEnvironmentLoader
 
     public RuntimeEnvironmentLoader(DesktopSettings settings)
     {
-        _projectRoot = settings.ProjectRoot;
+        _projectRoot = string.IsNullOrWhiteSpace(settings.RuntimeRoot)
+            ? settings.ProjectRoot
+            : settings.RuntimeRoot;
 
         if (string.IsNullOrWhiteSpace(_projectRoot))
         {
@@ -54,9 +56,12 @@ public sealed class RuntimeEnvironmentLoader
         SetDefault(env, "WHATSAPP_CONNECTOR_BASE_URL", $"http://127.0.0.1:{settings.ConnectorPort}");
         SetDefault(env, "WORKFLOW_AUTO_REPLY_ENABLED", "true");
 
-        if (!string.IsNullOrWhiteSpace(settings.ProjectRoot))
+        var runtimeRoot = string.IsNullOrWhiteSpace(settings.RuntimeRoot)
+            ? settings.ProjectRoot
+            : settings.RuntimeRoot;
+        if (!string.IsNullOrWhiteSpace(runtimeRoot))
         {
-            var defaultCableAsset = Path.Combine(settings.ProjectRoot, "assets", "support", "usb-a-usb-b-printer-cable.jpg");
+            var defaultCableAsset = Path.Combine(runtimeRoot, "assets", "support", "usb-a-usb-b-printer-cable.jpg");
             if (File.Exists(defaultCableAsset))
             {
                 SetDefault(env, "WORKFLOW_CONFIG_EXAMPLE_IMAGE_PATH", defaultCableAsset);
@@ -65,7 +70,7 @@ public sealed class RuntimeEnvironmentLoader
             // Historical imports were written while the API content root was the API project
             // directory. Keep that private store stable when Desktop launches the API from the
             // repository root; changing the process working directory must not orphan assets.
-            var existingMediaRoot = MediaStorageRootResolver.FindExistingProjectStore(settings.ProjectRoot);
+            var existingMediaRoot = MediaStorageRootResolver.FindExistingProjectStore(runtimeRoot);
             if (existingMediaRoot is not null)
             {
                 SetDefault(env, "MEDIA_STORAGE_ROOT", existingMediaRoot);

@@ -15,14 +15,15 @@ public static class DesktopSettingsLoader
             if (!File.Exists(path))
             {
                 settings.ProjectRoot = ResolveProjectRoot() ?? "";
-                return settings;
             }
-
-            var json = File.ReadAllText(path);
-            var loaded = JsonSerializer.Deserialize<DesktopSettings>(json, JsonOptions);
-            if (loaded is not null)
+            else
             {
-                settings = loaded;
+                var json = File.ReadAllText(path);
+                var loaded = JsonSerializer.Deserialize<DesktopSettings>(json, JsonOptions);
+                if (loaded is not null)
+                {
+                    settings = loaded;
+                }
             }
         }
         catch
@@ -35,7 +36,61 @@ public static class DesktopSettingsLoader
             settings.ProjectRoot = ResolveProjectRoot() ?? "";
         }
 
+        if (string.IsNullOrWhiteSpace(settings.RuntimeRoot))
+        {
+            settings.RuntimeRoot = ResolveRuntimeRoot(settings.ProjectRoot);
+        }
+
         return settings;
+    }
+
+    public static string ResolveRuntimeRoot(string projectRoot)
+    {
+        if (string.IsNullOrWhiteSpace(projectRoot))
+        {
+            return "";
+        }
+
+        var gitFile = Path.Combine(projectRoot, ".git");
+        if (!File.Exists(gitFile))
+        {
+            return projectRoot;
+        }
+
+        try
+        {
+            const string prefix = "gitdir:";
+            var line = File.ReadLines(gitFile).FirstOrDefault()?.Trim();
+            if (line is null || !line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return projectRoot;
+            }
+
+            var gitDirectory = line[prefix.Length..].Trim();
+            if (!Path.IsPathRooted(gitDirectory))
+            {
+                gitDirectory = Path.GetFullPath(Path.Combine(projectRoot, gitDirectory));
+            }
+
+            var mainGitDirectory = Directory.GetParent(gitDirectory)?.Parent;
+            var mainRoot = mainGitDirectory?.Parent?.FullName;
+            if (!string.IsNullOrWhiteSpace(mainRoot) &&
+                File.Exists(Path.Combine(mainRoot, LocalRuntimeConfigLoader.FileName)) &&
+                Directory.Exists(Path.Combine(mainRoot, "connector")))
+            {
+                return mainRoot;
+            }
+        }
+        catch (IOException)
+        {
+            // Fall back to the current checkout when Git metadata cannot be read.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Fall back to the current checkout when Git metadata cannot be read.
+        }
+
+        return projectRoot;
     }
 
     private static string? ResolveProjectRoot()

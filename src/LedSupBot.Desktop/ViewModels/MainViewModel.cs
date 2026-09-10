@@ -924,7 +924,10 @@ public sealed class MainViewModel : ViewModelBase
                 return;
             }
 
-            var password = LocalRuntimeConfigLoader.GetAdminDashboardPassword(_settings?.ProjectRoot) ?? "led-sup-admin";
+            var runtimeRoot = string.IsNullOrWhiteSpace(_settings?.RuntimeRoot)
+                ? _settings?.ProjectRoot
+                : _settings.RuntimeRoot;
+            var password = LocalRuntimeConfigLoader.GetAdminDashboardPassword(runtimeRoot) ?? "led-sup-admin";
             try
             {
                 await _api.LoginAsync(password);
